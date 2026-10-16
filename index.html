@@ -23,6 +23,7 @@
   canvas {
     display: block; position: fixed; left: 50%; top: 50%;
     transform: translate(-50%, -50%); cursor: pointer;
+    touch-action: none; /* swipes are ours, not scroll / pull-to-refresh */
   }
   #hint {
     position: fixed; left: 16px; bottom: 14px;
@@ -45,6 +46,7 @@
   const hint = document.getElementById('hint');
 
   let seed, token = 0, W, H;
+  const touch = matchMedia('(pointer: coarse)').matches;
 
   function readSeed() {
     const m = location.hash.match(/^#(\d+)$/);
@@ -83,7 +85,8 @@
     const rng = PollockDreams.mulberry32(seed);
     const { jobs, bg, name } = PollockDreams.engine(ctx, W, H).buildJobs(rng);
     document.body.style.background = bg;
-    showHint(`after ${name} · click / space: new · S: save PNG`);
+    showHint(touch ? `after ${name} · tap / swipe: new`
+                   : `after ${name} · click / space: new · S: save PNG`);
     let i = 0;
     const frame = () => {
       if (my !== token) return;
@@ -95,6 +98,18 @@
   }
 
   canvas.addEventListener('click', newSeed);
+  // Swipe in any direction for a new painting (tap is handled by click).
+  let swipe = null;
+  canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse') swipe = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  });
+  canvas.addEventListener('pointerup', e => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    swipe = null;
+    if (Math.hypot(dx, dy) > 50) newSeed();
+  });
+  canvas.addEventListener('pointercancel', () => { swipe = null; });
   window.addEventListener('keydown', e => {
     if (e.code === 'Space' || e.key === 'n') {
       e.preventDefault();
