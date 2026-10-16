@@ -46,6 +46,7 @@
   const hint = document.getElementById('hint');
 
   let seed, token = 0, W, H;
+  const DRAW_MS = 5000;
   const touch = matchMedia('(pointer: coarse)').matches;
 
   function readSeed() {
@@ -87,11 +88,16 @@
     document.body.style.background = bg;
     showHint(touch ? `after ${name} · tap / swipe: new`
                    : `after ${name} · click / space: new · S: save PNG`);
-    let i = 0;
-    const frame = () => {
+    // Spread the drawing over at least DRAW_MS whatever the device speed:
+    // a fast machine would otherwise pile up the alternating dark and light
+    // layers in under a second, close to the 3 flashes/s seizure threshold.
+    let i = 0, t0;
+    const frame = now => {
       if (my !== token) return;
-      const t0 = performance.now();
-      while (i < jobs.length && performance.now() - t0 < 14) jobs[i++]();
+      t0 ??= now;
+      const due = Math.min(jobs.length, 1 + Math.ceil((jobs.length - 1) * (now - t0) / DRAW_MS));
+      const f0 = performance.now();
+      while (i < due && performance.now() - f0 < 14) jobs[i++]();
       if (i < jobs.length) requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
