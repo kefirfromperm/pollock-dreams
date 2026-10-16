@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pollock Dreams OG</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
+<script src="../pollock.js"></script>
+<script>
+// Open Graph image: a drip painting with the title written over it in
+// poured, wobbling lines. Rendered by scripts/make-og.sh.
+// Query params: seed, palette (index or part of a name), font, text, w, h.
+(async () => {
+  const PD = PollockDreams, { TAU, rgba, powerLaw } = PD;
+  const q = new URLSearchParams(location.search);
+  const W = +(q.get('w') || 1200), H = +(q.get('h') || 630);
+  const seed = +(q.get('seed') || 1);
+  const text = q.get('text') || 'Pollock Dreams';
+  const fontFile = q.get('font') || 'MrDafoe-Regular.ttf';
+  let palette = q.get('palette');
+  if (palette != null) {
+    palette = /^\d+$/.test(palette) ? +palette
+      : PD.PALETTES.findIndex(p => p.name.toLowerCase().includes(palette.toLowerCase()));
+  }
+
+  const canvas = document.getElementById('c');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const rng = PD.mulberry32(seed);
+  const eng = PD.engine(ctx, W, H);
+  const { jobs, name } = eng.buildJobs(rng, { palette: palette >= 0 ? palette : undefined });
+  for (const job of jobs) job();
+
+  const pal = PD.PALETTES.find(p => p.name === name);
+  const cols = pal.colors.map(PD.hexToRgb);
+  const dark = cols[0], light = cols[1], accents = cols.slice(2);
+
+  // --- title glyphs -------------------------------------------------------
+  const font = await new Promise((ok, fail) => opentype.load('fonts/' + fontFile, (e, f) => e ? fail(e) : ok(f)));
+  let gp = font.getPath(text, 0, 0, 100);
+  let bb = gp.getBoundingBox();
+  const size = 100 * Math.min((W * 0.84) / (bb.x2 - bb.x1), (H * 0.5) / (bb.y2 - bb.y1));
+  gp = font.getPath(text, 0, 0, size);
+  bb = gp.getBoundingBox();
+  const ox = (W - (bb.x2 - bb.x1)) / 2 - bb.x1, oy = (H - (bb.y2 - bb.y1)) / 2 - bb.y1;
+
+  // Path2D for fills/clipping, plus flattened contours for tracing
+  const glyphs = new Path2D(), contours = [];
+  let cur = null, px = 0, py = 0;
+  const add = (x, y) => { cur.push([x + ox, y + oy]); px = x; py = y; };
+  for (const c of gp.commands) {
+    if (c.type === 'M') { cur = []; contours.push(cur); add(c.x, c.y); glyphs.moveTo(c.x + ox, c.y + oy); }
+    else if (c.type === 'L') { add(c.x, c.y); glyphs.lineTo(c.x + ox, c.y + oy); }
+    else if (c.type === 'Q' || c.type === 'C') {
+      const x0 = px, y0 = py, n = Math.max(4, Math.ceil(Math.hypot(c.x - x0, c.y - y0) / 2));
+      for (let i = 1; i <= n; i++) {
+        const t = i / n, u = 1 - t;
+        if (c.type === 'Q') add(u * u * x0 + 2 * u * t * c.x1 + t * t * c.x, u * u * y0 + 2 * u * t * c.y1 + t * t * c.y);
+        else add(u * u * u * x0 + 3 * u * u * t * c.x1 + 3 * u * t * t * c.x2 + t * t * t * c.x,
+                 u * u * u * y0 + 3 * u * u * t * c.y1 + 3 * u * t * t * c.y2 + t * t * t * c.y);
+      }
+      if (c.type === 'Q') glyphs.quadraticCurveTo(c.x1 + ox, c.y1 + oy, c.x + ox, c.y + oy);
+      else glyphs.bezierCurveTo(c.x1 + ox, c.y1 + oy, c.x2 + ox, c.y2 + oy, c.x + ox, c.y + oy);
+    } else if (c.type === 'Z') { glyphs.closePath(); }
+  }
+
+  // 1/f displacement: a sum of sines whose amplitude grows with wavelength,
+  // so the traced line wobbles at every scale like a poured line.
+  function fractalNoise(amp) {
+    const oct = [140, 60, 26, 11, 5].map(l => ({ f: TAU / (l * (0.7 + rng() * 0.6)), a: amp * Math.pow(l / 140, 0.65), p: rng() * TAU }));
+    return s => oct.reduce((v, o) => v + o.a * Math.sin(o.f * s + o.p), 0);
+  }
+
+  // Trace a polyline as a poured line: displaced along its normal, with
+  // variable width, beads where it runs thin, and splatter.
+  function trace(pts, col, o) {
+    const off = fractalNoise(o.wobble), wid = fractalNoise(1);
+    const fill = rgba(col, o.alpha);
+    let s = 0;
+    const out = pts.map((p, i) => {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+      if (i) s += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+      const d = off(s);
+      return [p[0] - dy / l * d, p[1] + dx / l * d, s];
+    });
+    ctx.fillStyle = ctx.strokeStyle = fill;
+    for (let i = 1; i < out.length; i++) {
+      const [x0, y0] = out[i - 1], [x1, y1, si] = out[i];
+      const w = o.width * Math.max(0, 0.55 + wid(si) * 0.6) * (0.85 + rng() * 0.3);
+      if (w < 0.6) {
+        if (rng() < 0.35) { ctx.beginPath(); ctx.arc(x1, y1, 0.4 + w * 0.5, 0, TAU); ctx.fill(); }
+        continue;
+      }
+      ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      if (rng() < o.splat) {
+        const dir = rng() * TAU, dist = w + powerLaw(rng, 2, 40, 1.4), r = powerLaw(rng, 0.3, w * 0.9 + 0.5, 1.8);
+        ctx.beginPath(); ctx.arc(x1 + Math.cos(dir) * dist, y1 + Math.sin(dir) * dist, r, 0, TAU); ctx.fill();
+      }
+    }
+    return out;
+  }
+
+  // Random overlapping stretches of each contour, so the letters look poured
+  // in several gestures rather than outlined in one go.
+  function arcs(pts, cover) {
+    const res = [], n = pts.length;
+    let i = Math.floor(rng() * n);
+    for (let done = 0; done < n * cover;) {
+      const len = Math.min(n + 2, 30 + Math.floor(rng() * n * 0.7));
+      const seg = [];
+      for (let k = 0; k < len; k++) seg.push(pts[(i + k) % n]);
+      res.push(seg);
+      i = (i + len - Math.floor(rng() * 12)) % n;
+      done += len;
+    }
+    return res;
+  }
+
+  const ink = accents.slice().sort((a, b) => (b[0] + b[1] + b[2]) - (a[0] + a[1] + a[2]));
+
+  // dark halo so the title reads over the busy painting
+  ctx.save();
+  ctx.filter = `blur(${Math.round(size * 0.12)}px)`;
+  ctx.fillStyle = rgba(dark, 0.55);
+  ctx.lineWidth = size * 0.22;
+  ctx.strokeStyle = rgba(dark, 0.5);
+  ctx.stroke(glyphs);
+  ctx.fill(glyphs);
+  ctx.restore();
+
+  // letters: light paint with drips of the palette poured into them
+  ctx.fillStyle = rgba(light, 1);
+  ctx.fill(glyphs);
+  ctx.save();
+  ctx.clip(glyphs);
+  for (let i = 0; i < 26; i++) {
+    const c = ink[(rng() * Math.min(3, ink.length)) | 0];
+    eng.pour(rng, {
+      x: bb.x1 + ox + rng() * (bb.x2 - bb.x1), y: bb.y1 + oy + rng() * (bb.y2 - bb.y1),
+      heading: rng() * TAU, scale: 160, length: 250 + rng() * 400, color: c, alpha: 0.9,
+      width: 1 + rng() * 2.5, curl: 0.5, speed: 1, splat: 0.3, pool: 0, surge: 0.4,
+    });
+  }
+  ctx.restore();
+
+  // contours traced in dark and accent paint, some trailing off into skeins
+  for (const pass of [
+    { col: dark, width: 2.6, wobble: 1.6, alpha: 0.95, splat: 0.02, cover: 1.15 },
+    { col: ink[0] || light, width: 1.3, wobble: 3.2, alpha: 0.9, splat: 0.01, cover: 0.7 },
+    { col: dark, width: 0.9, wobble: 6, alpha: 0.9, splat: 0.008, cover: 0.5 },
+  ]) {
+    for (const c of contours) {
+      if (c.length < 6) continue;
+      for (const seg of arcs(c, pass.cover)) {
+        const out = trace(seg, pass.col, pass);
+        if (rng() < 0.1 && out.length > 4) {
+          const [x, y] = out[out.length - 1], [x0, y0] = out[out.length - 4];
+          eng.pour(rng, {
+            x, y, heading: Math.atan2(y - y0, x - x0), scale: 90, length: 60 + rng() * 160,
+            color: pass.col, alpha: pass.alpha, width: pass.width, curl: 0.9, speed: 1.2,
+            splat: 1, pool: 0, surge: 0.3,
+          });
+        }
+      }
+    }
+  }
+
+  document.title = 'DONE ' + name;
+})().catch(e => { document.title = 'ERROR ' + e; });
+</script>
+</body>
+</html>
