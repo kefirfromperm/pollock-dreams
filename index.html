@@ -50,7 +50,13 @@
     const m = location.hash.match(/^#(\d+)$/);
     return m ? +m[1] : (Math.random() * 1e9) | 0;
   }
+  // At most one new painting per second: rapid full-screen changes can
+  // trigger photosensitive epilepsy. Extra requests are dropped, not queued.
+  let lastNew = -Infinity;
   function newSeed() {
+    const now = performance.now();
+    if (now - lastNew < 1000) return;
+    lastNew = now;
     seed = (Math.random() * 1e9) | 0;
     history.replaceState(null, '', '#' + seed);
     start();
@@ -90,7 +96,10 @@
 
   canvas.addEventListener('click', newSeed);
   window.addEventListener('keydown', e => {
-    if (e.code === 'Space' || e.key === 'n') { e.preventDefault(); newSeed(); }
+    if (e.code === 'Space' || e.key === 'n') {
+      e.preventDefault();
+      if (!e.repeat) newSeed(); // holding the key doesn't keep redrawing
+    }
     if (e.key === 's' || e.key === 'S') {
       const a = document.createElement('a');
       a.download = `pollock-${seed}.png`;
