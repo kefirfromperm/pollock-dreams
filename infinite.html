@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8J2V3WVJ2Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-8J2V3WVJ2Z');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pollock Dreams: Infinite</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="description" content="One generative drip painting in the spirit of Jackson Pollock that never stops being poured, its colours drifting from one Pollock combination to the next.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Pollock Dreams">
+<meta property="og:title" content="Pollock Dreams: Infinite">
+<meta property="og:description" content="One drip painting that never stops being poured, its colours drifting from one Pollock combination to the next.">
+<meta property="og:url" content="https://kefirfromperm.github.io/pollock-dreams/infinite.html">
+<meta property="og:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="“Pollock Dreams” written in poured cursive lines over a generative drip painting">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Pollock Dreams: Infinite">
+<meta name="twitter:description" content="One drip painting that never stops being poured, its colours drifting from one Pollock combination to the next.">
+<meta name="twitter:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og.png">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #d9c7a3; }
+  canvas {
+    display: block; position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); cursor: pointer;
+    touch-action: none; /* swipes are ours, not scroll / pull-to-refresh */
+  }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 52px);
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border-radius: 4px;
+    transition: opacity 1.2s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+  #swatches { display: flex; gap: 3px; margin-bottom: 5px; }
+  #swatches span { width: 14px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(244,239,227,.35); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><div id="swatches"></div><div id="hintText">click / space: new painting · S: save PNG</div></div>
+<script src="pollock.js"></script>
+<script>
+(() => {
+  const PD = PollockDreams, { TAU, PALETTES, rgba, jitter, shuffle, powerLaw } = PD;
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const hint = document.getElementById('hint');
+  const hintText = document.getElementById('hintText');
+  const swatchBox = document.getElementById('swatches');
+
+  let seed, token = 0, W, H;
+  const touch = matchMedia('(pointer: coarse)').matches;
+
+  // ---- colour: OKLab, so distances match how different colours look ----
+  const lin = v => (v /= 255) <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  const gam = v => 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  function toLab([r, g, b]) {
+    r = lin(r); g = lin(g); b = lin(b);
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
+  }
+  function toRgb([L, A, B]) {
+    const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+    const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+    const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+    return [4.0767416621 * l - 3.3077085724 * m + 0.2309667107 * s,
+            -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+            -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s]
+      .map(v => Math.max(0, Math.min(255, gam(Math.max(0, v)))));
+  }
+  const dist2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+  const SIGMA2 = 2 * 0.07 * 0.07;
+  const near = (a, b) => Math.exp(-dist2(a, b) / SIGMA2);
+
+  // Pollock's colour combinations, learned from the palettes: every colour
+  // with its role (structure dark, light, or one of the other colours).
+  const SOURCES = PALETTES.map(p => ({
+    name: p.name,
+    bg: toLab(PD.hexToRgb(p.bg)),
+    colors: p.colors.map((h, i) => ({ lab: toLab(PD.hexToRgb(h)), role: i === 0 ? 'dark' : i === 1 ? 'light' : 'other' })),
+  }));
+
+  // The colour mind: there is no fixed palette, only the colours poured
+  // recently. Each next colour is derived from them: the paintings whose
+  // combinations best explain the current colours vote for what comes next,
+  // so the palette walks gradually through Pollock's work, mixing and
+  // shifting colours on the way, but never into combinations he wouldn't use.
+  function colourMind(rng) {
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    const fatigue = SOURCES.map(() => 0); // recently followed paintings rest a while
+    const cur = { dark: null, light: null, others: [] }; // the working palette, in OKLab
+    const MAX_OTHERS = 5;
+
+    const all = () => [cur.dark, cur.light, ...cur.others].filter(Boolean);
+    // How well each painting explains the current colours. Only the other
+    // colours count: nearly every Pollock has the same black and white.
+    function affinity() {
+      return SOURCES.map((p, i) => {
+        let a = 0;
+        for (const w of cur.others) {
+          let best = 0;
+          for (const c of p.colors) if (c.role === 'other') best = Math.max(best, near(w, c.lab));
+          a += best;
+        }
+        return (a / Math.max(1, cur.others.length) + 0.03) / (1 + fatigue[i]);
+      });
+    }
+    function pick(weights) {
+      let t = rng() * weights.reduce((s, w) => s + w, 0);
+      for (let i = 0; i < weights.length; i++) if ((t -= weights[i]) <= 0) return i;
+      return weights.length - 1;
+    }
+    function nudge(lab, amt) {
+      return [lab[0] + gauss() * 0.03 * amt, lab[1] + gauss() * 0.018 * amt, lab[2] + gauss() * 0.018 * amt];
+    }
+    const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+
+    // the next colour for role: 'dark' | 'light' | 'other'
+    function next(role) {
+      const aff = affinity().map(a => a ** 6); // sharpen: follow the best-fitting paintings
+      const pi = pick(aff), src = SOURCES[pi];
+      fatigue.forEach((f, i) => fatigue[i] = f * 0.96);
+      fatigue[pi] += 0.12;
+      const cands = src.colors.filter(c => c.role === role);
+      // prefer the painting's colours that aren't on the canvas yet
+      const win = all();
+      const fresh = cands.map(c => 1.05 - Math.max(0, ...win.map(w => near(w, c.lab))));
+      let lab = cands[pick(fresh)].lab;
+      if (role === 'other' && rng() < 0.35) {
+        // a mixed colour: blended with one already in play, or with a
+        // colour of a related painting, as paint picks up paint on the stick
+        const other = rng() < 0.5 && cur.others.length ? cur.others[(rng() * cur.others.length) | 0]
+          : SOURCES[pick(aff)].colors.filter(c => c.role === 'other')[0 | rng() * 3]?.lab ?? lab;
+        lab = mix(lab, other, 0.2 + rng() * 0.3);
+      }
+      lab = nudge(lab, role === 'other' ? 1 : 0.4);
+      if (role === 'dark') lab[0] = Math.min(lab[0], 0.3);
+      if (role === 'light') lab[0] = Math.max(lab[0], 0.86);
+      if (role === 'dark') cur.dark = lab;
+      else if (role === 'light') cur.light = lab;
+      else { cur.others.push(lab); if (cur.others.length > MAX_OTHERS) cur.others.shift(); }
+      return lab;
+    }
+    // the ground, chosen to suit the colours in play
+    function ground() { return nudge(SOURCES[pick(affinity().map(a => a ** 6))].bg, 0.5); }
+    function nearest() {
+      const aff = affinity();
+      return SOURCES[aff.indexOf(Math.max(...aff))].name;
+    }
+    // start from a few colours of one painting; the rest is derived from them
+    const start = SOURCES[(rng() * SOURCES.length) | 0];
+    cur.dark = nudge(start.colors[0].lab, 0.4);
+    cur.light = nudge(start.colors[1].lab, 0.4);
+    cur.others.push(nudge(start.colors[2 + ((rng() * (start.colors.length - 2)) | 0)].lab, 1));
+
+    return { next, ground, nearest, palette: () => all().map(toRgb), others: () => cur.others };
+  }
+
+  // ---- painting ----
+  const UNDER_LAYERS = 14, BED_EVERY = 7, MAX_W = 20, DENSITY = 5;
+
+  function setupCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Paint at the largest size the window can reach (the screen), so resizing
+    // only reveals or crops the same image instead of repainting it.
+    W = Math.max(screen.width, window.innerWidth);
+    H = Math.max(screen.height, window.innerHeight);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }
+
+  // Pours and blots as in the finite painting (pollock.js buildJobs), but
+  // layer after layer forever, each in the next derived colour.
+  function painter(rng) {
+    const eng = PD.engine(ctx, W, H);
+    const mind = colourMind(rng);
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    const D = Math.hypot(W, H);
+    const areaK = Math.sqrt((W * H) / (1440 * 900));
+    const bold = rng(), blotty = 0.4 + rng() * 1.3;
+    let n = 0, lastRole = null;
+
+    function ground(bg) {
+      ctx.fillStyle = rgba(bg, 1);
+      ctx.fillRect(0, 0, W, H);
+      for (let i = 0; i < 26; i++) { // stains and uneven priming
+        const x = rng() * W, y = rng() * H, r = (0.1 + rng() * 0.45) * Math.max(W, H);
+        const c = jitter(bg, rng, 0.35);
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, rgba(c, 0.06 + rng() * 0.08));
+        g.addColorStop(1, rgba(c, 0));
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+      }
+      ctx.globalAlpha = 0.07;
+      ctx.fillStyle = eng.grainPattern(rng, false);
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 0.05;
+      ctx.fillStyle = eng.grainPattern(rng, true);
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+
+    function throwBlots(c, maxR) {
+      const r0 = powerLaw(rng, 2.5, maxR, 1.5);
+      let x = -0.05 * W + rng() * 1.1 * W, y = -0.05 * H + rng() * 1.1 * H;
+      const col = jitter(c, rng, 0.12), alpha = 0.9 + rng() * 0.1;
+      if (rng() < 0.7) { eng.inkblot(rng, x, y, r0, col, alpha); return; }
+      const k = 2 + (rng() * 5 | 0), a = rng() * TAU;
+      let r = r0;
+      for (let i = 0; i < k; i++) { // a trail of shrinking blots
+        eng.inkblot(rng, x, y, r, col, alpha);
+        const gap = r * (2.5 + rng() * 4);
+        x += Math.cos(a + (rng() - 0.5) * 0.5) * gap;
+        y += Math.sin(a + (rng() - 0.5) * 0.5) * gap;
+        r *= 0.55 + rng() * 0.3;
+      }
+    }
+
+    function stroke(L, sf) {
+      const kind = rng();
+      const scale = D * sf * (0.7 + rng() * 0.6);
+      const o = {
+        x: -0.1 * W + rng() * 1.2 * W,
+        y: -0.1 * H + rng() * 1.2 * H,
+        heading: rng() * TAU,
+        scale,
+        length: scale * (1.4 + rng() * 2.2),
+        color: jitter(L.c, rng, 0.12),
+        alpha: 0.86 + rng() * 0.14,
+        width: L.wb * (0.35 + sf * 2.2) * 0.6 * Math.exp(gauss() * (0.45 + bold * 0.3)),
+        curl: 0.3 + rng() * 0.6,
+        speed: 0.7 + rng() * 0.6,
+        splat: 0.8 + rng() * 1.4,
+        pool: 1,
+        surge: 0.2 + rng() * 0.6,
+      };
+      const rope = 0.05 + bold * 0.1;
+      if (kind < 0.22) {               // fine tangled skein
+        o.width *= 0.4; o.curl *= 1.4; o.length *= 1.4; o.splat *= 0.4;
+      } else if (kind < 0.31) {        // fast flung line
+        o.curl *= 0.15; o.speed *= 2; o.splat *= 3; o.width *= 0.7; o.pool = 0;
+      } else if (kind < 0.39) {        // hairline: long, fast, barely there
+        o.width = 0.6 + rng() * 0.8; o.length *= 1.8; o.speed *= 1.5; o.surge = 0; o.splat *= 0.3;
+      } else if (kind < 0.47) {        // whipped line with sharp corners
+        o.kink = 2 + rng() * 4; o.curl *= 0.5; o.speed *= 1.3;
+      } else if (kind < 0.53) {        // long sweeping arc
+        o.curl *= 0.2; o.arc = 0.6 + rng() * 0.8; o.length *= 1.3; o.width *= 1.4;
+      } else if (kind < 0.53 + rope) { // heavy rope: bold, slow, swelling, pooling
+        o.width *= 1.8 + rng() * 1.2; o.speed *= 0.6; o.curl *= 0.6; o.surge = 0.8 + rng() * 0.8;
+        o.pool = 3; o.length *= 0.7; o.splat *= 0.5;
+      }
+      o.width = Math.min(MAX_W, o.width);
+      eng.pour(rng, o);
+    }
+
+    // Next layer: dark and light keep returning as the structure, other
+    // colours come between them; the first layers are a dense underpainting.
+    // Every few layers a dense bed in the colours in play buries the older
+    // ones, so what shows stays one combination rather than all of them.
+    function nextLayer() {
+      const under = n < UNDER_LAYERS || n % BED_EVERY === 0;
+      let role;
+      const r = rng();
+      if (lastRole !== 'dark' && r < 0.24) role = 'dark';
+      else if (lastRole !== 'light' && r < 0.42) role = 'light';
+      else role = 'other';
+      lastRole = role;
+      // an "other" layer sometimes picks the brush up again for a colour in play
+      const others = mind.others();
+      const lab = role === 'other' && others.length > 2 && rng() < 0.35
+        ? others[(rng() * others.length) | 0] : mind.next(role);
+      const L = {
+        c: toRgb(lab),
+        weight: under ? 0.55 * Math.exp(gauss() * 0.6) * (0.6 + rng() * 0.8)
+                      : (role === 'dark' ? 0.35 : 0.2) + rng() * 0.3,
+        wb: under ? 6 * (0.7 + rng() * 0.6) : role === 'dark' ? 3.2 : 2 + rng() * 1.6,
+      };
+      const strokes = [];
+      for (const sf of [0.5, 0.25, 0.12, 0.06]) {
+        // fractal distribution of stroke sizes: N(s) ~ s^-1.7
+        const count = Math.round(DENSITY * Math.pow(sf / 0.5, -1.7) * L.weight * areaK * (0.7 + rng() * 0.6));
+        for (let i = 0; i < count; i++) strokes.push(sf);
+      }
+      const blots = Math.round((role === 'dark' ? 22 : 10) * L.weight * blotty * areaK * (0.5 + rng()));
+      for (let i = 0; i < blots; i++) strokes.push(0);
+      const jobs = shuffle(strokes, rng).map(sf => sf ? () => stroke(L, sf) : () => throwBlots(L.c, D * 0.03));
+      // a few droplets of the colours in play
+      jobs.push(() => {
+        const pal = mind.palette();
+        for (let i = 0; i < 25 * areaK; i++) {
+          ctx.fillStyle = rgba(pal[(rng() * pal.length) | 0], 0.9);
+          ctx.beginPath();
+          ctx.arc(rng() * W, rng() * H, powerLaw(rng, 0.4, 7, 1.6), 0, TAU);
+          ctx.fill();
+        }
+      });
+      n++;
+      // The underpainting goes down in a few seconds; after that each layer is
+      // poured slowly, so dark and light layers never alternate fast enough
+      // to flash (photosensitive epilepsy: keep well under 3 changes a second).
+      return { jobs, ms: n <= UNDER_LAYERS ? 450 : under ? 9000 : 4000 + rng() * 4000 };
+    }
+
+    const bg = toRgb(mind.ground());
+    return { bg, ground: () => ground(bg), nextLayer, mind };
+  }
+
+  function readSeed() {
+    const m = location.hash.match(/^#(\d+)$/);
+    return m ? +m[1] : (Math.random() * 1e9) | 0;
+  }
+  // At most one new painting per second: rapid full-screen changes can
+  // trigger photosensitive epilepsy. Extra requests are dropped, not queued.
+  let lastNew = -Infinity;
+  function newSeed() {
+    const now = performance.now();
+    if (now - lastNew < 1000) return;
+    lastNew = now;
+    seed = (Math.random() * 1e9) | 0;
+    history.replaceState(null, '', '#' + seed);
+    start();
+  }
+
+  function showPalette(p) {
+    swatchBox.replaceChildren(...p.mind.palette().map(c => {
+      const s = document.createElement('span');
+      s.style.background = rgba(c, 1);
+      return s;
+    }));
+    hintText.textContent = (touch ? 'near ' : 'colours near ') + p.mind.nearest() +
+      (touch ? ' · tap / swipe: new' : ' · click / space: new · S: save PNG');
+  }
+
+  let current;
+  function start() {
+    const my = ++token;
+    setupCanvas();
+    const p = current = painter(PD.mulberry32(seed));
+    document.body.style.background = rgba(p.bg, 1);
+    p.ground();
+    let layer = p.nextLayer(), i = 0, credit = 0, last;
+    showPalette(p);
+    showHint();
+    // Jobs are released at the current layer's pace; time spent in a hidden
+    // tab doesn't pile up into a burst when it comes back.
+    const frame = now => {
+      if (my !== token) return;
+      const dt = Math.min(100, now - (last ?? now));
+      last = now;
+      credit += dt * layer.jobs.length / layer.ms;
+      const f0 = performance.now();
+      while (credit >= 1 && performance.now() - f0 < 14) {
+        layer.jobs[i++]();
+        credit--;
+        if (i === layer.jobs.length) {
+          layer = p.nextLayer(); i = 0;
+          credit = Math.min(credit, 1);
+          showPalette(p);
+        }
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  canvas.addEventListener('click', newSeed);
+  // Swipe in any direction for a new painting (tap is handled by click).
+  let swipe = null;
+  canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse') swipe = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  });
+  canvas.addEventListener('pointerup', e => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    swipe = null;
+    if (Math.hypot(dx, dy) > 50) newSeed();
+  });
+  canvas.addEventListener('pointercancel', () => { swipe = null; });
+  // the hint (with the colours in play) comes back while the mouse moves
+  let lastMove = 0;
+  window.addEventListener('mousemove', () => {
+    const now = performance.now();
+    if (now - lastMove > 500) { lastMove = now; showHint(); }
+  });
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.key === 'n') {
+      e.preventDefault();
+      if (!e.repeat) newSeed(); // holding the key doesn't keep redrawing
+    }
+    if (e.key === 's' || e.key === 'S') {
+      const a = document.createElement('a');
+      a.download = `pollock-infinite-${seed}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+  });
+  let rt;
+  window.addEventListener('resize', () => {
+    clearTimeout(rt);
+    // only repaint if the window outgrew the painting (e.g. moved to a bigger monitor)
+    rt = setTimeout(() => { if (window.innerWidth > W || window.innerHeight > H) start(); }, 250);
+  });
+  window.addEventListener('hashchange', () => { const s = readSeed(); if (s !== seed) { seed = s; start(); } });
+  let ht;
+  function showHint() {
+    hint.classList.remove('hidden');
+    clearTimeout(ht);
+    ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+  }
+
+  seed = readSeed();
+  history.replaceState(null, '', '#' + seed);
+  start();
+})();
+</script>
+</body>
+</html>
