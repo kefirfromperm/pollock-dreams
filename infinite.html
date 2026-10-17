@@ -33,7 +33,7 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #d9c7a3; }
   canvas {
     display: block; position: fixed; left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%); cursor: pointer;
   }
   #hint {
     position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 52px);
@@ -348,24 +348,35 @@
       s.style.background = rgba(c, 1);
       return s;
     }));
-    hintText.textContent = (touch ? 'near ' : 'colours near ') + p.mind.nearest() + (touch ? '' : ' · S: save PNG');
+    hintText.textContent = (touch ? 'near ' : 'colours near ') + p.mind.nearest() +
+      (paused ? ' · paused' : '') +
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
   }
+
+  // Click / tap pauses and resumes the pouring; while paused the hint stays up.
+  let paused = false, painting;
+  canvas.addEventListener('click', () => {
+    paused = !paused;
+    showPalette(painting);
+    showHint();
+  });
 
   // One painting per page load: it is never restarted, only reloading the
   // page begins a new one.
   function start() {
     setupCanvas();
-    const p = painter(PD.mulberry32(seed));
+    const p = painting = painter(PD.mulberry32(seed));
     document.body.style.background = rgba(p.bg, 1);
     p.ground();
     let layer = p.nextLayer(performance.now()), i = 0, credit = 0, last;
     showPalette(p);
     showHint();
     // Jobs are released at the current layer's pace; time spent in a hidden
-    // tab doesn't pile up into a burst when it comes back.
+    // tab, or while paused, doesn't pile up into a burst when it comes back.
     const frame = now => {
       const dt = Math.min(100, now - (last ?? now));
       last = now;
+      if (paused) { requestAnimationFrame(frame); return; }
       credit += dt * layer.jobs.length / layer.ms;
       const f0 = performance.now();
       while (credit >= 1 && performance.now() - f0 < 14) {
@@ -400,7 +411,7 @@
   function showHint() {
     hint.classList.remove('hidden');
     clearTimeout(ht);
-    ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
   }
 
   start();
