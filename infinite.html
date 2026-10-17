@@ -36,7 +36,7 @@
     transform: translate(-50%, -50%); cursor: pointer;
   }
   #hint {
-    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 52px);
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 170px);
     font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #f4efe3; background: rgba(20,17,15,.55);
     padding: 6px 10px; border-radius: 4px;
@@ -45,12 +45,23 @@
   #hint.hidden { opacity: 0; }
   #swatches { display: flex; gap: 3px; margin-bottom: 5px; }
   #swatches span { width: 14px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(244,239,227,.35); }
+  #sound {
+    position: fixed; right: 16px; bottom: 14px;
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
+    transition: opacity 1.2s; opacity: 1;
+  }
+  #sound.dim { opacity: .35; }
+  #sound:hover, #sound:focus-visible { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint"><div id="swatches"></div><div id="hintText"></div></div>
+<button id="sound" type="button" aria-pressed="false">♪ music: off</button>
 <script src="pollock.js"></script>
+<script src="music.js"></script>
 <script>
 (() => {
   const PD = PollockDreams, { TAU, PALETTES, rgba, jitter, shuffle, powerLaw } = PD;
@@ -59,6 +70,7 @@
   const hint = document.getElementById('hint');
   const hintText = document.getElementById('hintText');
   const swatchBox = document.getElementById('swatches');
+  const sound = document.getElementById('sound');
 
   const seed = (Math.random() * 1e9) | 0;
   let W, H;
@@ -350,16 +362,31 @@
     }));
     hintText.textContent = (touch ? 'near ' : 'colours near ') + p.mind.nearest() +
       (paused ? ' · paused' : '') +
-      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · M: music · S: save PNG`);
   }
 
   // Click / tap pauses and resumes the pouring; while paused the hint stays up.
   let paused = false, painting;
   canvas.addEventListener('click', () => {
     paused = !paused;
+    syncMusic();
     showPalette(painting);
     showHint();
   });
+
+  // Ambient fractal music (music.js), off until asked for: browsers only let
+  // sound start from a click or a key press. It pauses with the painting.
+  const music = PollockMusic.player(seed);
+  let musicOn = false;
+  const syncMusic = () => musicOn && !paused ? music.play() : music.stop();
+  function toggleMusic() {
+    musicOn = !musicOn;
+    syncMusic();
+    sound.textContent = `♪ music: ${musicOn ? 'on' : 'off'}`;
+    sound.setAttribute('aria-pressed', musicOn);
+    showHint();
+  }
+  sound.addEventListener('click', toggleMusic);
 
   // One painting per page load: it is never restarted, only reloading the
   // page begins a new one.
@@ -400,6 +427,7 @@
     if (now - lastMove > 500) { lastMove = now; showHint(); }
   });
   window.addEventListener('keydown', e => {
+    if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleMusic();
     if (e.key === 's' || e.key === 'S') {
       const a = document.createElement('a');
       a.download = `pollock-infinite-${seed}.png`;
@@ -410,8 +438,9 @@
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
+    sound.classList.remove('dim');
     clearTimeout(ht);
-    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); sound.classList.add('dim'); }, 4000);
   }
 
   start();
