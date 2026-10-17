@@ -33,8 +33,7 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #d9c7a3; }
   canvas {
     display: block; position: fixed; left: 50%; top: 50%;
-    transform: translate(-50%, -50%); cursor: pointer;
-    touch-action: none; /* swipes are ours, not scroll / pull-to-refresh */
+    transform: translate(-50%, -50%);
   }
   #hint {
     position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 52px);
@@ -50,7 +49,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint"><div id="swatches"></div><div id="hintText">click / space: new painting · S: save PNG</div></div>
+<div id="hint"><div id="swatches"></div><div id="hintText"></div></div>
 <script src="pollock.js"></script>
 <script>
 (() => {
@@ -61,7 +60,8 @@
   const hintText = document.getElementById('hintText');
   const swatchBox = document.getElementById('swatches');
 
-  let seed, token = 0, W, H;
+  const seed = (Math.random() * 1e9) | 0;
+  let W, H;
   const touch = matchMedia('(pointer: coarse)').matches;
 
   // ---- colour: OKLab, so distances match how different colours look ----
@@ -342,37 +342,20 @@
     return { bg, ground: () => ground(bg), nextLayer, mind };
   }
 
-  function readSeed() {
-    const m = location.hash.match(/^#(\d+)$/);
-    return m ? +m[1] : (Math.random() * 1e9) | 0;
-  }
-  // At most one new painting per second: rapid full-screen changes can
-  // trigger photosensitive epilepsy. Extra requests are dropped, not queued.
-  let lastNew = -Infinity;
-  function newSeed() {
-    const now = performance.now();
-    if (now - lastNew < 1000) return;
-    lastNew = now;
-    seed = (Math.random() * 1e9) | 0;
-    history.replaceState(null, '', '#' + seed);
-    start();
-  }
-
   function showPalette(p) {
     swatchBox.replaceChildren(...p.mind.palette().map(c => {
       const s = document.createElement('span');
       s.style.background = rgba(c, 1);
       return s;
     }));
-    hintText.textContent = (touch ? 'near ' : 'colours near ') + p.mind.nearest() +
-      (touch ? ' · tap / swipe: new' : ' · click / space: new · S: save PNG');
+    hintText.textContent = (touch ? 'near ' : 'colours near ') + p.mind.nearest() + (touch ? '' : ' · S: save PNG');
   }
 
-  let current;
+  // One painting per page load: it is never restarted, only reloading the
+  // page begins a new one.
   function start() {
-    const my = ++token;
     setupCanvas();
-    const p = current = painter(PD.mulberry32(seed));
+    const p = painter(PD.mulberry32(seed));
     document.body.style.background = rgba(p.bg, 1);
     p.ground();
     let layer = p.nextLayer(performance.now()), i = 0, credit = 0, last;
@@ -381,7 +364,6 @@
     // Jobs are released at the current layer's pace; time spent in a hidden
     // tab doesn't pile up into a burst when it comes back.
     const frame = now => {
-      if (my !== token) return;
       const dt = Math.min(100, now - (last ?? now));
       last = now;
       credit += dt * layer.jobs.length / layer.ms;
@@ -400,19 +382,6 @@
     requestAnimationFrame(frame);
   }
 
-  canvas.addEventListener('click', newSeed);
-  // Swipe in any direction for a new painting (tap is handled by click).
-  let swipe = null;
-  canvas.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'mouse') swipe = { id: e.pointerId, x: e.clientX, y: e.clientY };
-  });
-  canvas.addEventListener('pointerup', e => {
-    if (!swipe || e.pointerId !== swipe.id) return;
-    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
-    swipe = null;
-    if (Math.hypot(dx, dy) > 50) newSeed();
-  });
-  canvas.addEventListener('pointercancel', () => { swipe = null; });
   // the hint (with the colours in play) comes back while the mouse moves
   let lastMove = 0;
   window.addEventListener('mousemove', () => {
@@ -420,10 +389,6 @@
     if (now - lastMove > 500) { lastMove = now; showHint(); }
   });
   window.addEventListener('keydown', e => {
-    if (e.code === 'Space' || e.key === 'n') {
-      e.preventDefault();
-      if (!e.repeat) newSeed(); // holding the key doesn't keep redrawing
-    }
     if (e.key === 's' || e.key === 'S') {
       const a = document.createElement('a');
       a.download = `pollock-infinite-${seed}.png`;
@@ -431,13 +396,6 @@
       a.click();
     }
   });
-  let rt;
-  window.addEventListener('resize', () => {
-    clearTimeout(rt);
-    // only repaint if the window outgrew the painting (e.g. moved to a bigger monitor)
-    rt = setTimeout(() => { if (window.innerWidth > W || window.innerHeight > H) start(); }, 250);
-  });
-  window.addEventListener('hashchange', () => { const s = readSeed(); if (s !== seed) { seed = s; start(); } });
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
@@ -445,8 +403,6 @@
     ht = setTimeout(() => hint.classList.add('hidden'), 4000);
   }
 
-  seed = readSeed();
-  history.replaceState(null, '', '#' + seed);
   start();
 })();
 </script>
