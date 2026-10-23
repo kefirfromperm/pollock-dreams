@@ -15,7 +15,9 @@
 <script>
 // Open Graph image: a drip painting with the title written over it in
 // poured, wobbling lines. Rendered by scripts/make-og.sh.
-// Query params: seed, palette (index or part of a name), font, text, w, h.
+// Query params: seed, palette (index or part of a name), font, text, w, h,
+// bg (an image to write over instead of a drip painting; the title's
+// colours are then taken from it).
 (async () => {
   const PD = PollockDreams, { TAU, rgba, powerLaw } = PD;
   const q = new URLSearchParams(location.search);
@@ -37,12 +39,40 @@
 
   const rng = PD.mulberry32(seed);
   const eng = PD.engine(ctx, W, H);
-  const { jobs, name } = eng.buildJobs(rng, { palette: palette >= 0 ? palette : undefined });
-  for (const job of jobs) job();
+  let name, dark, light, accents;
+  if (q.get('bg')) {
+    const img = new Image();
+    img.src = q.get('bg');
+    await img.decode();
+    ctx.drawImage(img, 0, 0, W, H);
+    ({ dark, light, accents } = coloursOf(ctx.getImageData(0, 0, W, H).data));
+    name = q.get('bg');
+  } else {
+    const built = eng.buildJobs(rng, { palette: palette >= 0 ? palette : undefined });
+    for (const job of built.jobs) job();
+    name = built.name;
+    const cols = PD.PALETTES.find(p => p.name === name).colors.map(PD.hexToRgb);
+    [dark, light, ...accents] = cols;
+  }
 
-  const pal = PD.PALETTES.find(p => p.name === name);
-  const cols = pal.colors.map(PD.hexToRgb);
-  const dark = cols[0], light = cols[1], accents = cols.slice(2);
+  // The colours of a picture: its darkest tenth deepened, its lightest
+  // tenth paled, and its most colourful pixels as the accents.
+  function coloursOf(px) {
+    const samples = [];
+    for (let i = 0; i < px.length; i += 4 * 97) samples.push([px[i], px[i + 1], px[i + 2]]);
+    const lum = c => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const chroma = c => Math.max(...c) - Math.min(...c);
+    const mean = cs => [0, 1, 2].map(k => cs.reduce((s, c) => s + c[k], 0) / cs.length);
+    const mix = (c, t, v) => c.map(x => x + (v - x) * t);
+    samples.sort((a, b) => lum(a) - lum(b));
+    const tenth = Math.max(1, samples.length / 10 | 0);
+    const vivid = samples.slice().sort((a, b) => chroma(b) - chroma(a)).slice(0, 4 * tenth);
+    return {
+      dark: mix(mean(samples.slice(0, tenth)), 0.6, 0),
+      light: mix(mean(samples.slice(-tenth)), 0.6, 255),
+      accents: [0, 1, 2, 3].map(k => mean(vivid.slice(k * tenth, (k + 1) * tenth))),
+    };
+  }
 
   // --- title glyphs -------------------------------------------------------
   const font = await new Promise((ok, fail) => opentype.load('fonts/' + fontFile, (e, f) => e ? fail(e) : ok(f)));
