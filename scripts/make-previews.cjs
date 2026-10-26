@@ -2,9 +2,10 @@
 // Render the gallery previews on the front page: paint each endless painting
 // for a while on a virtual clock and save its canvas as a JPEG, untitled.
 //
-//   node scripts/make-previews.cjs [--seconds S]
+//   node scripts/make-previews.cjs [--seconds S] [--only page.html]
 //
-// Needs playwright-core (NODE_PATH) and chromium.
+// Needs playwright-core (NODE_PATH) and chromium; WebGL paintings are drawn
+// by its software GPU (SwiftShader).
 const path = require('path');
 const fs = require('fs');
 const { chromium } = require('playwright-core');
@@ -16,15 +17,19 @@ const width = 800, height = 1000, root = path.resolve(__dirname, '..');
 const PAINTINGS = [
   { page: 'pollock-dreams.html', seed: 7, out: 'previews/pollock-dreams.jpg' },
   { page: 'rectangle-dreams.html', seed: 23, out: 'previews/rectangle-dreams.jpg' },
-];
+  // slower to fill the canvas, so painted for longer
+  { page: 'pour-dreams.html', seed: 5, out: 'previews/pour-dreams.jpg', webgl: true, seconds: 150 },
+].filter(p => !args.only || p.page === args.only);
 const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome']
   .find(p => fs.existsSync(p));
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: browserPath, args: ['--disable-gpu'] });
+  const browsers = {};
+  const browser = webgl => browsers[webgl] ??= chromium.launch({ executablePath: browserPath,
+    args: webgl ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--disable-gpu'] });
   fs.mkdirSync(path.join(root, 'previews'), { recursive: true });
-  for (const { page: name, seed, out } of PAINTINGS) {
-    const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+  for (const { page: name, seed, out, webgl = false, seconds: s = seconds } of PAINTINGS) {
+    const page = await (await browser(webgl)).newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
     // the project's files on a made-up origin, nothing else (no analytics)
     await page.route(/^https?:/, r => {
       const u = new URL(r.request().url());
@@ -57,10 +62,10 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       };
     }, { seed, width, height });
     await page.goto(`http://preview.local/${name}`);
-    const jpeg = await page.evaluate(ms => window.__run(ms, 1000 / 30), seconds * 1000);
+    const jpeg = await page.evaluate(ms => window.__run(ms, 1000 / 30), s * 1000);
     fs.writeFileSync(path.join(root, out), Buffer.from(jpeg, 'base64'));
     await page.close();
     console.log(out);
   }
-  await browser.close();
+  for (const b of Object.values(browsers)) await (await b).close();
 })().catch(e => { console.error(e); process.exit(1); });

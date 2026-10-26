@@ -21,9 +21,14 @@
 <meta property="og:title" content="Digital Art Meditation">
 <meta property="og:description" content="A small gallery of generative paintings that never stop being painted, each with its own ambient music.">
 <meta property="og:url" content="https://kefirfromperm.github.io/pollock-dreams/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og-gallery.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="“Digital Art Meditation” written in poured cursive lines over three generative paintings side by side">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Digital Art Meditation">
 <meta name="twitter:description" content="A small gallery of generative paintings that never stop being painted, each with its own ambient music.">
+<meta name="twitter:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og-gallery.png">
 <style>
   @font-face {
     font-family: 'Mr Dafoe';
@@ -97,12 +102,12 @@
   main {
     flex: 1;
     display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
-    gap: clamp(48px, 9vw, 120px);
+    gap: clamp(48px, 6vw, 96px);
     padding: 64px 16px 112px;
     overflow-x: clip; /* the spotlights are wider than a phone */
   }
 
-  .work { position: relative; width: min(340px, 100%); }
+  .work { position: relative; width: min(300px, 100%); }
   /* a ceiling spot on each painting */
   .work::before {
     content: ''; position: absolute; z-index: -1;
@@ -145,7 +150,7 @@
   }
 
   .placard {
-    margin: 32px auto 0; width: 82%;
+    margin: 32px auto 0; width: 92%;
     padding: 14px 16px 15px;
     background: var(--placard);
     box-shadow: 0 1px 2px var(--shadow);
@@ -193,6 +198,18 @@
       <h2><a href="rectangle-dreams.html">Rectangle Dreams</a></h2>
       <div class="medium">Generative glazes, endless · with music</div>
       <p>Fractal rectangles glazed one over another forever, their colours walking around the whole colour wheel in harmony.</p>
+    </figcaption>
+  </figure>
+
+  <figure class="work" style="margin:0">
+    <a class="frame" href="pour-dreams.html" aria-label="Pour Dreams">
+      <span class="mat"><img src="previews/pour-dreams.jpg" width="800" height="1000"
+        alt="Glossy poured paint in teal, ink and sky blue, each pour pushing the others aside"></span>
+    </a>
+    <figcaption class="placard">
+      <h2><a href="pour-dreams.html">Pour Dreams</a></h2>
+      <div class="medium">Generative poured paint, endless · with music</div>
+      <p>Glossy, thick paint poured forever, each new pour pushing the old paint aside without ever mixing with it.</p>
     </figcaption>
   </figure>
 </main>
