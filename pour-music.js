@@ -2,7 +2,8 @@
 // ambient in the manner of Soviet electronic space music — the ANS
 // synthesizer's glassy clusters of sines, a filtered Polivoks-like pad, a
 // theremin gliding between notes, sequenced arpeggios through a wobbling tape
-// echo, gurgling paint and telemetry blips, a held bass and cosmic wind.
+// echo, gurgling paint, a held bass and cosmic wind. Nothing whistles: every
+// voice stays low enough, and the wind is breathy, never a ringing tone.
 // The form is fractal and random: 1/f noise walks the harmony and the
 // intensity; notes come on three time scales at rates following a power law;
 // the theremin's lines are midpoint-displacement curves and the arpeggios'
@@ -135,13 +136,13 @@ const PourMusic = (() => {
       heads[1].tone.connect(gain(0.42, heads[0].d));
     }
 
-    // ANS cluster: every chord tone, and an octave above, as three sines a few
-    // cents apart, each fading in and out on its own: a glassy, shimmering
-    // field, as drawn on the ANS's glass plate.
+    // ANS cluster: every chord tone, the lower ones an octave up too, as three
+    // sines a few cents apart, each fading in and out on its own: a glassy,
+    // shimmering field, as drawn on the ANS's glass plate.
     const glass = bus(0.85, 0.9);
     function cluster(c) {
       const at = t0 + c.t, len = c.end - c.t + REL;
-      for (const base of c.upper) for (const oct of [0, 12]) for (let v = 0; v < 3; v++) {
+      for (const base of c.upper) for (const oct of base < 67 ? [0, 12] : [0]) for (let v = 0; v < 3; v++) {
         const o = osc('sine', mtof(base + oct) * Math.pow(2, ((v - 1) * (3 + rng() * 6) + (rng() - 0.5) * 2) / 1200));
         const env = gain(0, panner(rng(), glass));
         env.gain.setValueCurveAtTime(envCurve(len, ATT, REL, 0.007 / (1 + oct / 12), 0.9), at, len);
@@ -225,9 +226,9 @@ const PourMusic = (() => {
       return pts;
     }
     function theremin(tier, t, I) {
-      const c = chordAt(t), notes = notesIn(c.mode, 62, 86);
+      const c = chordAt(t), notes = notesIn(c.mode, 55, 76);
       const tone = m => notes.findIndex(n => n >= m);
-      const tones = c.upper.map(m => tone(m + 12)).filter(i => i >= 0);
+      const tones = c.upper.map(tone).filter(i => i >= 0);
       if (!tones.length) return t;
       const a = tones[Math.floor(tier.pv() * tones.length)], b = tones[Math.floor(rng() * tones.length)];
       const line = contour(1 + Math.floor(rng() * 3), a, b, 3 + rng() * 3)
@@ -276,7 +277,7 @@ const PourMusic = (() => {
     }
     function sequence(tier, t, I) {
       const c = chordAt(t), steps = 16 << Math.floor(rng() * 3); // a power of two, to split
-      const pool = [...c.upper, ...c.upper.map(m => m + 12)].sort((a, b) => a - b);
+      const pool = [...c.upper, ...c.upper.map(m => m + 12)].filter(m => m <= 79).sort((a, b) => a - b);
       const sweep = slow(STEP * 8), start = t0 + Math.ceil(t / STEP) * STEP; // on the grid
       let idx = Math.floor(tier.pv() * pool.length), dir = 1;
       const g = 0.06 * (0.6 + 0.4 * I), pan = 0.3 + rng() * 0.4;
@@ -301,37 +302,22 @@ const PourMusic = (() => {
     // pitch as it nears the surface and dies away within a few of its own
     // periods; the bigger the bubble, the lower and longer. A gurgle is a
     // cluster of them, its timing split recursively (bursts within bursts)
-    // and their sizes following a power law (many small, a few big ones). Now
-    // and then, instead, a quick telemetry blip sweeping in pitch.
-    const gurgles = filter('lowpass', 3200, 0.5, bus(0.25, 1));
+    // and their sizes following a power law (many small, a few big ones), all
+    // low, so they glug rather than chirp.
+    const gurgles = filter('lowpass', 1400, 0.5, bus(0.25, 1));
     gurgles.connect(gain(0.35, echo));
     function bubble(at, f, g, pan) {
-      const len = clamp(9 / f, 0.025, 0.14), o = osc('sine', f), env = gain(0, panner(pan, gurgles));
+      const len = clamp(9 / f, 0.03, 0.16), o = osc('sine', f), env = gain(0, panner(pan, gurgles));
       o.connect(env);
       o.frequency.setValueAtTime(f, at);
-      o.frequency.exponentialRampToValueAtTime(f * (1.4 + rng() * 0.8), at + len);
+      o.frequency.exponentialRampToValueAtTime(f * (1.15 + rng() * 0.3), at + len);
       env.gain.setValueAtTime(0, at);
       env.gain.linearRampToValueAtTime(g, at + 0.003);
       env.gain.exponentialRampToValueAtTime(g * 0.001, at + len);
       o.start(at); o.stop(at + len + 0.01);
     }
     function gurgle(tier, t, I) {
-      const at = t0 + t, pan = 0.2 + rng() * 0.6, g = 0.32 * (0.7 + 0.3 * I);
-      if (rng() < 0.2) { // a blip
-        const c = chordAt(t), notes = notesIn(c.mode, 72, 96), f = mtof(notes[Math.floor(tier.pv() * notes.length)]);
-        const o = osc('sine', f), env = gain(0, panner(pan, gurgles)), up = rng() < 0.5;
-        o.connect(env);
-        for (let k = 0, n = 1 + Math.floor(rng() * 3); k < n; k++) {
-          const s = at + k * 0.14;
-          o.frequency.setValueAtTime(up ? f : f * 2, s);
-          o.frequency.exponentialRampToValueAtTime(up ? f * 2 : f, s + 0.09);
-          env.gain.setValueAtTime(0, s);
-          env.gain.linearRampToValueAtTime(g * 0.4, s + 0.01);
-          env.gain.linearRampToValueAtTime(0, s + 0.1);
-        }
-        o.start(at); o.stop(at + 0.6);
-        return t;
-      }
+      const at = t0 + t, pan = 0.2 + rng() * 0.6, g = 0.2 * (0.7 + 0.3 * I);
       const span = 0.4 + tier.pv() * 2.2, times = [];
       (function split(a, len, depth) {
         if (depth > 6 || len < 0.025 || rng() < 0.12) { times.push(a + rng() * len); return; }
@@ -341,7 +327,7 @@ const PourMusic = (() => {
       })(0, span, 0);
       for (const dt of times) {
         const size = Math.pow(1 - rng() * 0.97, -1 / 1.3); // power law, ≥ 1
-        bubble(at + dt, clamp(1300 / size, 160, 1300) * (0.9 + rng() * 0.2), g * clamp(0.4 + 0.25 * size, 0.4, 1.4), clamp(pan + (rng() - 0.5) * 0.25, 0, 1));
+        bubble(at + dt, clamp(600 / size, 90, 600) * (0.9 + rng() * 0.2), g * clamp(0.4 + 0.25 * size, 0.4, 1.4), clamp(pan + (rng() - 0.5) * 0.25, 0, 1));
       }
       return t + span;
     }
@@ -350,7 +336,7 @@ const PourMusic = (() => {
     // intensity.
     const wind = ac.createBufferSource();
     wind.buffer = noise; wind.loop = true;
-    const windBand = filter('bandpass', 600, 4), windGain = gain(0, bus(0.9, 0.7));
+    const windBand = filter('bandpass', 400, 1.2), windGain = gain(0, bus(0.9, 0.7));
     wind.connect(windBand).connect(windGain);
     wind.start(t0);
     const windPitch = slow(9), windLevel = slow(20, 6);
@@ -378,7 +364,7 @@ const PourMusic = (() => {
       const u = until - t0;
       for (; ctrl < u; ctrl += CTRL) { // control rate: the wind
         const at = t0 + ctrl;
-        windBand.frequency.linearRampToValueAtTime(250 * Math.pow(12, windPitch(ctrl)), at);
+        windBand.frequency.linearRampToValueAtTime(180 * Math.pow(6, windPitch(ctrl)), at);
         windGain.gain.linearRampToValueAtTime(0.05 * Math.pow(windLevel(ctrl), 2) * (0.4 + 0.6 * intensity(ctrl)), at);
       }
       while (chordEnd < u) nextChord();

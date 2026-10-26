@@ -107,6 +107,12 @@
   // The stream wanders while it pours, along a path PATH_MIN–PATH_MAX √area
   // long, its heading turning at random by about TURN radians in a second.
   const PATH_MIN = 0.04, PATH_MAX = 0.16, TURN = 3;
+  // The painter's hand shakes the can a little, so the paint pours on without
+  // a break but never evenly: the flow swells and thins by three wobbles at
+  // once, each with a rate (Hz, painting time) and a depth drawn anew for
+  // every pour. They average out, so a pour lays down as much paint as an
+  // even one would.
+  const SHAKE = [[0.25, 0.6, 0.22], [0.9, 2, 0.18], [2.4, 4, 0.1]]; // [min Hz, max Hz, depth]
 
   // spread: K in css px²/s; stream: the stream's radius in css px
   function film(gw, gh, cell, spread, stream) {
@@ -592,15 +598,19 @@ void main() {
       const path = (PATH_MIN + rng() * (PATH_MAX - PATH_MIN)) * Math.sqrt(area) / cell;
       const rate = POUR * (0.8 + rng() * 0.2); // canvas areas per second
       pour = { x: rng() * gw, y: rng() * gh, dir: rng() * TAU, speed: path / left,
-        rate: rate * area, rgb: toRgb(mind.pick(rate * left)) };
+        rate: rate * area, rgb: toRgb(mind.pick(rate * left)), clock: 0,
+        shake: SHAKE.map(([lo, hi, depth]) => ({ hz: lo + rng() * (hi - lo), depth: depth * (0.6 + 0.8 * rng()), phase: rng() * TAU })) };
     }
-    // the stream moves on a little, turning at random
+    // the stream moves on a little, turning at random, the flow wobbling with
+    // the shaking hand
     function wander(dt) {
+      pour.clock += dt;
+      const flow = pour.shake.reduce((a, w) => a + w.depth * Math.sin(TAU * w.hz * pour.clock + w.phase), 1);
       pour.dir += gauss() * TURN * Math.sqrt(dt);
       pour.x = (pour.x + Math.cos(pour.dir) * pour.speed * dt + gw) % gw;
       pour.y = (pour.y + Math.sin(pour.dir) * pour.speed * dt + gh) % gh;
-      f.land(pour.x, pour.y, core);
-      f.pourAt(pour.x, pour.y, pour.rate);
+      f.land(pour.x, pour.y, core * Math.sqrt(flow)); // a thicker stream lands wider
+      f.pourAt(pour.x, pour.y, pour.rate * flow);
     }
 
     const bg = toRgb(mind.ground());
