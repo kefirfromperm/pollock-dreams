@@ -1,4 +1,4 @@
-// Pollock Dreams — drip painting engine, shared by the page (index.html)
+// Pollock Dreams — drip painting engine, shared by the page (pollock-static.html)
 // and the Open Graph image generator (og/og.html).
 const PollockDreams = (() => {
   const TAU = Math.PI * 2;

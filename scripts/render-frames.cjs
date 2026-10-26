@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Render infinite.html frame by frame on a virtual clock and write the frames
+// Render pollock-dreams.html frame by frame on a virtual clock and write the frames
 // to stdout as a PNG stream (for ffmpeg -f image2pipe).
 //
 //   node scripts/render-frames.cjs [--seed N] [--seconds S] [--fps F] [--width W] [--height H]
@@ -49,7 +49,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       document.head.append(s);
     });
   }, { seed, width, height });
-  await page.goto('file://' + path.resolve(__dirname, '../infinite.html'));
+  await page.goto('file://' + path.resolve(__dirname, '../pollock-dreams.html'));
 
   const t0 = Date.now();
   for (let f = 0; f < frames; f++) {

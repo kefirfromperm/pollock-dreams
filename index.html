@@ -12,152 +12,193 @@
   gtag('config', 'G-8J2V3WVJ2Z');
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pollock Dreams</title>
+<title>Digital Art Meditation</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="Endless generative drip paintings in the spirit of Jackson Pollock. Click for a new one.">
+<meta name="description" content="A small gallery of generative paintings that never stop being painted, each with its own ambient music.">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Pollock Dreams">
-<meta property="og:title" content="Pollock Dreams">
-<meta property="og:description" content="Endless generative drip paintings in the spirit of Jackson Pollock. Click for a new one.">
+<meta property="og:site_name" content="Digital Art Meditation">
+<meta property="og:title" content="Digital Art Meditation">
+<meta property="og:description" content="A small gallery of generative paintings that never stop being painted, each with its own ambient music.">
 <meta property="og:url" content="https://kefirfromperm.github.io/pollock-dreams/">
-<meta property="og:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="“Pollock Dreams” written in poured cursive lines over a generative drip painting">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Pollock Dreams">
-<meta name="twitter:description" content="Endless generative drip paintings in the spirit of Jackson Pollock. Click for a new one.">
-<meta name="twitter:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Digital Art Meditation">
+<meta name="twitter:description" content="A small gallery of generative paintings that never stop being painted, each with its own ambient music.">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #d9c7a3; }
-  canvas {
-    display: block; position: fixed; left: 50%; top: 50%;
-    transform: translate(-50%, -50%); cursor: pointer;
-    touch-action: none; /* swipes are ours, not scroll / pull-to-refresh */
+  @font-face {
+    font-family: 'Mr Dafoe';
+    src: url(og/fonts/MrDafoe-Regular.ttf) format('truetype');
+    font-display: swap;
   }
-  #hint {
-    position: fixed; left: 16px; bottom: 14px;
-    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: #f4efe3; background: rgba(20,17,15,.55);
-    padding: 6px 10px; border-radius: 4px;
-    transition: opacity 1.2s; pointer-events: none;
+  :root {
+    --wall: #e9e4da;
+    --wall-deep: #d8d1c3;
+    --floor: #b9ab93;
+    --light: rgba(255, 250, 236, .75);
+    --ink: #2b2620;
+    --muted: #6f665a;
+    --frame: #1d1a17;
+    --mat: #f6f2ea;
+    --placard: #fbf9f4;
+    --shadow: rgba(40, 30, 15, .35);
   }
-  #hint.hidden { opacity: 0; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --wall: #2a2724;
+      --wall-deep: #1b1917;
+      --floor: #12100f;
+      --light: rgba(255, 236, 200, .16);
+      --ink: #efe9df;
+      --muted: #a69c8e;
+      --frame: #0c0b0a;
+      --mat: #ece6da;
+      --placard: #34302b;
+      --shadow: rgba(0, 0, 0, .6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --wall: #2a2724;
+    --wall-deep: #1b1917;
+    --floor: #12100f;
+    --light: rgba(255, 236, 200, .16);
+    --ink: #efe9df;
+    --muted: #a69c8e;
+    --frame: #0c0b0a;
+    --mat: #ece6da;
+    --placard: #34302b;
+    --shadow: rgba(0, 0, 0, .6);
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--floor); }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; flex-direction: column;
+    color: var(--ink);
+    font: 16px/1.5 Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    /* the wall, darker towards the floor, with a skirting line at the bottom */
+    background:
+      linear-gradient(to bottom, var(--wall) 0%, var(--wall) 55%, var(--wall-deep) calc(100% - 64px),
+                      var(--floor) calc(100% - 64px), var(--floor) 100%);
+  }
+
+  header { text-align: center; padding: 56px 16px 8px; }
+  h1 {
+    margin: 0;
+    font: 400 clamp(44px, 9vw, 84px)/1 'Mr Dafoe', 'Brush Script MT', cursive;
+    letter-spacing: .01em;
+  }
+  header p {
+    margin: 10px 0 0;
+    font-size: 13px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  main {
+    flex: 1;
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
+    gap: clamp(48px, 9vw, 120px);
+    padding: 64px 16px 112px;
+    overflow-x: clip; /* the spotlights are wider than a phone */
+  }
+
+  .work { position: relative; width: min(340px, 100%); }
+  /* a ceiling spot on each painting */
+  .work::before {
+    content: ''; position: absolute; z-index: -1;
+    left: 50%; top: -90px; width: 170%; height: 135%;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse 50% 50% at 50% 38%, var(--light), transparent 70%);
+    pointer-events: none;
+    transition: opacity .6s;
+    opacity: .8;
+  }
+  .work:hover::before, .work:focus-within::before { opacity: 1; }
+
+  .frame {
+    display: block;
+    padding: 14px;
+    background: var(--frame);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,.06),
+      0 2px 3px var(--shadow),
+      0 22px 40px -12px var(--shadow);
+    transition: transform .5s cubic-bezier(.2,.7,.2,1), box-shadow .5s;
+  }
+  .frame:hover, .frame:focus-visible {
+    transform: translateY(-4px);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,.06),
+      0 4px 6px var(--shadow),
+      0 34px 54px -14px var(--shadow);
+  }
+  .frame:focus-visible { outline: 2px solid var(--ink); outline-offset: 6px; }
+  .mat {
+    display: block;
+    padding: clamp(18px, 8%, 30px);
+    background: var(--mat);
+    box-shadow: inset 0 2px 6px rgba(0,0,0,.25);
+  }
+  .mat img {
+    display: block; width: 100%; height: auto; aspect-ratio: 4 / 5;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.12);
+  }
+
+  .placard {
+    margin: 32px auto 0; width: 82%;
+    padding: 14px 16px 15px;
+    background: var(--placard);
+    box-shadow: 0 1px 2px var(--shadow);
+    font-size: 13px; line-height: 1.5;
+  }
+  .placard h2 { margin: 0; font-size: 17px; font-weight: 400; font-style: italic; }
+  .placard h2 a { color: inherit; text-decoration: none; }
+  .placard h2 a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .placard .medium { margin: 2px 0 8px; color: var(--muted); }
+  .placard p { margin: 0; }
+
+  footer {
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 0 16px; min-height: 64px;
+    font-size: 12px; color: #f4efe3; opacity: .75;
+  }
+  footer a { color: inherit; }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="hint">click / space: new painting · S: save PNG</div>
-<script src="pollock.js"></script>
-<script>
-(() => {
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const hint = document.getElementById('hint');
+<header>
+  <h1>Digital Art Meditation</h1>
+  <p>Immersive visuals for a calm mind</p>
+</header>
 
-  let seed, token = 0, W, H;
-  const DRAW_MS = 5000;
-  const touch = matchMedia('(pointer: coarse)').matches;
+<main>
+  <figure class="work" style="margin:0">
+    <a class="frame" href="pollock-dreams.html" aria-label="Pollock Dreams">
+      <span class="mat"><img src="previews/pollock-dreams.jpg" width="800" height="1000"
+        alt="A dense generative drip painting of yellow, white, red and black poured lines"></span>
+    </a>
+    <figcaption class="placard">
+      <h2><a href="pollock-dreams.html">Pollock Dreams</a></h2>
+      <div class="medium">Generative drip painting, endless · with music</div>
+      <p>One drip painting that never stops being poured, its colours drifting from one Pollock combination to the next.</p>
+    </figcaption>
+  </figure>
 
-  function readSeed() {
-    const m = location.hash.match(/^#(\d+)$/);
-    return m ? +m[1] : (Math.random() * 1e9) | 0;
-  }
-  // At most one new painting per second: rapid full-screen changes can
-  // trigger photosensitive epilepsy. Extra requests are dropped, not queued.
-  let lastNew = -Infinity;
-  function newSeed() {
-    const now = performance.now();
-    if (now - lastNew < 1000) return;
-    lastNew = now;
-    seed = (Math.random() * 1e9) | 0;
-    history.replaceState(null, '', '#' + seed);
-    start();
-  }
+  <figure class="work" style="margin:0">
+    <a class="frame" href="rectangles.html" aria-label="Rectangle Dreams">
+      <span class="mat"><img src="previews/rectangles.jpg" width="800" height="1000"
+        alt="Generative rectangles of ochre, lilac, pink and blue glazed one over another"></span>
+    </a>
+    <figcaption class="placard">
+      <h2><a href="rectangles.html">Rectangle Dreams</a></h2>
+      <div class="medium">Generative glazes, endless · with music</div>
+      <p>Fractal rectangles glazed one over another forever, their colours walking around the whole colour wheel in harmony.</p>
+    </figcaption>
+  </figure>
+</main>
 
-  function setupCanvas() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    // Paint at the largest size the window can reach (the screen), so resizing
-    // only reveals or crops the same image instead of repainting it.
-    W = Math.max(screen.width, window.innerWidth);
-    H = Math.max(screen.height, window.innerHeight);
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-  }
-
-  function start() {
-    const my = ++token;
-    setupCanvas();
-    const rng = PollockDreams.mulberry32(seed);
-    const { jobs, bg, name } = PollockDreams.engine(ctx, W, H).buildJobs(rng);
-    document.body.style.background = bg;
-    showHint(touch ? `after ${name} · tap / swipe: new`
-                   : `after ${name} · click / space: new · S: save PNG`);
-    // Spread the drawing over at least DRAW_MS whatever the device speed:
-    // a fast machine would otherwise pile up the alternating dark and light
-    // layers in under a second, close to the 3 flashes/s seizure threshold.
-    let i = 0, t0;
-    const frame = now => {
-      if (my !== token) return;
-      t0 ??= now;
-      const due = Math.min(jobs.length, 1 + Math.ceil((jobs.length - 1) * (now - t0) / DRAW_MS));
-      const f0 = performance.now();
-      while (i < due && performance.now() - f0 < 14) jobs[i++]();
-      if (i < jobs.length) requestAnimationFrame(frame);
-    };
-    requestAnimationFrame(frame);
-  }
-
-  canvas.addEventListener('click', newSeed);
-  // Swipe in any direction for a new painting (tap is handled by click).
-  let swipe = null;
-  canvas.addEventListener('pointerdown', e => {
-    if (e.pointerType !== 'mouse') swipe = { id: e.pointerId, x: e.clientX, y: e.clientY };
-  });
-  canvas.addEventListener('pointerup', e => {
-    if (!swipe || e.pointerId !== swipe.id) return;
-    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
-    swipe = null;
-    if (Math.hypot(dx, dy) > 50) newSeed();
-  });
-  canvas.addEventListener('pointercancel', () => { swipe = null; });
-  window.addEventListener('keydown', e => {
-    if (e.code === 'Space' || e.key === 'n') {
-      e.preventDefault();
-      if (!e.repeat) newSeed(); // holding the key doesn't keep redrawing
-    }
-    if (e.key === 's' || e.key === 'S') {
-      const a = document.createElement('a');
-      a.download = `pollock-${seed}.png`;
-      a.href = canvas.toDataURL('image/png');
-      a.click();
-    }
-  });
-  let rt;
-  window.addEventListener('resize', () => {
-    clearTimeout(rt);
-    // only repaint if the window outgrew the painting (e.g. moved to a bigger monitor)
-    rt = setTimeout(() => { if (window.innerWidth > W || window.innerHeight > H) start(); }, 250);
-  });
-  window.addEventListener('hashchange', () => { const s = readSeed(); if (s !== seed) { seed = s; start(); } });
-  let ht;
-  function showHint(text) {
-    hint.textContent = text;
-    hint.classList.remove('hidden');
-    clearTimeout(ht);
-    ht = setTimeout(() => hint.classList.add('hidden'), 4000);
-  }
-
-  seed = readSeed();
-  history.replaceState(null, '', '#' + seed);
-  start();
-})();
-</script>
+<footer>
+  <span>Also in the collection: <a href="pollock-static.html">Pollock Dreams: Static</a>, a new drip painting with every click.</span>
+</footer>
 </body>
 </html>
