@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8J2V3WVJ2Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-8J2V3WVJ2Z');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pour Dreams</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="description" content="Glossy, thick paint poured onto a canvas forever, each new pour pushing the old paint aside without ever mixing with it.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Digital Art Meditation">
+<meta property="og:title" content="Pour Dreams">
+<meta property="og:description" content="Glossy, thick paint poured onto a canvas forever, each new pour pushing the old paint aside without ever mixing with it.">
+<meta property="og:url" content="https://kefirfromperm.github.io/pollock-dreams/pour-dreams.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Pour Dreams">
+<meta name="twitter:description" content="Glossy, thick paint poured onto a canvas forever, each new pour pushing the old paint aside without ever mixing with it.">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #d9c7a3; }
+  canvas {
+    display: block; position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); cursor: pointer;
+  }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border-radius: 4px;
+    transition: opacity 1.2s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+  #swatches { display: flex; gap: 3px; margin-bottom: 5px; }
+  #swatches span { width: 14px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(244,239,227,.35); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><div id="swatches"></div><div id="hintText"></div></div>
+<script src="pollock.js"></script>
+<script src="colour.js"></script>
+<script>
+(() => {
+  const PD = PollockDreams, { TAU, rgba } = PD;
+  const { toRgb, fit, hueName } = Colours;
+  const canvas = document.getElementById('c');
+  const hint = document.getElementById('hint');
+  const hintText = document.getElementById('hintText');
+  const swatchBox = document.getElementById('swatches');
+
+  const seed = (Math.random() * 1e9) | 0;
+  let W, H, PW, PH;
+  const touch = matchMedia('(pointer: coarse)').matches;
+
+  // ---- the paint film ----
+  // Thick paint on a flat canvas creeps under its own weight, too slowly for
+  // waves: the thin-film (lubrication) equation for the paint's height h,
+  //
+  //   ∂h/∂t = ∇·(K h³ ∇h) + s − σh,
+  //
+  // where s is the paint being poured and σh a slow uniform drying that takes
+  // away as much as is poured, so the film never piles up. Thick paint runs
+  // much more freely than thin (h³). The paint moves with the film's mean
+  // velocity u = −K h² ∇h, and so do the borders between paints: they are
+  // never smeared, a new pour only pushes the old paint aside.
+  //
+  // The canvas is a torus, and the equation is parabolic, so each step is
+  // implicit (any step length is stable) and split by direction (ADI): one
+  // cyclic tridiagonal system along every row, then along every column. h is
+  // smooth, so a coarse grid will do; only the borders need full resolution,
+  // and those are drawn on the GPU through a map of where every point of the
+  // canvas has flowed from since the current pour began.
+  //
+  // Sizes are fractions of the canvas, so the painting looks the same on any
+  // screen: K in canvas areas per second, the stream's width in √area, and
+  // the pour rate such that the longest pour covers up to a tenth of the canvas.
+  // Times are painting seconds; the painting runs at SPEED, so a pour lasts
+  // 2–10 real seconds.
+  const K = 0.0015, STREAM = 0.012;
+  const POUR_MIN_S = 1, POUR_MAX_S = 5, POUR = 0.1 / POUR_MAX_S, MAX_STEP_S = 1 / 30;
+  const SPEED = 0.5; // painting seconds per real second
+  // The stream wanders while it pours, along a path PATH_MIN–PATH_MAX √area
+  // long, its heading turning at random by about TURN radians in a second.
+  const PATH_MIN = 0.04, PATH_MAX = 0.16, TURN = 3;
+
+  // spread: K in css px²/s; stream: the stream's radius in css px
+  function film(gw, gh, cell, spread, stream) {
+    const n = gw * gh, k = spread / cell ** 2;
+    const h = new Float64Array(n).fill(1), hs = new Float64Array(n), src = new Float64Array(n);
+    const ux = new Float64Array(n), uy = new Float64Array(n);
+    let map = new Float32Array(2 * n), map2 = new Float32Array(2 * n); // where each cell has flowed from, cells
+    // The paint of the current pour, as a signed distance (cells, positive
+    // inside) to its border, kept within ±BAND: carried along by the flow, and
+    // the stream merged into it wherever it lands.
+    const BAND = 12;
+    let fresh = new Float32Array(n).fill(-BAND), fresh2 = new Float32Array(n);
+    const out = new Float32Array(4 * n); // for the GPU: map (device px), ∇h (per cell)
+    const m = Math.max(gw, gh);
+    const lo = new Float64Array(m), di = new Float64Array(m), up = new Float64Array(m);
+    const r = new Float64Array(m), x = new Float64Array(m), cp = new Float64Array(m), z = new Float64Array(m);
+    let srcSum = 0;
+
+    // Solve a cyclic tridiagonal system of size len: lo[i] couples i to i−1,
+    // up[i] to i+1, wrapping round. Sherman–Morrison: the Thomas algorithm on
+    // the matrix without its two corners, then a rank-one correction for them.
+    function cyclic(len) {
+      const alpha = up[len - 1], beta = lo[0], gamma = -di[0];
+      let b = di[0] - gamma;
+      cp[0] = up[0] / b; x[0] = r[0] / b; z[0] = gamma / b;
+      for (let i = 1; i < len; i++) {
+        const last = i === len - 1;
+        b = (last ? di[i] - alpha * beta / gamma : di[i]) - lo[i] * cp[i - 1];
+        cp[i] = up[i] / b;
+        x[i] = (r[i] - lo[i] * x[i - 1]) / b;
+        z[i] = ((last ? alpha : 0) - lo[i] * z[i - 1]) / b;
+      }
+      for (let i = len - 2; i >= 0; i--) { x[i] -= cp[i] * x[i + 1]; z[i] -= cp[i] * z[i + 1]; }
+      const f = (x[0] + beta * x[len - 1] / gamma) / (1 + z[0] + beta * z[len - 1] / gamma);
+      for (let i = 0; i < len; i++) x[i] -= f * z[i];
+    }
+
+    // one implicit sweep along lines of length len: from[base + i·stride] → to
+    const mob = (a, b) => k * ((a + b) / 2) ** 3;
+    function sweep(from, to, len, lines, stride, lineStride, dt, sink, pour) {
+      for (let l = 0; l < lines; l++) {
+        const base = l * lineStride;
+        for (let i = 0; i < len; i++) {
+          const c = from[base + i * stride];
+          const a = dt * mob(from[base + (i === 0 ? len - 1 : i - 1) * stride], c);
+          const e = dt * mob(c, from[base + (i === len - 1 ? 0 : i + 1) * stride]);
+          lo[i] = -a; up[i] = -e; di[i] = 1 + a + e + dt * sink;
+          r[i] = c + (pour ? dt * src[base + i * stride] : 0);
+        }
+        cyclic(len);
+        for (let i = 0; i < len; i++) to[base + i * stride] = x[i];
+      }
+    }
+
+    // The stream lands at (px, py) (cells) with a Gaussian footprint, rate
+    // in css px² per second.
+    function pourAt(px, py, rate) {
+      src.fill(0);
+      const rs = stream / cell, R = Math.ceil(rs * 4), q = rate / cell ** 2 / (Math.PI * 2 * rs * rs);
+      srcSum = 0;
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const i = ((Math.round(px) + dx) % gw + gw) % gw, j = ((Math.round(py) + dy) % gh + gh) % gh;
+        const ex = Math.round(px) + dx - px, ey = Math.round(py) + dy - py;
+        const s = q * Math.exp(-(ex * ex + ey * ey) / (2 * rs * rs));
+        src[j * gw + i] += s;
+        srcSum += s;
+      }
+    }
+
+    // the stream's core, r cells across, lands at (px, py)
+    function land(px, py, r) {
+      const R = Math.ceil(r + BAND);
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const i = ((Math.round(px) + dx) % gw + gw) % gw, j = ((Math.round(py) + dy) % gh + gh) % gh;
+        const d = Math.min(BAND, r - Math.hypot(Math.round(px) + dx - px, Math.round(py) + dy - py));
+        if (d > fresh[j * gw + i]) fresh[j * gw + i] = d;
+      }
+    }
+
+    function step(dt) {
+      let sum = 0;
+      for (let i = 0; i < n; i++) sum += h[i];
+      const sink = srcSum / sum;
+      sweep(h, hs, gw, gh, 1, gw, dt, sink, true); // rows: poured, dried
+      sweep(hs, h, gh, gw, gw, 1, dt, 0, false); // columns
+
+      // velocity, and the map and the fresh paint carried along it
+      // (semi-Lagrangian): from_new(x) = u·dt + from_old(x − u·dt)
+      for (let j = 0; j < gh; j++) {
+        const jn = (j + 1) % gh, js = (j + gh - 1) % gh;
+        for (let i = 0; i < gw; i++) {
+          const c = j * gw + i, hh = h[c];
+          const gx = (h[j * gw + (i + 1) % gw] - h[j * gw + (i + gw - 1) % gw]) / 2;
+          const gy = (h[jn * gw + i] - h[js * gw + i]) / 2;
+          ux[c] = -k * hh * hh * gx;
+          uy[c] = -k * hh * hh * gy;
+          out[4 * c + 2] = gx;
+          out[4 * c + 3] = gy;
+        }
+      }
+      for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+        const c = j * gw + i, dx = ux[c] * dt, dy = uy[c] * dt;
+        const X = i - dx, Y = j - dy, fx = Math.floor(X), fy = Math.floor(Y), tx = X - fx, ty = Y - fy;
+        const x0 = (fx % gw + gw) % gw, y0 = (fy % gh + gh) % gh;
+        const x1 = x0 + 1 === gw ? 0 : x0 + 1, y1 = y0 + 1 === gh ? 0 : y0 + 1;
+        const a = y0 * gw + x0, b = y0 * gw + x1, d = y1 * gw + x0, e = y1 * gw + x1;
+        const wa = (1 - tx) * (1 - ty), wb = tx * (1 - ty), wd = (1 - tx) * ty, we = tx * ty;
+        map2[2 * c] = dx + wa * map[2 * a] + wb * map[2 * b] + wd * map[2 * d] + we * map[2 * e];
+        map2[2 * c + 1] = dy + wa * map[2 * a + 1] + wb * map[2 * b + 1] + wd * map[2 * d + 1] + we * map[2 * e + 1];
+        fresh2[c] = wa * fresh[a] + wb * fresh[b] + wd * fresh[d] + we * fresh[e];
+      }
+      [map, map2] = [map2, map];
+      [fresh, fresh2] = [fresh2, fresh];
+    }
+
+    function forDisplay(cellX, cellY) {
+      for (let c = 0; c < n; c++) {
+        out[4 * c] = map[2 * c] * cellX;
+        out[4 * c + 1] = map[2 * c + 1] * cellY;
+      }
+      return { flow: out, fresh };
+    }
+    // a new pour: nothing has flowed anywhere yet, and none of it is poured
+    function reset() { map.fill(0); fresh.fill(-BAND); }
+    return { step, pourAt, land, reset, forDisplay };
+  }
+
+  // ---- drawing: WebGL2 ----
+  const VERT = `#version 300 es
+in vec2 pos;
+void main() { gl_Position = vec4(pos, 0.0, 1.0); }`;
+  const COMMON = `#version 300 es
+precision highp float;
+precision highp int;
+uniform highp sampler2D flow; // xy: where this point has flowed from (device px), zw: ∇h
+uniform highp sampler2D paint;
+uniform highp sampler2D fresh; // the current pour: signed distance to its border, cells
+uniform vec2 grid, cell, size; // grid cells, device px per cell, canvas in device px
+uniform vec3 colour; // the current pour's
+out vec4 o;
+// periodic bilinear: the canvas is a torus
+vec4 flowAt(vec2 p) {
+  vec2 q = p / cell - 0.5, f = floor(q), t = q - f;
+  ivec2 a = ivec2(mod(f, grid)), b = ivec2(mod(f + 1.0, grid));
+  return mix(mix(texelFetch(flow, a, 0), texelFetch(flow, ivec2(b.x, a.y), 0), t.x),
+             mix(texelFetch(flow, ivec2(a.x, b.y), 0), texelFetch(flow, b, 0), t.x), t.y);
+}
+// signed distance (device px) to the border of the current pour: the
+// interpolated value divided by its gradient
+float freshDist(vec2 p) {
+  vec2 q = p / cell - 0.5, f = floor(q), t = q - f;
+  ivec2 a = ivec2(mod(f, grid)), b = ivec2(mod(f + 1.0, grid));
+  float v0 = texelFetch(fresh, a, 0).r, v1 = texelFetch(fresh, ivec2(b.x, a.y), 0).r;
+  float v2 = texelFetch(fresh, ivec2(a.x, b.y), 0).r, v3 = texelFetch(fresh, b, 0).r;
+  float phi = mix(mix(v0, v1, t.x), mix(v2, v3, t.x), t.y);
+  float len = length(vec2(mix(v1 - v0, v3 - v2, t.y), mix(v2 - v0, v3 - v1, t.x)) / cell);
+  return len > 1e-6 ? phi / len : sign(phi) * 1e3;
+}`;
+  // The paint is stored a colour per texel, and in alpha how far (up to DMAX
+  // px) the texel's centre is from the border of its colour. Interpolating
+  // those distances, positive for a paint's own texels and negative for the
+  // others', gives every paint a smooth signed distance to its border
+  // anywhere between texels (a level set per paint), so borders are kept and
+  // drawn to a fraction of a pixel.
+  const PAINTS = `
+const float DMAX = 8.0;
+// the map's Jacobian: columns are how the point a screen pixel came from moves
+// as the pixel moves right and up (over a cell either way, so it is continuous)
+mat2 jacobian(vec2 p) {
+  vec2 dx = (flowAt(p + vec2(cell.x, 0.0)).xy - flowAt(p - vec2(cell.x, 0.0)).xy) / (2.0 * cell.x);
+  vec2 dy = (flowAt(p + vec2(0.0, cell.y)).xy - flowAt(p - vec2(0.0, cell.y)).xy) / (2.0 * cell.y);
+  return mat2(vec2(1.0, 0.0) - dx, vec2(0.0, 1.0) - dy);
+}
+// The (up to four) paints around x, each with its signed distance there in
+// screen px: the interpolated value divided by its gradient carried through
+// the map, so it stays a true distance however the paint is stretched.
+void paintsAt(vec2 x, mat2 j, out vec4 col[4], out float dist[4]) {
+  vec2 q = x - 0.5, f = floor(q), t = q - f;
+  for (int m = 0; m < 4; m++) col[m] = texelFetch(paint, ivec2(mod(f + vec2(m % 2, m / 2), size)), 0);
+  for (int k = 0; k < 4; k++) {
+    float v[4];
+    for (int m = 0; m < 4; m++) v[m] = DMAX * (col[m].rgb == col[k].rgb ? col[m].a : -col[m].a);
+    float phi = mix(mix(v[0], v[1], t.x), mix(v[2], v[3], t.x), t.y);
+    vec2 g = vec2(mix(v[1] - v[0], v[3] - v[2], t.y), mix(v[2] - v[0], v[3] - v[1], t.x));
+    float len = length(vec2(dot(j[0], g), dot(j[1], g)));
+    dist[k] = len > 1e-3 ? phi / len : sign(phi) * DMAX;
+  }
+}
+// the signed distance (the paint's own px) of the paint of colour rgb at x
+float sdf(vec2 x, vec3 rgb) {
+  vec2 q = x - 0.5, f = floor(q), t = q - f;
+  float v[4];
+  for (int m = 0; m < 4; m++) {
+    vec4 c = texelFetch(paint, ivec2(mod(f + vec2(m % 2, m / 2), size)), 0);
+    v[m] = DMAX * (c.rgb == rgb ? c.a : -c.a);
+  }
+  return mix(mix(v[0], v[1], t.x), mix(v[2], v[3], t.x), t.y);
+}`;
+  // When a pour ends it is baked into the paint, once: the paint is moved to
+  // where the map says it has flowed, and the pour lies on top. Paint is only
+  // ever moved, never blended: each texel takes the paint that is deepest
+  // inside at the point it came from, and its distance to the border there,
+  // only interpolated and scaled by how much the paint has been stretched
+  // (renormalising it here would let small errors build up bake after bake).
+  const BAKE = COMMON + PAINTS + `
+void main() {
+  vec2 p = gl_FragCoord.xy;
+  float toFresh = freshDist(p);
+  if (toFresh > 0.0) { o = vec4(colour, min(toFresh, DMAX) / DMAX); return; }
+  vec4 col[4];
+  float dist[4];
+  vec2 from = p - flowAt(p).xy;
+  mat2 j = jacobian(p);
+  paintsAt(from, j, col, dist);
+  int best = 0;
+  for (int k = 1; k < 4; k++) if (dist[k] > dist[best]) best = k;
+  float d = sdf(from, col[best].rgb) / sqrt(max(determinant(j), 1e-4));
+  o = vec4(col[best].rgb, clamp(min(d, -toFresh), 0.0, DMAX) / DMAX);
+}`;
+  // On screen the paints meet in a soft sinusoidal gradient edge px wide, by
+  // their signed distances, the current pour on top, and the surface is lit
+  // as glossy paint shaped by h.
+  const SHOW = COMMON + PAINTS + `
+uniform float slope, edge;
+float cover(float d) { return 0.5 + 0.5 * sin(3.14159265 * clamp(d / edge, -0.5, 0.5)); }
+uniform vec3 light;
+vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
+float gloss(float nh) { return 1.3 * pow(nh, 150.0) + 0.2 * pow(nh, 24.0); } // glare and sheen
+// The room: a lamp up beyond the top left corner, its light falling off as
+// 1/r² towards the bottom right (1 at the centre); red at the bottom left to
+// blue at the top right, linearly, colours keeping their lightness and the
+// middle diagonal untouched; and a little static white noise, the grain of
+// the canvas under the paint.
+float room(vec2 p) {
+  vec2 lamp = vec2(-0.15, 1.15) * size;
+  float d2 = dot(size, size), c = dot(0.5 * size - lamp, 0.5 * size - lamp) / d2;
+  return mix(1.0, (1.0 + c) / (1.0 + dot(p - lamp, p - lamp) / d2), 0.6);
+}
+vec3 tint(vec2 p, vec3 c) {
+  float t = dot(p / size, vec2(1.0)) - 1.0; // −1 bottom left … 1 top right
+  vec3 tone = t < 0.0 ? vec3(1.0, 0.3, 0.25) : vec3(0.3, 0.45, 1.0);
+  const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
+  return mix(c, tone * dot(c, Y) / dot(tone, Y), 0.35 * abs(t));
+}
+float grain(vec2 p) {
+  uvec2 q = uvec2(p);
+  uint h = q.x * 1664525u + q.y * 1013904223u;
+  h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+  return float(h) / 4294967295.0 - 0.5;
+}
+void main() {
+  vec2 p = gl_FragCoord.xy;
+  vec4 f = flowAt(p);
+  vec4 col[4];
+  float dist[4];
+  vec2 x = p - f.xy;
+  paintsAt(x, jacobian(p), col, dist);
+  // The paint here and, within half an edge of its border, the paint on the
+  // other side: a few steps out across the border, along the distance's
+  // gradient taken over a pixel either way.
+  int best = 0;
+  for (int k = 1; k < 4; k++) if (dist[k] > dist[best]) best = k;
+  vec3 own = col[best].rgb, c = lin(own);
+  if (dist[best] < 0.5 * edge) {
+    vec2 g = vec2(sdf(x + vec2(1.0, 0.0), own) - sdf(x - vec2(1.0, 0.0), own),
+                  sdf(x + vec2(0.0, 1.0), own) - sdf(x - vec2(0.0, 1.0), own));
+    if (dot(g, g) > 1e-6) {
+      vec2 out_ = -normalize(g);
+      float d = max(sdf(x, own), 0.0);
+      for (int s = 1; s <= 4; s++) {
+        vec3 other = texelFetch(paint, ivec2(mod(floor(x + out_ * (d + float(s))), size)), 0).rgb;
+        if (other != own) { c = mix(lin(other), c, cover(dist[best])); break; }
+      }
+    }
+  }
+  c = mix(c, lin(colour), cover(freshDist(p)));
+  vec3 n = normalize(vec3(-slope * f.zw, 1.0));
+  vec3 hv = normalize(light + vec3(0.0, 0.0, 1.0));
+  float dif = 0.25 + 0.75 * max(dot(n, light), 0.0) / light.z; // flat paint shows its own colour
+  float spec = gloss(max(dot(n, hv), 0.0)) - gloss(hv.z);
+  vec3 lit = max(tint(p, (c * dif + spec) * room(p)), 0.0);
+  o = vec4(pow(lit, vec3(1.0 / 2.2)) + 0.03 * grain(p), 1.0);
+}`;
+
+  function glPainter(gl, gw, gh) {
+    function program(fs) {
+      const p = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, VERT], [gl.FRAGMENT_SHADER, fs]]) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        gl.attachShader(p, s);
+      }
+      gl.bindAttribLocation(p, 0, 'pos');
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const u = {};
+      for (let i = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i--;) {
+        const name = gl.getActiveUniform(p, i).name;
+        u[name] = gl.getUniformLocation(p, name);
+      }
+      return { p, u };
+    }
+    function texture(w, h, internal) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, internal, w, h);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
+      return t;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    const bake = program(BAKE), show = program(SHOW);
+    const flow = texture(gw, gh, gl.RGBA32F), fresh = texture(gw, gh, gl.R32F);
+    const paint = [0, 1].map(() => {
+      const tex = texture(PW, PH, gl.RGBA8), fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      return { tex, fb };
+    });
+    let cur = 0;
+    gl.viewport(0, 0, PW, PH);
+
+    function use(prog, rgb) {
+      gl.useProgram(prog.p);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, flow);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, paint[cur].tex);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, fresh);
+      gl.uniform1i(prog.u.flow, 0);
+      gl.uniform1i(prog.u.paint, 1);
+      gl.uniform1i(prog.u.fresh, 2);
+      gl.uniform3f(prog.u.colour, rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
+      gl.uniform2f(prog.u.grid, gw, gh);
+      gl.uniform2f(prog.u.cell, PW / gw, PH / gh);
+      gl.uniform2f(prog.u.size, PW, PH);
+    }
+    return {
+      ground(rgb) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, paint[cur].fb);
+        gl.clearColor(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      },
+      flow(data) {
+        gl.bindTexture(gl.TEXTURE_2D, flow);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gw, gh, gl.RGBA, gl.FLOAT, data.flow);
+        gl.bindTexture(gl.TEXTURE_2D, fresh);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gw, gh, gl.RED, gl.FLOAT, data.fresh);
+      },
+      // the pour just finished, in colour rgb, into the paint
+      bake(rgb) {
+        use(bake, rgb);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, paint[1 - cur].fb);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        cur = 1 - cur;
+      },
+      show(slope, light, rgb) {
+        use(show, rgb);
+        gl.uniform1f(show.u.slope, slope);
+        gl.uniform1f(show.u.edge, EDGE * PW / W);
+        gl.uniform3fv(show.u.light, light);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      },
+    };
+  }
+
+  // ---- painting ----
+  // How high the paint stands, in css px per unit of h, for the lighting;
+  // the light comes from the upper left.
+  // The borders' gradient, css px wide (at most 2·DMAX device px).
+  const EDGE = 4;
+  const RELIEF = 45, LIGHT = (() => { const v = [-0.6, 0.7, 0.55], l = Math.hypot(...v); return v.map(c => c / l); })();
+
+  function setupCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Paint at the largest size the window can reach (the screen), so resizing
+    // only reveals or crops the same image instead of repainting it.
+    W = Math.max(screen.width, window.innerWidth);
+    H = Math.max(screen.height, window.innerHeight);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    PW = canvas.width = Math.round(W * dpr);
+    PH = canvas.height = Math.round(H * dpr);
+  }
+
+  // ---- colour ----
+  // A palette is PALETTE_SIZE close colours around one key hue, from deep to
+  // pale. It lasts until its pours have covered about the whole canvas (COVER
+  // canvas areas of paint); then the key hue moves on, now one way round the
+  // wheel, now the other, by a step big enough to tell the palettes apart.
+  const PALETTE_SIZE = 7, COVER = 1.2;
+  // The canvas is primed with the first palette's palest colour, which that
+  // palette then leaves out, so its pours never vanish into the ground.
+  function palettes(rng) {
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    let key = rng() * 360, colours, poured = 0;
+    function make() {
+      const spread = 12 + rng() * 22, chroma = 0.04 + rng() * 0.11; // hue degrees either way, OKLCH chroma
+      colours = Array.from({ length: PALETTE_SIZE }, (_, i) => {
+        const L = Math.min(0.96, Math.max(0.14, 0.25 + 0.68 * i / (PALETTE_SIZE - 1) + gauss() * 0.03));
+        return fit(L, chroma * (0.6 + rng() * 0.8), key + (rng() * 2 - 1) * spread);
+      });
+    }
+    make();
+    const ground = colours.pop();
+    return {
+      // the colour of the next pour, of volume v canvas areas
+      pick(v) {
+        if (poured >= COVER) {
+          poured = 0;
+          key = (key + (rng() < 0.5 ? -1 : 1) * (35 + rng() * 55) + 360) % 360;
+          make();
+        }
+        poured += v;
+        return colours[(rng() * colours.length) | 0];
+      },
+      ground: () => ground,
+      palette: () => colours.map(toRgb),
+      name: () => hueName(key),
+    };
+  }
+
+  // Pour after pour, forever: one colour of the palette for 2–10 s along a
+  // short wandering path, then straight on to the next place.
+  //
+  // Photosensitive epilepsy (under 3 flashes a second): a pour is at least
+  // POUR_MIN_S / SPEED long and only ever spreads; the little disc that
+  // appears where a stream first lands is the only sudden change, at most
+  // once a second, and in a different place each time; as the stream moves on
+  // it only grows.
+  function painter(gl, rng) {
+    // a grid cell of at least 4 css px, and not much over 130k cells
+    const cell = Math.max(4, Math.sqrt(W * H / 130000));
+    const gw = Math.round(W / cell), gh = Math.round(H / cell);
+    const area = W * H, stream = STREAM * Math.sqrt(area);
+    const f = film(gw, gh, cell, K * area, stream), g = glPainter(gl, gw, gh);
+    const mind = palettes(rng);
+    const cellX = PW / gw, cellY = PH / gh, core = stream * 1.5 / cell; // the stream's core, cells
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    let left = 0, pour;
+
+    // positions in cells
+    function nextPour() {
+      if (pour) g.bake(pour.rgb);
+      f.reset();
+      left = POUR_MIN_S + rng() * (POUR_MAX_S - POUR_MIN_S);
+      const path = (PATH_MIN + rng() * (PATH_MAX - PATH_MIN)) * Math.sqrt(area) / cell;
+      const rate = POUR * (0.8 + rng() * 0.2); // canvas areas per second
+      pour = { x: rng() * gw, y: rng() * gh, dir: rng() * TAU, speed: path / left,
+        rate: rate * area, rgb: toRgb(mind.pick(rate * left)) };
+    }
+    // the stream moves on a little, turning at random
+    function wander(dt) {
+      pour.dir += gauss() * TURN * Math.sqrt(dt);
+      pour.x = (pour.x + Math.cos(pour.dir) * pour.speed * dt + gw) % gw;
+      pour.y = (pour.y + Math.sin(pour.dir) * pour.speed * dt + gh) % gh;
+      f.land(pour.x, pour.y, core);
+      f.pourAt(pour.x, pour.y, pour.rate);
+    }
+
+    const bg = toRgb(mind.ground());
+    g.ground(bg);
+    g.flow(f.forDisplay(cellX, cellY));
+    return {
+      bg, mind,
+      advance(dt) {
+        if (left <= 0) nextPour();
+        const s = Math.min(dt * SPEED, MAX_STEP_S);
+        wander(s);
+        f.step(s);
+        left -= s;
+        g.flow(f.forDisplay(cellX, cellY));
+      },
+      draw: () => g.show(RELIEF / cell, LIGHT, pour ? pour.rgb : bg),
+    };
+  }
+
+  function showPalette(p) {
+    swatchBox.replaceChildren(...p.mind.palette().map(c => {
+      const s = document.createElement('span');
+      s.style.background = rgba(c, 1);
+      return s;
+    }));
+    hintText.textContent = (touch ? '' : 'palette: ') + p.mind.name() +
+      (paused ? ' · paused' : '') +
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
+  }
+
+  // Click / tap pauses and resumes the pouring; while paused the hint stays up.
+  let paused = false, painting;
+  canvas.addEventListener('click', () => {
+    if (!painting) return;
+    paused = !paused;
+    showPalette(painting);
+    showHint();
+  });
+
+  // One painting per page load: it is never restarted, only reloading the
+  // page begins a new one.
+  function start() {
+    setupCanvas();
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+    if (!gl) { hintText.textContent = 'This painting needs WebGL2.'; return; }
+    // the paint is one texture, so it can't be bigger than the GPU allows
+    const fit = Math.min(1, gl.getParameter(gl.MAX_TEXTURE_SIZE) / Math.max(PW, PH));
+    if (fit < 1) { PW = canvas.width = Math.floor(PW * fit); PH = canvas.height = Math.floor(PH * fit); }
+    const p = painting = painter(gl, PD.mulberry32(seed));
+    document.body.style.background = rgba(p.bg, 1);
+    showPalette(p);
+    showHint();
+    let last, swatchesAt = 0;
+    // time spent in a hidden tab, or while paused, doesn't pile up into a
+    // burst when it comes back
+    const frame = now => {
+      const dt = Math.min(100, now - (last ?? now)) / 1000;
+      last = now;
+      if (!paused) {
+        p.advance(dt);
+        p.draw();
+        if (now - swatchesAt > 1000) { swatchesAt = now; showPalette(p); }
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  // the hint (with the colours in play) comes back while the mouse moves
+  let lastMove = 0;
+  window.addEventListener('mousemove', () => {
+    const now = performance.now();
+    if (now - lastMove > 500) { lastMove = now; showHint(); }
+  });
+  window.addEventListener('keydown', e => {
+    if ((e.key === 's' || e.key === 'S') && painting) {
+      painting.draw(); // the drawing buffer is only kept until the next frame
+      const a = document.createElement('a');
+      a.download = `pour-dreams-${seed}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+  });
+  let ht;
+  function showHint() {
+    hint.classList.remove('hidden');
+    clearTimeout(ht);
+    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
