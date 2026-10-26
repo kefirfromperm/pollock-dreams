@@ -15,7 +15,7 @@ const seconds = Number(args.seconds ?? 40);
 const width = 800, height = 1000, root = path.resolve(__dirname, '..');
 const PAINTINGS = [
   { page: 'pollock-dreams.html', seed: 7, out: 'previews/pollock-dreams.jpg' },
-  { page: 'rectangles.html', seed: 23, out: 'previews/rectangles.jpg' },
+  { page: 'rectangle-dreams.html', seed: 23, out: 'previews/rectangle-dreams.jpg' },
 ];
 const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome']
   .find(p => fs.existsSync(p));

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Render the Open Graph image (1200x630) of the rectangles painting: paint
-// rectangles.html for a while on a virtual clock, then write the title over
+// rectangle-dreams.html for a while on a virtual clock, then write the title over
 // it with og/og.html.
 //
 //   node scripts/make-og-rectangles.cjs [--seed N] [--seconds S] [--out og/og-rectangles.png]
@@ -37,7 +37,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
 
   // 1. the painting, its time and randomness under our control
   await page.addInitScript(({ seed, width, height }) => {
-    if (location.pathname !== '/rectangles.html') return;
+    if (location.pathname !== '/rectangle-dreams.html') return;
     let a = seed;
     Math.random = () => { // mulberry32
       a |= 0; a = a + 0x6D2B79F5 | 0;
@@ -59,7 +59,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       return document.getElementById('c').toDataURL('image/png').slice(22);
     };
   }, { seed, width, height });
-  await page.goto('http://og.local/rectangles.html');
+  await page.goto('http://og.local/rectangle-dreams.html');
   bg = Buffer.from(await page.evaluate(ms => window.__run(ms, 1000 / 30), seconds * 1000), 'base64');
 
   // 2. the title over it
