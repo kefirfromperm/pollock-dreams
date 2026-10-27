@@ -321,15 +321,22 @@ vec4 flowAt(vec2 p) {
   return mix(mix(texelFetch(flow, a, 0), texelFetch(flow, ivec2(b.x, a.y), 0), t.x),
              mix(texelFetch(flow, ivec2(a.x, b.y), 0), texelFetch(flow, b, 0), t.x), t.y);
 }
-// signed distance (device px) to the border of the current pour: the
-// interpolated value divided by its gradient
-float freshDist(vec2 p) {
+// the current pour's signed distance in cells, periodic bilinear
+float freshAt(vec2 p) {
   vec2 q = p / cell - 0.5, f = floor(q), t = q - f;
   ivec2 a = wrap(f, grid), b = wrap(f + 1.0, grid);
-  float v0 = texelFetch(fresh, a, 0).r, v1 = texelFetch(fresh, ivec2(b.x, a.y), 0).r;
-  float v2 = texelFetch(fresh, ivec2(a.x, b.y), 0).r, v3 = texelFetch(fresh, b, 0).r;
-  float phi = mix(mix(v0, v1, t.x), mix(v2, v3, t.x), t.y);
-  float len = length(vec2(mix(v1 - v0, v3 - v2, t.y), mix(v2 - v0, v3 - v1, t.x)) / cell);
+  return mix(mix(texelFetch(fresh, a, 0).r, texelFetch(fresh, ivec2(b.x, a.y), 0).r, t.x),
+             mix(texelFetch(fresh, ivec2(a.x, b.y), 0).r, texelFetch(fresh, b, 0).r, t.x), t.y);
+}
+// signed distance (device px) to the border of the current pour: the
+// interpolated value divided by its gradient, taken over a cell either way
+// (the bilinear one jumps from cell to cell, and so would the distance, a few
+// px from the border, in thin streaks along the cells' edges)
+float freshDist(vec2 p) {
+  float phi = freshAt(p);
+  vec2 g = vec2(freshAt(p + vec2(cell.x, 0.0)) - freshAt(p - vec2(cell.x, 0.0)),
+                freshAt(p + vec2(0.0, cell.y)) - freshAt(p - vec2(0.0, cell.y))) / (2.0 * cell);
+  float len = length(g);
   return len > 1e-6 ? phi / len : sign(phi) * 1e3;
 }`;
   // The paint is stored a colour per texel, and in alpha how far (up to DMAX
