@@ -308,10 +308,16 @@ uniform highp sampler2D fresh; // the current pour: signed distance to its borde
 uniform vec2 grid, cell, size; // grid cells, device px per cell, the paint in device px
 uniform vec3 colour; // the current pour's
 out vec4 o;
+// the texel f (whole numbers) on a torus n texels wide: mod divides, and a
+// GPU's division may be a hair short, giving n itself, outside the texture
+ivec2 wrap(vec2 f, vec2 n) {
+  ivec2 i = ivec2(mod(f, n)), m = ivec2(n);
+  return i - m * ivec2(greaterThanEqual(i, m));
+}
 // periodic bilinear: the canvas is a torus
 vec4 flowAt(vec2 p) {
   vec2 q = p / cell - 0.5, f = floor(q), t = q - f;
-  ivec2 a = ivec2(mod(f, grid)), b = ivec2(mod(f + 1.0, grid));
+  ivec2 a = wrap(f, grid), b = wrap(f + 1.0, grid);
   return mix(mix(texelFetch(flow, a, 0), texelFetch(flow, ivec2(b.x, a.y), 0), t.x),
              mix(texelFetch(flow, ivec2(a.x, b.y), 0), texelFetch(flow, b, 0), t.x), t.y);
 }
@@ -319,7 +325,7 @@ vec4 flowAt(vec2 p) {
 // interpolated value divided by its gradient
 float freshDist(vec2 p) {
   vec2 q = p / cell - 0.5, f = floor(q), t = q - f;
-  ivec2 a = ivec2(mod(f, grid)), b = ivec2(mod(f + 1.0, grid));
+  ivec2 a = wrap(f, grid), b = wrap(f + 1.0, grid);
   float v0 = texelFetch(fresh, a, 0).r, v1 = texelFetch(fresh, ivec2(b.x, a.y), 0).r;
   float v2 = texelFetch(fresh, ivec2(a.x, b.y), 0).r, v3 = texelFetch(fresh, b, 0).r;
   float phi = mix(mix(v0, v1, t.x), mix(v2, v3, t.x), t.y);
@@ -346,7 +352,7 @@ mat2 jacobian(vec2 p) {
 // the map, so it stays a true distance however the paint is stretched.
 void paintsAt(vec2 x, mat2 j, out vec4 col[4], out float dist[4]) {
   vec2 q = x - 0.5, f = floor(q), t = q - f;
-  for (int m = 0; m < 4; m++) col[m] = texelFetch(paint, ivec2(mod(f + vec2(m % 2, m / 2), size)), 0);
+  for (int m = 0; m < 4; m++) col[m] = texelFetch(paint, wrap(f + vec2(m % 2, m / 2), size), 0);
   for (int k = 0; k < 4; k++) {
     float v[4];
     for (int m = 0; m < 4; m++) v[m] = DMAX * (col[m].rgb == col[k].rgb ? col[m].a : -col[m].a);
@@ -361,7 +367,7 @@ float sdf(vec2 x, vec3 rgb) {
   vec2 q = x - 0.5, f = floor(q), t = q - f;
   float v[4];
   for (int m = 0; m < 4; m++) {
-    vec4 c = texelFetch(paint, ivec2(mod(f + vec2(m % 2, m / 2), size)), 0);
+    vec4 c = texelFetch(paint, wrap(f + vec2(m % 2, m / 2), size), 0);
     v[m] = DMAX * (c.rgb == rgb ? c.a : -c.a);
   }
   return mix(mix(v[0], v[1], t.x), mix(v[2], v[3], t.x), t.y);
@@ -435,7 +441,7 @@ void main() {
       vec2 out_ = -normalize(g);
       float d = max(sdf(x, own), 0.0);
       for (int s = 1; s <= 4; s++) {
-        vec3 other = texelFetch(paint, ivec2(mod(floor(x + out_ * (d + float(s))), size)), 0).rgb;
+        vec3 other = texelFetch(paint, wrap(floor(x + out_ * (d + float(s))), size), 0).rgb;
         if (other != own) { c = mix(lin(other), c, cover(dist[best])); break; }
       }
     }
