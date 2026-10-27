@@ -238,7 +238,58 @@
     }
     // a new pour: nothing has flowed anywhere yet, and none of it is poured
     function reset() { map.fill(0); fresh.fill(-BAND); }
-    return { step, pourAt, land, reset, forDisplay };
+    return { step, pourAt, land, reset, forDisplay, src, slope: out };
+  }
+
+  // ---- the membrane ----
+  // Over the paint lies a membrane that is only there to be seen, like the
+  // skin of a pond: the stream pushes it where it lands, and ripples run out
+  // from there. Its height z follows the damped wave equation on an elastic
+  // bed,
+  //
+  //   ∂²z/∂t² = c²∇²z − ω²z − γ ∂z/∂t − PUSH·s,
+  //
+  // s being the paint poured (so the stream pushes harder as it swells with
+  // the shaking hand). A stream breaks into drops as it falls, so it never
+  // pushes steadily either: the push flickers by about DROPS of itself, at
+  // random, changing every DRIP seconds or so. The bed (ω) pulls the membrane
+  // back to rest, so a steady stream only dents it; every change in the
+  // stream rings out across it, and γ calms the rings within a fraction of
+  // the canvas. z never moves paint: its slope is only added to the paint's
+  // for the light.
+  //
+  // c in √area per second; ω, γ per second (painting time).
+  const RIPPLE = 0.1, BED = 2, CALM = 0.8, PUSH = 1, DROPS = 1, DRIP = 0.03;
+
+  function membrane(gw, gh, cell, speed) {
+    const n = gw * gh, c = speed / cell; // cells per second
+    const z = new Float32Array(n), v = new Float32Array(n);
+    // Semi-implicit Euler (velocity first, then height, damping implicit),
+    // in substeps short enough for the wave to cross at most half a cell;
+    // beat is the push now, in units of PUSH.
+    function step(dt, src, slope, beat) {
+      const subs = Math.ceil(c * dt / 0.5), h = dt / subs, c2 = c * c, push = PUSH * beat;
+      for (let s = 0; s < subs; s++) {
+        for (let j = 0; j < gh; j++) {
+          const jn = (j + 1) % gh * gw, js = (j + gh - 1) % gh * gw, row = j * gw;
+          for (let i = 0; i < gw; i++) {
+            const k = row + i, zk = z[k];
+            const lap = z[row + (i + 1) % gw] + z[row + (i + gw - 1) % gw] + z[jn + i] + z[js + i] - 4 * zk;
+            v[k] = (v[k] + h * (c2 * lap - BED * BED * zk - push * src[k])) / (1 + h * CALM);
+          }
+        }
+        for (let k = 0; k < n; k++) z[k] += h * v[k];
+      }
+      for (let j = 0; j < gh; j++) {
+        const jn = (j + 1) % gh * gw, js = (j + gh - 1) % gh * gw, row = j * gw;
+        for (let i = 0; i < gw; i++) {
+          const k = row + i;
+          slope[4 * k + 2] += (z[row + (i + 1) % gw] - z[row + (i + gw - 1) % gw]) / 2;
+          slope[4 * k + 3] += (z[jn + i] - z[js + i]) / 2;
+        }
+      }
+    }
+    return { step };
   }
 
   // ---- drawing: WebGL2 ----
@@ -586,6 +637,7 @@ void main() {
     const gw = Math.round(W / cell), gh = Math.round(H / cell);
     const area = W * H, stream = STREAM * Math.sqrt(area);
     const f = film(gw, gh, cell, K * area, stream), g = glPainter(gl, gw, gh);
+    const skin = membrane(gw, gh, cell, RIPPLE * Math.sqrt(area));
     const mind = palettes(rng);
     const cellX = PW / gw, cellY = PH / gh, core = stream * 1.5 / cell; // the stream's core, cells
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
@@ -599,12 +651,15 @@ void main() {
       const rate = POUR * (0.8 + rng() * 0.2); // canvas areas per second
       const speed = HAND * (0.8 + rng() * 0.4) * Math.sqrt(area) / cell;
       pour = { x: rng() * gw, y: rng() * gh, dir: rng() * TAU, speed,
-        rate: rate * area, rgb: toRgb(mind.pick(rate * left)), clock: 0,
+        rate: rate * area, rgb: toRgb(mind.pick(rate * left)), clock: 0, drip: 0,
         shake: SHAKE.map(([lo, hi, depth]) => ({ hz: lo + rng() * (hi - lo), depth: depth * (0.6 + 0.8 * rng()), phase: rng() * TAU })) };
     }
     // the stream moves on a little, turning at random, the flow wobbling with
-    // the shaking hand
+    // the shaking hand; the drops it breaks into flicker (a random walk pulled
+    // back to 0 within DRIP s: an Ornstein–Uhlenbeck process, stepped exactly)
     function wander(dt) {
+      const e = Math.exp(-dt / DRIP);
+      pour.drip = pour.drip * e + Math.sqrt(1 - e * e) * gauss();
       pour.clock += dt;
       const flow = pour.shake.reduce((a, w) => a + w.depth * Math.sin(TAU * w.hz * pour.clock + w.phase), 1);
       pour.dir += gauss() * TURN * Math.sqrt(dt);
@@ -623,7 +678,8 @@ void main() {
         if (left <= 0) nextPour();
         const s = Math.min(dt * SPEED, MAX_STEP_S);
         wander(s);
-        f.step(s);
+        f.step(s); // the paint's slope…
+        skin.step(s, f.src, f.slope, 1 + DROPS * pour.drip); // …and the membrane's on top
         left -= s;
         g.flow(f.forDisplay(cellX, cellY));
       },
