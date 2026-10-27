@@ -463,11 +463,15 @@ const PollockDreams = (() => {
       if (!navigator.wakeLock || asking) return;
       if (want && !lock && document.visibilityState === 'visible') {
         asking = true;
-        try {
-          const l = lock = await navigator.wakeLock.request('screen');
-          l.addEventListener('release', () => { if (lock === l) lock = null; });
-        } catch { /* refused, e.g. on low battery: the screen may sleep */ }
+        let l = null;
+        try { l = await navigator.wakeLock.request('screen'); }
+        catch { /* refused, e.g. on battery saver: the screen may sleep */ }
         asking = false;
+        // not asked again at once when refused: it would be refused forever,
+        // and the page would never get a frame between the refusals
+        if (!l) return;
+        lock = l;
+        l.addEventListener('release', () => { if (lock === l) lock = null; });
         sync(); // paused or hidden while asking
       } else if (!want && lock) {
         const l = lock;
