@@ -278,9 +278,12 @@
   }
 
   // Click / tap pauses and resumes the pouring; while paused the hint stays up.
+  // The screen is kept awake while the painting goes on, as for a video.
   let paused = false, painting;
+  const awake = PD.screenAwake();
   canvas.addEventListener('click', () => {
     paused = !paused;
+    awake(!paused);
     syncMusic();
     showPalette(painting);
     showHint();
@@ -310,6 +313,7 @@
     let layer = p.nextLayer(), i = 0, credit = 0, last;
     showPalette(p);
     showHint();
+    awake(true);
     // Jobs are released at the current layer's pace; time spent in a hidden
     // tab, or while paused, doesn't pile up into a burst when it comes back.
     const frame = now => {

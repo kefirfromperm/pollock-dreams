@@ -453,5 +453,31 @@ const PollockDreams = (() => {
     return { buildJobs, pour, inkblot, wobblyPath, grainPattern };
   }
 
-  return { TAU, PALETTES, mulberry32, hexToRgb, rgba, jitter, shuffle, powerLaw, engine };
+  // Keeps the screen from dimming and locking while a painting is being made,
+  // as a playing video does: the returned function is called with true while
+  // it runs and false while it is paused. The browser lets go of the lock
+  // whenever the tab is hidden, so it is taken again when the tab comes back.
+  function screenAwake() {
+    let want = false, lock = null, asking = false;
+    async function sync() {
+      if (!navigator.wakeLock || asking) return;
+      if (want && !lock && document.visibilityState === 'visible') {
+        asking = true;
+        try {
+          const l = lock = await navigator.wakeLock.request('screen');
+          l.addEventListener('release', () => { if (lock === l) lock = null; });
+        } catch { /* refused, e.g. on low battery: the screen may sleep */ }
+        asking = false;
+        sync(); // paused or hidden while asking
+      } else if (!want && lock) {
+        const l = lock;
+        lock = null;
+        l.release();
+      }
+    }
+    document.addEventListener('visibilitychange', sync);
+    return on => { want = on; sync(); };
+  }
+
+  return { TAU, PALETTES, mulberry32, hexToRgb, rgba, jitter, shuffle, powerLaw, engine, screenAwake };
 })();
