@@ -162,6 +162,32 @@
   .placard .medium { margin: 2px 0 8px; color: var(--muted); }
   .placard p { margin: 0; }
 
+  /* the wall text, lettered straight onto the wall */
+  .statement {
+    width: min(680px, 100%); margin: 0 auto;
+    padding: 0 24px 104px;
+    font-size: 17px; line-height: 1.7;
+  }
+  .statement .kicker {
+    margin: 0; text-align: center;
+    font-size: 13px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .statement h2 {
+    margin: 8px 0 0; text-align: center;
+    font-size: clamp(28px, 4.5vw, 40px); font-weight: 400; font-style: italic; line-height: 1.15;
+  }
+  .statement .subtitle {
+    margin: 4px 0 28px; text-align: center;
+    font-style: italic; color: var(--muted);
+  }
+  .statement p { margin: 0 0 1.1em; text-wrap: pretty; hyphens: auto; }
+  .statement .lead::first-letter {
+    float: left; margin: 6px 10px 0 0;
+    font-size: 4.1em; line-height: .8;
+  }
+  .statement a { color: inherit; text-underline-offset: 3px; }
+
   footer {
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     text-align: center; padding: 0 16px; min-height: 64px;
@@ -213,6 +239,55 @@
     </figcaption>
   </figure>
 </main>
+
+<section class="statement" aria-labelledby="statement-title">
+  <p class="kicker">On the practice</p>
+  <h2 id="statement-title">Endless Algorithmic Painting</h2>
+  <p class="subtitle">written with AI</p>
+
+  <p class="lead">Vitalii Samolovskikh paints without touching paint. The works in this room are made by a technique
+    the artist calls <em>endless algorithmic painting, written with AI</em>: each canvas begins as a
+    conversation with an artificial intelligence, is set down as an algorithm, and is then left to paint
+    itself — live, in the browser, for as long as anyone cares to watch. Endless is meant literally: no
+    two visits show the same picture, and no picture is ever finished.</p>
+
+  <p>The method deserves to be described precisely, because it is where the art lies. The artist does not
+    prompt a machine for an image; that would be to ask for a result. Instead, artist and AI work as a
+    studio once did: they study a painter’s gesture — the swing of Pollock’s stick, the patient stacking
+    of Albers’ squares, the slow creep of poured enamel — and argue it down into rules. How fast does a
+    hand travel when it pours? When does a line, starved of paint, break into beads? What makes three
+    colours belong together? Every answer becomes a line of code, and the code, not the brush, is the
+    work’s true medium. The AI is a collaborator in the oldest sense of the studio assistant: tireless,
+    exacting, and never the author.</p>
+
+  <p>What emerges is painting as a process rather than an object. In
+    <a href="pollock-dreams.html"><em>Pollock Dreams</em></a> a simulated hand pours with the many-layered
+    tremor of a real wrist, its strokes sized by a power law — the same fractal statistics physicists have
+    measured in Pollock’s own canvases. Its colours are not chosen but inherited: the Pollock paintings whose
+    palettes best explain the colours already on the canvas vote for the next one, so the work drifts
+    through his oeuvre without ever stepping outside it.
+    <a href="rectangle-dreams.html"><em>Rectangle Dreams</em></a> answers Colour Field painting with a
+    fractal grammar — fields split as if from a single Mondrian cut, edges roughened like torn paper at
+    every scale, glazes laid on in thin sweeping coats while the key hue walks the whole circle of the
+    colour wheel in measured harmony. <a href="pour-dreams.html"><em>Pour Dreams</em></a> goes furthest
+    from the brush: here the paint is a physical film governed by the equation of thin-film flow, thick
+    paint running more freely than thin, each new pour shouldering the old aside without ever mixing
+    with it.</p>
+
+  <p>Each painting has its own music, composed by the same means and played live rather than recorded:
+    chords walked by 1/f noise, notes falling on three time scales in the same proportions as the strokes
+    of the brush. Pollock’s drips are answered by bells with falling trails; the rectangles by a choir and
+    a felt electric piano in E♭ lydian; the poured film by glassy clusters after the Soviet ANS synthesizer
+    and a theremin gliding between notes. Image and sound keep one pulse — the 1/f rhythm found in
+    heartbeats, coastlines and the flow of rivers.</p>
+
+  <p>The work belongs to a lineage that runs from the Abstract Expressionists’ faith in process, through
+    the instruction drawings of Sol LeWitt and the plotter works of Vera Molnár, to the generative practice
+    of today. But where those artists wrote rules for others to carry out, Samolovskikh writes them
+    together with a machine and hands them to another machine to perform in real time. The painter’s hand
+    is not abolished here; it is distilled — into a tremor, a probability, a law of flow. These are
+    paintings to sit with rather than to glance at: meditations that never repeat, and never end.</p>
+</section>
 
 <footer>
   <span>© Vitalii Samolovskikh 2026</span>
