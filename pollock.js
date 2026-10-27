@@ -453,6 +453,18 @@ const PollockDreams = (() => {
     return { buildJobs, pour, inkblot, wobblyPath, grainPattern };
   }
 
+  // The size to paint at, css px: the largest the window can reach (the
+  // screen), so resizing only reveals or crops the same image instead of
+  // repainting it. A touch device can be turned, so it gets a square as wide
+  // as its long side: turning it crops the painting the other way instead of
+  // leaving bare margins beside it.
+  function canvasSize() {
+    const w = Math.max(screen.width, window.innerWidth), h = Math.max(screen.height, window.innerHeight);
+    if (!matchMedia('(pointer: coarse)').matches) return [w, h];
+    const s = Math.max(w, h);
+    return [s, s];
+  }
+
   // Keeps the screen from dimming and locking while a painting is being made,
   // as a playing video does: the returned function is called with true while
   // it runs and false while it is paused. The browser lets go of the lock
@@ -483,5 +495,5 @@ const PollockDreams = (() => {
     return on => { want = on; sync(); };
   }
 
-  return { TAU, PALETTES, mulberry32, hexToRgb, rgba, jitter, shuffle, powerLaw, engine, screenAwake };
+  return { TAU, PALETTES, mulberry32, hexToRgb, rgba, jitter, shuffle, powerLaw, engine, canvasSize, screenAwake };
 })();

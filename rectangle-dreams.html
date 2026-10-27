@@ -84,10 +84,7 @@
 
   function setupCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    // Paint at the largest size the window can reach (the screen), so resizing
-    // only reveals or crops the same image instead of repainting it.
-    W = Math.max(screen.width, window.innerWidth);
-    H = Math.max(screen.height, window.innerHeight);
+    [W, H] = PD.canvasSize();
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
     canvas.width = Math.round(W * dpr);
