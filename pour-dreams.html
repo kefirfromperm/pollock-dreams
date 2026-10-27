@@ -574,6 +574,10 @@ void main() {
   // corners, css px.
   const ABERRATION = 3;
   const RELIEF = 45, LIGHT = (() => { const v = [-0.6, 0.7, 0.55], l = Math.hypot(...v); return v.map(c => c / l); })();
+  // Everything else is sized by the screen, but the relief is per css px, so
+  // the smaller the screen the steeper the paint and its waves stand. On a
+  // phone or tablet it is flattened to look as on a FLAT_SCREEN css px screen.
+  const FLAT_SCREEN = 1920 * 1080;
 
   function setupCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -638,6 +642,7 @@ void main() {
     const skin = membrane(gw, gh, cell, RIPPLE * Math.sqrt(area));
     const mind = palettes(rng);
     const cellX = PW / gw, cellY = PH / gh, core = stream * 1.5 / cell; // the stream's core, cells
+    const relief = RELIEF * (touch ? Math.min(1, Math.sqrt(area / FLAT_SCREEN)) : 1);
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
     let left = 0, pour;
 
@@ -684,7 +689,7 @@ void main() {
         left -= s;
         g.flow(f.forDisplay(cellX, cellY));
       },
-      draw: () => g.show(RELIEF / cell, LIGHT, pour ? pour.rgb : bg),
+      draw: () => g.show(relief / cell, LIGHT, pour ? pour.rgb : bg),
     };
   }
 
