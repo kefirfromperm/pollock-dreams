@@ -74,7 +74,9 @@
   const sound = document.getElementById('sound');
 
   const seed = (Math.random() * 1e9) | 0;
-  let W, H, VW, VH, PW, PH;
+  // the paint (W × H css px, PW × PH device px), the canvas showing it
+  // (CW × CH, CPW × CPH) and the screen (VW × VH), see setupCanvas
+  let W, H, CW, CH, VW, VH, PW, PH, CPW, CPH;
   const touch = matchMedia('(pointer: coarse)').matches;
 
   // ---- the paint film ----
@@ -96,8 +98,8 @@
   // and those are drawn on the GPU through a map of where every point of the
   // canvas has flowed from since the current pour began.
   //
-  // Sizes are fractions of the screen (on a touch device only a part of the
-  // canvas, see canvasSize), so the painting looks the same on any screen:
+  // Sizes are fractions of the screen (see setupCanvas), so the painting looks
+  // the same on any screen:
   // K in screen areas per second, the stream's width in √area, and the pour
   // rate such that the longest pour covers up to a tenth of the screen.
   // Times are painting seconds; the painting runs at SPEED, so a pour lasts
@@ -303,7 +305,7 @@ precision highp int;
 uniform highp sampler2D flow; // xy: where this point has flowed from (device px), zw: ∇h
 uniform highp sampler2D paint;
 uniform highp sampler2D fresh; // the current pour: signed distance to its border, cells
-uniform vec2 grid, cell, size; // grid cells, device px per cell, canvas in device px
+uniform vec2 grid, cell, size; // grid cells, device px per cell, the paint in device px
 uniform vec3 colour; // the current pour's
 out vec4 o;
 // periodic bilinear: the canvas is a torus
@@ -388,8 +390,12 @@ void main() {
   // On screen the paints meet in a soft sinusoidal gradient edge px wide, by
   // their signed distances, the current pour on top, and the surface is lit
   // as glossy paint shaped by h.
+  // The canvas may be bigger than the paint, which then goes on round the
+  // torus: the canvas's pixel `at` shows the paint at `at − offset`. The room
+  // is the canvas's, view device px.
   const SHOW = COMMON + PAINTS + `
 uniform float slope, edge;
+uniform vec2 view, offset;
 float cover(float d) { return 0.5 + 0.5 * sin(3.14159265 * clamp(d / edge, -0.5, 0.5)); }
 uniform vec3 light;
 vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
@@ -399,18 +405,18 @@ float gloss(float nh) { return 1.3 * pow(nh, 150.0) + 0.2 * pow(nh, 24.0); } // 
 // blue at the top right, linearly, colours keeping their lightness and the
 // middle diagonal untouched.
 float room(vec2 p) {
-  vec2 lamp = vec2(-0.15, 1.15) * size;
-  float d2 = dot(size, size), c = dot(0.5 * size - lamp, 0.5 * size - lamp) / d2;
+  vec2 lamp = vec2(-0.15, 1.15) * view;
+  float d2 = dot(view, view), c = dot(0.5 * view - lamp, 0.5 * view - lamp) / d2;
   return mix(1.0, (1.0 + c) / (1.0 + dot(p - lamp, p - lamp) / d2), 0.6);
 }
 vec3 tint(vec2 p, vec3 c) {
-  float t = dot(p / size, vec2(1.0)) - 1.0; // −1 bottom left … 1 top right
+  float t = dot(p / view, vec2(1.0)) - 1.0; // −1 bottom left … 1 top right
   vec3 tone = t < 0.0 ? vec3(1.0, 0.3, 0.25) : vec3(0.3, 0.45, 1.0);
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
   return mix(c, tone * dot(c, Y) / dot(tone, Y), 0.35 * abs(t));
 }
 void main() {
-  vec2 p = gl_FragCoord.xy;
+  vec2 at = gl_FragCoord.xy, p = at - offset;
   vec4 f = flowAt(p);
   vec4 col[4];
   float dist[4];
@@ -439,7 +445,7 @@ void main() {
   vec3 hv = normalize(light + vec3(0.0, 0.0, 1.0));
   float dif = 0.25 + 0.75 * max(dot(n, light), 0.0) / light.z; // flat paint shows its own colour
   float spec = gloss(max(dot(n, hv), 0.0)) - gloss(hv.z);
-  vec3 lit = max(tint(p, (c * dif + spec) * room(p)), 0.0);
+  vec3 lit = max(tint(at, (c * dif + spec) * room(at)), 0.0);
   o = vec4(pow(lit, vec3(1.0 / 2.2)), 1.0);
 }`;
   // Through the lens: chromatic aberration, red pushed outwards and blue
@@ -504,12 +510,11 @@ void main() {
       return { tex, fb };
     });
     let cur = 0;
-    gl.viewport(0, 0, PW, PH);
-    // the lit painting, before the lens, smoothly sampled (and not wrapping
+    // the lit canvas, before the lens, smoothly sampled (and not wrapping
     // round: the room's light doesn't)
     const scene = gl.createTexture(), sceneFb = gl.createFramebuffer();
     gl.bindTexture(gl.TEXTURE_2D, scene);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, PW, PH);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, CPW, CPH);
     for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
     for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
     gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFb);
@@ -543,6 +548,7 @@ void main() {
       // the pour just finished, in colour rgb, into the paint
       bake(rgb) {
         use(bake, rgb);
+        gl.viewport(0, 0, PW, PH);
         gl.bindFramebuffer(gl.FRAMEBUFFER, paint[1 - cur].fb);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         cur = 1 - cur;
@@ -552,13 +558,16 @@ void main() {
         gl.uniform1f(show.u.slope, slope);
         gl.uniform1f(show.u.edge, EDGE * PW / W);
         gl.uniform3fv(show.u.light, light);
+        gl.uniform2f(show.u.view, CPW, CPH);
+        gl.uniform2f(show.u.offset, (CPW - PW) / 2, (CPH - PH) / 2); // the paint's middle in the canvas's
+        gl.viewport(0, 0, CPW, CPH);
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFb);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.useProgram(lens.p);
         gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, scene);
         gl.uniform1i(lens.u.scene, 0);
-        gl.uniform2f(lens.u.size, PW, PH);
-        gl.uniform1f(lens.u.shift, ABERRATION * PW / W);
+        gl.uniform2f(lens.u.size, CPW, CPH);
+        gl.uniform1f(lens.u.shift, ABERRATION * CPW / CW);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       },
@@ -579,13 +588,21 @@ void main() {
   // phone or tablet it is flattened to look as on a FLAT_SCREEN css px screen.
   const FLAT_SCREEN = 1920 * 1080;
 
+  // The canvas is as canvasSize gives it: on a touch device a square as wide
+  // as the screen's long side, so turning it leaves no margins. The paint
+  // there is only a square as big as the screen, √(VW·VH) wide: a torus, it
+  // simply goes on round where the canvas is wider, so a turned device shows
+  // the same painting without painting more than a screen's worth.
   function setupCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    [W, H, VW, VH] = PD.canvasSize();
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
-    PW = canvas.width = Math.round(W * dpr);
-    PH = canvas.height = Math.round(H * dpr);
+    [CW, CH, VW, VH] = PD.canvasSize();
+    [W, H] = touch ? Array(2).fill(Math.round(Math.sqrt(VW * VH))) : [CW, CH];
+    canvas.style.width = CW + 'px';
+    canvas.style.height = CH + 'px';
+    CPW = canvas.width = Math.round(CW * dpr);
+    CPH = canvas.height = Math.round(CH * dpr);
+    PW = Math.round(W * dpr);
+    PH = Math.round(H * dpr);
   }
 
   // ---- colour ----
@@ -653,9 +670,9 @@ void main() {
       left = POUR_MIN_S + rng() * (POUR_MAX_S - POUR_MIN_S);
       const rate = POUR * (0.8 + rng() * 0.2); // screen areas per second
       const speed = HAND * (0.8 + rng() * 0.4) * Math.sqrt(area) / cell;
-      // on a canvas bigger than the screen the first pour lands where the
-      // screen shows it, however it is turned
-      const near = !pour && W * H > VW * VH ? Math.min(VW, VH) / W : 1;
+      // on a touch device the first pour lands where the screen shows it,
+      // however it is turned
+      const near = !pour && touch ? Math.min(1, Math.min(VW, VH) / W) : 1;
       pour = { x: (0.5 + (rng() - 0.5) * near) * gw, y: (0.5 + (rng() - 0.5) * near) * gh, dir: rng() * TAU, speed,
         rate: rate * area, rgb: toRgb(mind.pick(rate * left * area / (W * H))), clock: 0, drip: 0,
         shake: SHAKE.map(([lo, hi, depth]) => ({ hz: lo + rng() * (hi - lo), depth: depth * (0.6 + 0.8 * rng()), phase: rng() * TAU })) };
@@ -737,9 +754,13 @@ void main() {
     setupCanvas();
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
     if (!gl) { hintText.textContent = 'This painting needs WebGL2.'; return; }
-    // the paint is one texture, so it can't be bigger than the GPU allows
-    const fit = Math.min(1, gl.getParameter(gl.MAX_TEXTURE_SIZE) / Math.max(PW, PH));
-    if (fit < 1) { PW = canvas.width = Math.floor(PW * fit); PH = canvas.height = Math.floor(PH * fit); }
+    // the paint and the canvas are textures, so they can't be bigger than the
+    // GPU allows (and the canvas is never smaller than the paint)
+    const fit = Math.min(1, gl.getParameter(gl.MAX_TEXTURE_SIZE) / Math.max(CPW, CPH));
+    if (fit < 1) {
+      CPW = canvas.width = Math.floor(CPW * fit); CPH = canvas.height = Math.floor(CPH * fit);
+      PW = Math.floor(PW * fit); PH = Math.floor(PH * fit);
+    }
     const p = painting = painter(gl, PD.mulberry32(seed));
     document.body.style.background = rgba(p.bg, 1);
     showPalette(p);
