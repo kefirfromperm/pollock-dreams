@@ -56,7 +56,7 @@
   const ctx = canvas.getContext('2d');
   const hint = document.getElementById('hint');
 
-  let seed, token = 0, W, H;
+  let seed, token = 0, W, H, VW, VH;
   const DRAW_MS = 5000;
   const touch = matchMedia('(pointer: coarse)').matches;
 
@@ -78,7 +78,7 @@
 
   function setupCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    [W, H] = PollockDreams.canvasSize();
+    [W, H, VW, VH] = PollockDreams.canvasSize();
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
     canvas.width = Math.round(W * dpr);
@@ -92,7 +92,7 @@
     const my = ++token;
     setupCanvas();
     const rng = PollockDreams.mulberry32(seed);
-    const { jobs, bg, name } = PollockDreams.engine(ctx, W, H).buildJobs(rng);
+    const { jobs, bg, name } = PollockDreams.engine(ctx, W, H, VW, VH).buildJobs(rng);
     document.body.style.background = bg;
     showHint(touch ? `after ${name} · tap / swipe: new`
                    : `after ${name} · click / space: new · S: save PNG`);

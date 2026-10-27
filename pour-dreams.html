@@ -74,7 +74,7 @@
   const sound = document.getElementById('sound');
 
   const seed = (Math.random() * 1e9) | 0;
-  let W, H, PW, PH;
+  let W, H, VW, VH, PW, PH;
   const touch = matchMedia('(pointer: coarse)').matches;
 
   // ---- the paint film ----
@@ -96,9 +96,10 @@
   // and those are drawn on the GPU through a map of where every point of the
   // canvas has flowed from since the current pour began.
   //
-  // Sizes are fractions of the canvas, so the painting looks the same on any
-  // screen: K in canvas areas per second, the stream's width in √area, and
-  // the pour rate such that the longest pour covers up to a tenth of the canvas.
+  // Sizes are fractions of the screen (on a touch device only a part of the
+  // canvas, see canvasSize), so the painting looks the same on any screen:
+  // K in screen areas per second, the stream's width in √area, and the pour
+  // rate such that the longest pour covers up to a tenth of the screen.
   // Times are painting seconds; the painting runs at SPEED, so a pour lasts
   // 2–10 real seconds.
   const K = 0.0015, STREAM = 0.012;
@@ -576,7 +577,7 @@ void main() {
 
   function setupCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    [W, H] = PD.canvasSize();
+    [W, H, VW, VH] = PD.canvasSize();
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
     PW = canvas.width = Math.round(W * dpr);
@@ -632,7 +633,7 @@ void main() {
     // a grid cell of at least 4 css px, and not much over 130k cells
     const cell = Math.max(4, Math.sqrt(W * H / 130000));
     const gw = Math.round(W / cell), gh = Math.round(H / cell);
-    const area = W * H, stream = STREAM * Math.sqrt(area);
+    const area = VW * VH, stream = STREAM * Math.sqrt(area);
     const f = film(gw, gh, cell, K * area, stream), g = glPainter(gl, gw, gh);
     const skin = membrane(gw, gh, cell, RIPPLE * Math.sqrt(area));
     const mind = palettes(rng);
@@ -645,10 +646,13 @@ void main() {
       if (pour) g.bake(pour.rgb);
       f.reset();
       left = POUR_MIN_S + rng() * (POUR_MAX_S - POUR_MIN_S);
-      const rate = POUR * (0.8 + rng() * 0.2); // canvas areas per second
+      const rate = POUR * (0.8 + rng() * 0.2); // screen areas per second
       const speed = HAND * (0.8 + rng() * 0.4) * Math.sqrt(area) / cell;
-      pour = { x: rng() * gw, y: rng() * gh, dir: rng() * TAU, speed,
-        rate: rate * area, rgb: toRgb(mind.pick(rate * left)), clock: 0, drip: 0,
+      // on a canvas bigger than the screen the first pour lands where the
+      // screen shows it, however it is turned
+      const near = !pour && W * H > VW * VH ? Math.min(VW, VH) / W : 1;
+      pour = { x: (0.5 + (rng() - 0.5) * near) * gw, y: (0.5 + (rng() - 0.5) * near) * gh, dir: rng() * TAU, speed,
+        rate: rate * area, rgb: toRgb(mind.pick(rate * left * area / (W * H))), clock: 0, drip: 0,
         shake: SHAKE.map(([lo, hi, depth]) => ({ hz: lo + rng() * (hi - lo), depth: depth * (0.6 + 0.8 * rng()), phase: rng() * TAU })) };
     }
     // the stream moves on a little, turning at random, the flow wobbling with

@@ -72,8 +72,9 @@ const PollockDreams = (() => {
   // canvas coverage controls
   const UNDER_PASSES = 3, UNDER_WEIGHT = 0.55, UNDER_WB = 6, DENSITY = 5, MAX_W = 20;
 
-  // Everything that draws is bound to one 2D context, W×H in CSS pixels.
-  function engine(ctx, W, H) {
+  // Everything that draws is bound to one 2D context, W×H in CSS pixels,
+  // seen on a VW×VH screen (see canvasSize).
+  function engine(ctx, W, H, VW = W, VH = H) {
     function grainPattern(rng, light) {
       const g = document.createElement('canvas');
       g.width = g.height = 160;
@@ -356,8 +357,9 @@ const PollockDreams = (() => {
       const dark = cols[0], light = cols[1], others = shuffle(cols.slice(2), rng);
       if (others.length > 3 && rng() < 0.5) others.pop();
       const dom = new Map(cols.map(c => [c, Math.exp(gauss() * 0.6)]));
-      const D = Math.hypot(W, H);
-      const areaK = Math.sqrt((W * H) / (1440 * 900));
+      const D = Math.hypot(VW, VH);
+      // marks per screen, and as many more as the canvas is bigger
+      const areaK = Math.sqrt((VW * VH) / (1440 * 900)) * (W * H) / (VW * VH);
 
       // Dense underpainting: Pollock built the web up in many passes before the
       // final layers, so very little raw canvas shows through.
@@ -453,16 +455,19 @@ const PollockDreams = (() => {
     return { buildJobs, pour, inkblot, wobblyPath, grainPattern };
   }
 
-  // The size to paint at, css px: the largest the window can reach (the
-  // screen), so resizing only reveals or crops the same image instead of
-  // repainting it. A touch device can be turned, so it gets a square as wide
-  // as its long side: turning it crops the painting the other way instead of
-  // leaving bare margins beside it.
+  // The size to paint at, W × H css px, and the screen it is seen on, VW × VH,
+  // which the marks are sized by. The canvas is the largest the window can
+  // reach (the screen), so resizing only reveals or crops the same image
+  // instead of repainting it. A touch device can be turned, so it gets a
+  // square as wide as its long side: turning it crops the painting the other
+  // way instead of leaving bare margins beside it. Only part of the square is
+  // seen at once, so its marks keep the size the screen alone would give
+  // them; there are just more of them.
   function canvasSize() {
     const w = Math.max(screen.width, window.innerWidth), h = Math.max(screen.height, window.innerHeight);
-    if (!matchMedia('(pointer: coarse)').matches) return [w, h];
+    if (!matchMedia('(pointer: coarse)').matches) return [w, h, w, h];
     const s = Math.max(w, h);
-    return [s, s];
+    return [s, s, screen.width, screen.height];
   }
 
   // Keeps the screen from dimming and locking while a painting is being made,

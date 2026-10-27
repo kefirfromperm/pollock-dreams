@@ -74,7 +74,7 @@
   const sound = document.getElementById('sound');
 
   const seed = (Math.random() * 1e9) | 0;
-  let W, H;
+  let W, H, VW, VH;
   const touch = matchMedia('(pointer: coarse)').matches;
 
   const { toRgb, colourMind } = Colours;
@@ -84,7 +84,7 @@
 
   function setupCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    [W, H] = PD.canvasSize();
+    [W, H, VW, VH] = PD.canvasSize();
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
     canvas.width = Math.round(W * dpr);
@@ -190,7 +190,7 @@
     }
 
     function rectangleLayer(colour) {
-      const area = sample(0.044, 0.89, 0.9) * W * H, aspect = Math.exp((rng() * 2 - 1) * 0.9);
+      const area = sample(0.044, 0.89, 0.9) * VW * VH, aspect = Math.exp((rng() * 2 - 1) * 0.9);
       let w = Math.min(0.94 * W, Math.sqrt(area * aspect)), h = Math.min(0.94 * H, area / w);
       w = Math.min(0.94 * W, area / h);
       // up to 30% of a rectangle may hang off the canvas, so the borders fill too
@@ -250,9 +250,14 @@
     // is a REST_MS pause, so a dark rectangle and a light one never land on
     // the same spot within 1/3 s. Keep FIRST_RECT_MS / 3 and REST_MS
     // well above 1/3 s.
+    //
+    // On a canvas bigger than the screen (see canvasSize) fewer rectangles
+    // land where they are seen, so they come quicker, but never quicker than
+    // the first ones.
+    const rectMs = Math.max(FIRST_RECT_MS, RECT_MS * VW * VH / (W * H));
     function nextLayer() {
       const r = rng(), role = r < 0.14 ? 'dark' : r < 0.26 ? 'light' : 'other';
-      const ms = n++ < FIRST_RECTS ? FIRST_RECT_MS : RECT_MS;
+      const ms = n++ < FIRST_RECTS ? FIRST_RECT_MS : rectMs;
       const jobs = rectangleLayer(mind.next(role));
       const rest = Math.ceil(jobs.length * REST_MS / ms);
       for (let i = 0; i < rest; i++) jobs.push(() => {});
