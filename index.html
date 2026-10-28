@@ -46,6 +46,17 @@
     --mat: #f6f2ea;
     --placard: #fbf9f4;
     --shadow: rgba(40, 30, 15, .35);
+    /* the gallery and the wall text hang in one column of the same width */
+    --work: 300px;
+    --gap: clamp(48px, 6vw, 96px);
+    --cols: 1;
+    --room: min(100% - 32px, 420px);
+  }
+  @media (min-width: 700px) {
+    :root { --cols: 2; --room: calc(2 * var(--work) + var(--gap)); }
+  }
+  @media (min-width: 1080px) {
+    :root { --cols: 3; --room: calc(3 * var(--work) + 2 * var(--gap)); }
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -79,6 +90,7 @@
   body {
     margin: 0; min-height: 100vh;
     display: flex; flex-direction: column;
+    overflow-x: clip; /* the spotlights are wider than a phone */
     color: var(--ink);
     font: 16px/1.5 Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
     /* the wall, darker towards the floor, with a skirting line at the bottom */
@@ -99,15 +111,20 @@
     color: var(--muted);
   }
 
+  .room { width: var(--room); margin-inline: auto; }
+
   main {
     flex: 1;
-    display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
-    gap: clamp(48px, 6vw, 96px);
-    padding: 64px 16px 112px;
-    overflow-x: clip; /* the spotlights are wider than a phone */
+    display: grid; grid-template-columns: repeat(var(--cols), 1fr); align-items: start;
+    gap: var(--gap);
+    padding: 64px 0 112px;
   }
 
-  .work { position: relative; width: min(300px, 100%); }
+  .work { position: relative; }
+  /* two to a row, the third hangs centred below them */
+  @media (min-width: 700px) and (max-width: 1079.98px) {
+    .work:last-child:nth-child(odd) { grid-column: 1 / -1; justify-self: center; width: var(--work); }
+  }
   /* a ceiling spot on each painting */
   .work::before {
     content: ''; position: absolute; z-index: -1;
@@ -164,9 +181,14 @@
 
   /* the wall text, lettered straight onto the wall */
   .statement {
-    width: min(680px, 100%); margin: 0 auto;
-    padding: 0 24px 104px;
+    padding: 0 0 104px;
     font-size: 17px; line-height: 1.7;
+  }
+  /* as wide as the three paintings above, so set in two columns */
+  @media (min-width: 1080px) {
+    .statement { column-count: 2; column-gap: 64px; }
+    .statement .kicker, .statement h2, .statement .subtitle { column-span: all; }
+    .statement p { orphans: 3; widows: 3; }
   }
   .statement .kicker {
     margin: 0; text-align: center;
@@ -202,7 +224,7 @@
   <p>Immersive visuals for a calm mind</p>
 </header>
 
-<main>
+<main class="room">
   <figure class="work" style="margin:0">
     <a class="frame" href="pollock-dreams.html" aria-label="Pollock Dreams">
       <span class="mat"><img src="previews/pollock-dreams.jpg" width="800" height="1000"
@@ -240,7 +262,7 @@
   </figure>
 </main>
 
-<section class="statement" aria-labelledby="statement-title">
+<section class="statement room" aria-labelledby="statement-title">
   <p class="kicker">On the practice</p>
   <h2 id="statement-title">Endless Algorithmic Painting</h2>
   <p class="subtitle">written with AI</p>
