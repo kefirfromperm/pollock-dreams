@@ -2,10 +2,11 @@
 // ambient in the manner of Soviet electronic space music — the ANS
 // synthesizer's glassy clusters of sines, a filtered Polivoks-like pad, a
 // theremin gliding between notes, sequenced arpeggios through a wobbling tape
-// echo, gurgling paint, a held bass and cosmic wind. Nothing whistles: every
-// voice stays low enough, and the wind is breathy, never a ringing tone.
+// echo, a held bass and cosmic wind, and the paint gurgling as the painting
+// pours it, from where it pours. Nothing whistles: every voice stays low
+// enough, and the wind is breathy, never a ringing tone.
 // The form is fractal and random: 1/f noise walks the harmony and the
-// intensity; notes come on three time scales at rates following a power law;
+// intensity; notes come on two time scales at rates following a power law;
 // the theremin's lines are midpoint-displacement curves and the arpeggios'
 // rhythms are split recursively, alike at every scale.
 // Needs pollock.js (mulberry32).
@@ -77,7 +78,18 @@ const PourMusic = (() => {
     verb.buffer = impulse(6, 7);
     send.connect(verb);
     verb.connect(gain(0.85, hp));
-    const bus = (wet, level = 1) => { const g = gain(level, dry); g.connect(gain(wet, send)); return g; };
+    // The music can be silenced while the gurgling goes on: every voice's bus
+    // passes through a gain set by one shared level (band, 1 or 0, faded),
+    // all but the gurgling's and the tape echo's, which the gurgling feeds
+    // too (the voices' sends into it are silenced on their own buses).
+    const band = ac.createConstantSource();
+    band.start();
+    const bus = (wet, level = 1, muted = true) => {
+      const g = gain(muted ? 0 : level, dry);
+      if (muted) band.connect(gain(level, g.gain)); // level × band
+      g.connect(gain(wet, send));
+      return g;
+    };
 
     // Reverb tail: a large hall, diffuse noise decaying to -60 dB in rt60
     // seconds, the highs dying sooner.
@@ -114,7 +126,7 @@ const PourMusic = (() => {
 
     // Tape echo: two heads, their delay times wobbling with wow and flutter,
     // each repeat darker and thinner, crossing sides.
-    const echo = bus(0.5);
+    const echo = bus(0.5, 1, false);
     {
       const split = ac.createChannelSplitter(2), out = ac.createChannelMerger(2);
       echo.connect(split);
@@ -298,39 +310,58 @@ const PourMusic = (() => {
       return t + steps * STEP;
     }
 
-    // Gurgling: thick paint bubbling. A bubble rings as a sine that rises in
-    // pitch as it nears the surface and dies away within a few of its own
-    // periods; the bigger the bubble, the lower and longer. A gurgle is a
-    // cluster of them, its timing split recursively (bursts within bursts)
-    // and their sizes following a power law (many small, a few big ones), all
-    // low, so they glug rather than chirp.
-    const gurgles = filter('lowpass', 1400, 0.5, bus(0.25, 1));
+    // Gurgling: thick paint bubbling, wherever and whenever the painting
+    // pours (see pour). A bubble rings as a sine that rises in pitch as it
+    // nears the surface and dies away within a few of its own periods; the
+    // bigger the bubble, the lower and longer. Their sizes follow a power law
+    // (many small, a few big ones), all low, so they glug rather than chirp.
+    // The bubbles have their own random numbers, so however the painting's
+    // frames fall, the rest of the music stays the same.
+    const gurgles = filter('lowpass', 1400, 0.5, bus(0.25, 1, false));
     gurgles.connect(gain(0.35, echo));
-    function bubble(at, f, g, pan) {
-      const len = clamp(9 / f, 0.03, 0.16), o = osc('sine', f), env = gain(0, panner(pan, gurgles));
+    const fizz = PollockDreams.mulberry32(seed ^ 0x5bd1e995);
+    function bubble(at, g, pan, big = 1) {
+      const size = Math.pow(1 - fizz() * 0.97, -1 / 1.3) * big; // power law, ≥ 1
+      const f = clamp(600 / size, 90, 600) * (0.9 + fizz() * 0.2);
+      const len = clamp(9 / f, 0.03, 0.16), o = osc('sine', f);
+      const env = gain(0, panner(clamp(pan + (fizz() - 0.5) * 0.1, 0, 1), gurgles));
       o.connect(env);
       o.frequency.setValueAtTime(f, at);
-      o.frequency.exponentialRampToValueAtTime(f * (1.15 + rng() * 0.3), at + len);
+      o.frequency.exponentialRampToValueAtTime(f * (1.15 + fizz() * 0.3), at + len);
+      g *= clamp(0.4 + 0.25 * size, 0.4, 1.4);
       env.gain.setValueAtTime(0, at);
       env.gain.linearRampToValueAtTime(g, at + 0.003);
       env.gain.exponentialRampToValueAtTime(g * 0.001, at + len);
       o.start(at); o.stop(at + len + 0.01);
     }
-    function gurgle(tier, t, I) {
-      const at = t0 + t, pan = 0.2 + rng() * 0.6, g = 0.2 * (0.7 + 0.3 * I);
-      const span = 0.4 + tier.pv() * 2.2, times = [];
+    // A stream landing somewhere new splashes: a burst of bigger bubbles, its
+    // timing split recursively (bursts within bursts).
+    function splash(at, g, pan) {
+      const span = 0.3 + fizz() * 0.7;
       (function split(a, len, depth) {
-        if (depth > 6 || len < 0.025 || rng() < 0.12) { times.push(a + rng() * len); return; }
-        const cut = 0.3 + rng() * 0.4; // uneven halves: the bursts cluster
-        if (rng() < 0.85) split(a, len * cut, depth + 1);
-        if (rng() < 0.85) split(a + len * cut, len * (1 - cut), depth + 1);
-      })(0, span, 0);
-      for (const dt of times) {
-        const size = Math.pow(1 - rng() * 0.97, -1 / 1.3); // power law, ≥ 1
-        bubble(at + dt, clamp(600 / size, 90, 600) * (0.9 + rng() * 0.2), g * clamp(0.4 + 0.25 * size, 0.4, 1.4), clamp(pan + (rng() - 0.5) * 0.25, 0, 1));
-      }
-      return t + span;
+        if (depth > 6 || len < 0.025 || fizz() < 0.12) { bubble(a + fizz() * len, g, pan, 1.6); return; }
+        const cut = 0.3 + fizz() * 0.4; // uneven halves: the bursts cluster
+        if (fizz() < 0.85) split(a, len * cut, depth + 1);
+        if (fizz() < 0.85) split(a + len * cut, len * (1 - cut), depth + 1);
+      })(at, span, 0);
     }
+    // How the painting poured over dt seconds from music time t: the stream's
+    // flow (1 on average, swelling and thinning with the shaking hand), where
+    // it was across the screen (pan, −1 left to 1 right) and whether it has
+    // just landed somewhere new. While it pours it bubbles at random, the
+    // more the thicker it flows (∝ flow⁴, so the swells glug and the lulls
+    // go quiet), and louder when the music is.
+    let due = -Math.log(1 - fizz()), poured = 0;
+    function pour(t, dt, { flow, pan, fresh }) {
+      if (t < 0) return;
+      const I = intensity(t), g = 0.2 * (0.7 + 0.3 * I), p = clamp((pan + 1) / 2, 0, 1);
+      if (fresh) splash(t0 + t, g, p);
+      if (dt <= 0) return;
+      const rate = 3 * Math.pow(Math.max(0, flow), 4) * (0.5 + 0.6 * I);
+      for (poured += rate * dt; poured >= due; due -= Math.log(1 - fizz()))
+        bubble(t0 + t + dt * (1 - (poured - due) / (rate * dt)), g, p);
+    }
+    const time = () => ac.currentTime - t0;
 
     // Cosmic wind: noise through a band-pass sweeping slowly, rising with the
     // intensity.
@@ -341,12 +372,12 @@ const PourMusic = (() => {
     wind.start(t0);
     const windPitch = slow(9), windLevel = slow(20, 6);
 
-    // ---- three voices on three time scales, rate ~ s^-1.7 ----
+    // ---- two voices on two time scales, rate ~ s^-1.7 (the gurgling is the
+    // painting's own) ----
     const BASE = 10;
     const TIERS = [
       { s: 1, accept: I => 0.25 + 0.6 * I, play: theremin },
       { s: 0.5, accept: I => 0.1 + 0.7 * I * I, play: sequence },
-      { s: 0.25, accept: I => 0.65 + 0.35 * I, play: gurgle },
     ].map(tier => {
       const mean = BASE * Math.pow(tier.s, 1.7);
       return { ...tier, mean, pv: voss(8), tv: voss(6), t: 8 + rng() * mean };
@@ -371,15 +402,30 @@ const PourMusic = (() => {
       while (chords.length > 2 && chords[0].end < u - AHEAD - REL) chords.shift();
       for (const tier of TIERS) while (tier.t < u) play(tier);
     }
-    return { schedule };
+    // the music heard (1) or not (0), faded over fade seconds
+    function music(on, fade) {
+      const o = band.offset, now = ac.currentTime;
+      o.cancelScheduledValues(now);
+      o.setValueAtTime(o.value, now);
+      o.linearRampToValueAtTime(on ? 1 : 0, now + fade);
+    }
+    return { schedule, pour, time, music };
   }
 
   // The player: a context made on the first play() (it has to come from a
-  // click or a key press), faded in and out, suspended while off.
+  // click or a key press), faded in and out, suspended while off. It plays
+  // the gurgling, with the music (play(true)) or without it (play(false)).
+  // pour(s) is how the painting poured over its last frame (see graph's
+  // pour): heard straight away, just far enough ahead to be scheduled
+  // cleanly, and not at all while the sound is off.
+  const NOW = 0.03;
   function player(seed) {
     let ac, master, music, timer, off;
     const on = () => !!timer;
-    function play() {
+    function play(withMusic = true) {
+      // the music fades in and out with the rest, or on its own while the
+      // gurgling goes on
+      if (ac) music.music(withMusic, master.gain.value < 1e-3 ? 0 : withMusic ? 1.5 : 0.5);
       if (on()) return;
       if (!ac) {
         ac = new AudioContext({ latencyHint: 'playback' });
@@ -391,6 +437,7 @@ const PourMusic = (() => {
         master.gain.value = 0;
         master.connect(limit);
         music = graph(ac, seed, master);
+        music.music(withMusic, 0);
       }
       clearTimeout(off);
       ac.resume();
@@ -411,7 +458,8 @@ const PourMusic = (() => {
       g.linearRampToValueAtTime(0, now + 0.5);
       off = setTimeout(() => ac.suspend(), 600);
     }
-    return { play, stop, on };
+    const pour = s => { if (on()) music.pour(music.time() + NOW, s.dt, s); };
+    return { play, stop, on, pour };
   }
 
   return { graph, player };

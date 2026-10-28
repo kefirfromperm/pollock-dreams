@@ -45,21 +45,27 @@
   #hint.hidden { opacity: 0; }
   #swatches { display: flex; gap: 3px; margin-bottom: 5px; }
   #swatches span { width: 14px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(244,239,227,.35); }
-  #sound {
+  #sounds {
     position: fixed; right: 16px; bottom: 14px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  }
+  #sounds button {
     font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #f4efe3; background: rgba(20,17,15,.55);
     padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
     transition: opacity 1.2s; opacity: 1;
   }
-  #sound.dim { opacity: .35; }
-  #sound:hover, #sound:focus-visible { opacity: 1; }
+  #sounds.dim button { opacity: .35; }
+  #sounds button:hover, #sounds button:focus-visible { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint"><div id="swatches"></div><div id="hintText"></div></div>
-<button id="sound" type="button" aria-pressed="false">♪ music: off</button>
+<div id="sounds">
+  <button id="gurgle" type="button" aria-pressed="false">∘ gurgling: off</button>
+  <button id="sound" type="button" aria-pressed="false">♪ music: off</button>
+</div>
 <script src="pollock.js"></script>
 <script src="colour.js"></script>
 <script src="pour-music.js"></script>
@@ -71,7 +77,9 @@
   const hint = document.getElementById('hint');
   const hintText = document.getElementById('hintText');
   const swatchBox = document.getElementById('swatches');
+  const sounds = document.getElementById('sounds');
   const sound = document.getElementById('sound');
+  const gurgle = document.getElementById('gurgle');
 
   const seed = (Math.random() * 1e9) | 0;
   // the paint (W × H css px, PW × PH device px), the canvas showing it
@@ -697,7 +705,7 @@ void main() {
       const e = Math.exp(-dt / DRIP);
       pour.drip = pour.drip * e + Math.sqrt(1 - e * e) * gauss();
       pour.clock += dt;
-      const flow = pour.shake.reduce((a, w) => a + w.depth * Math.sin(TAU * w.hz * pour.clock + w.phase), 1);
+      const flow = pour.flow = pour.shake.reduce((a, w) => a + w.depth * Math.sin(TAU * w.hz * pour.clock + w.phase), 1);
       pour.dir += gauss() * TURN * Math.sqrt(dt);
       pour.x = (pour.x + Math.cos(pour.dir) * pour.speed * dt + gw) % gw;
       pour.y = (pour.y + Math.sin(pour.dir) * pour.speed * dt + gh) % gh;
@@ -705,19 +713,30 @@ void main() {
       f.pourAt(pour.x, pour.y, pour.rate * flow);
     }
 
+    // where the stream is across the screen, −1 at its left edge to 1 at its
+    // right: the paint's middle is the screen's, and the paint goes on round
+    // to the copy of the stream nearest it
+    function pan() {
+      const x = pour.x / gw * W, d = ((x - W / 2) % W + W * 1.5) % W - W / 2;
+      return Math.max(-1, Math.min(1, d / (innerWidth / 2)));
+    }
+
     const bg = toRgb(mind.ground());
     g.ground(bg);
     g.flow(f.forDisplay(cellX, cellY));
     return {
       bg, mind,
+      // a frame dt real seconds long; tells how the stream poured over it
       advance(dt) {
-        if (left <= 0) nextPour();
+        const fresh = left <= 0;
+        if (fresh) nextPour();
         const s = Math.min(dt * SPEED, MAX_STEP_S);
         wander(s);
         f.step(s); // the paint's slope…
         skin.step(s, f.src, f.slope, 1 + DROPS * pour.drip); // …and the membrane's on top
         left -= s;
         g.flow(f.forDisplay(cellX, cellY));
+        return { dt, flow: pour.flow * pour.rate / (POUR * area), pan: pan(), fresh };
       },
       draw: () => g.show(relief / cell, LIGHT, pour ? pour.rgb : bg),
     };
@@ -731,7 +750,7 @@ void main() {
     }));
     hintText.textContent = (touch ? '' : 'palette: ') + p.mind.name() +
       (paused ? ' · paused' : '') +
-      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · M: music · S: save PNG`);
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · M: music · G: gurgling · S: save PNG`);
   }
 
   // Click / tap pauses and resumes the pouring; while paused the hint stays up.
@@ -742,24 +761,35 @@ void main() {
     if (!painting) return;
     paused = !paused;
     awake(!paused);
-    syncMusic();
+    syncSound();
     showPalette(painting);
     showHint();
   });
 
   // Music (pour-music.js), off until asked for: browsers only let sound start
   // from a click or a key press. It pauses with the painting.
+  // It hears the paint being poured: every frame the painting tells, as a
+  // pour event, how its stream poured (so a recording can listen in too).
+  // The gurgling can be heard on its own, without the music, but the music
+  // never goes without it: turning the music on turns the gurgling on, and
+  // turning the gurgling off turns the music off.
   const music = PourMusic.player(seed);
-  let musicOn = false;
-  const syncMusic = () => musicOn && !paused ? music.play() : music.stop();
-  function toggleMusic() {
-    musicOn = !musicOn;
-    syncMusic();
+  addEventListener('pour', e => music.pour(e.detail));
+  let musicOn = false, gurgleOn = false;
+  const syncSound = () => (musicOn || gurgleOn) && !paused ? music.play(musicOn) : music.stop();
+  function setSound(m, g) {
+    musicOn = m; gurgleOn = g || m;
+    syncSound();
     sound.textContent = `♪ music: ${musicOn ? 'on' : 'off'}`;
     sound.setAttribute('aria-pressed', musicOn);
+    gurgle.textContent = `∘ gurgling: ${gurgleOn ? 'on' : 'off'}`;
+    gurgle.setAttribute('aria-pressed', gurgleOn);
     showHint();
   }
+  const toggleMusic = () => setSound(!musicOn, gurgleOn);
+  const toggleGurgle = () => setSound(musicOn && !gurgleOn, !gurgleOn);
   sound.addEventListener('click', toggleMusic);
+  gurgle.addEventListener('click', toggleGurgle);
 
   // One painting per page load: it is never restarted, only reloading the
   // page begins a new one.
@@ -786,7 +816,7 @@ void main() {
       const dt = Math.min(100, now - (last ?? now)) / 1000;
       last = now;
       if (!paused) {
-        p.advance(dt);
+        dispatchEvent(new CustomEvent('pour', { detail: p.advance(dt) }));
         p.draw();
         if (now - swatchesAt > 1000) { swatchesAt = now; showPalette(p); }
       }
@@ -803,6 +833,7 @@ void main() {
   });
   window.addEventListener('keydown', e => {
     if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleMusic();
+    if ((e.key === 'g' || e.key === 'G') && !e.repeat) toggleGurgle();
     if ((e.key === 's' || e.key === 'S') && painting) {
       painting.draw(); // the drawing buffer is only kept until the next frame
       const a = document.createElement('a');
@@ -814,9 +845,9 @@ void main() {
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
-    sound.classList.remove('dim');
+    sounds.classList.remove('dim');
     clearTimeout(ht);
-    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); sound.classList.add('dim'); }, 4000);
+    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); sounds.classList.add('dim'); }, 4000);
   }
 
   start();
