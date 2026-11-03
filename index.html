@@ -125,6 +125,10 @@
   @media (min-width: 700px) and (max-width: 1079.98px) {
     .work:last-child:nth-child(odd) { grid-column: 1 / -1; justify-self: center; width: var(--work); }
   }
+  /* three to a row, a fourth hangs in the middle below them */
+  @media (min-width: 1080px) {
+    .work:last-child:nth-child(3n+1) { grid-column: 2; }
+  }
   /* a ceiling spot on each painting */
   .work::before {
     content: ''; position: absolute; z-index: -1;
@@ -260,6 +264,18 @@
       <p>Glossy, thick paint poured forever, each new pour pushing the old paint aside without ever mixing with it.</p>
     </figcaption>
   </figure>
+
+  <figure class="work" style="margin:0">
+    <a class="frame" href="the-wall.html" aria-label="The Wall">
+      <span class="mat"><img src="previews/the-wall.jpg" width="800" height="1000"
+        alt="Coats of vivid paint cracked and peeled one under another on an old wall"></span>
+    </a>
+    <figcaption class="placard">
+      <h2><a href="the-wall.html">The Wall</a></h2>
+      <div class="medium">Generative peeling paint, endless · with nature sounds</div>
+      <p>An old wall painted over forever, its coats cracking, curling and blowing away in the wind, one colour under another.</p>
+    </figcaption>
+  </figure>
 </main>
 
 <section class="statement room" aria-labelledby="statement-title">
@@ -294,13 +310,19 @@
     colour wheel in measured harmony. <a href="pour-dreams.html"><em>Pour Dreams</em></a> goes furthest
     from the brush: here the paint is a physical film governed by the equation of thin-film flow, thick
     paint running more freely than thin, each new pour shouldering the old aside without ever mixing
-    with it.</p>
+    with it. <a href="the-wall.html"><em>The Wall</em></a> turns the gesture round: nothing is added
+    to it, everything is taken away. An old wall, painted over and over without end, cracks in long
+    branching lines; its paint curls up along every crack and edge, and the wind tears it off flake by
+    flake, so that each coat gives way to the one beneath — though a coat begins to crack only once a
+    broad enough patch of it has lost the shelter of the coat above.</p>
 
   <p>Each painting has its own music, composed by the same means and played live rather than recorded:
     chords walked by 1/f noise, notes falling on three time scales in the same proportions as the strokes
     of the brush. Pollock’s drips are answered by bells with falling trails; the rectangles by a choir and
     a felt electric piano in E♭ lydian; the poured film by glassy clusters after the Soviet ANS synthesizer
-    and a theremin gliding between notes. Image and sound keep one pulse — the 1/f rhythm found in
+    and a theremin gliding between notes. Only the wall has no music: it is left to the sounds of the
+    nature that has come to take it back — wind in the trees and the grass, birds, insects — and the
+    wind heard is the very wind that carries its flakes away. Image and sound keep one pulse — the 1/f rhythm found in
     heartbeats, coastlines and the flow of rivers.</p>
 
   <p>The work belongs to a lineage that runs from the Abstract Expressionists’ faith in process, through

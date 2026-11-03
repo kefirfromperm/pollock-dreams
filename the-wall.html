@@ -1,0 +1,1151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8J2V3WVJ2Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-8J2V3WVJ2Z');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Wall</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="description" content="An old wall painted over and over, its coats cracking, curling and blowing away in the wind forever, one colour under another.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Digital Art Meditation">
+<meta property="og:title" content="The Wall">
+<meta property="og:description" content="An old wall painted over and over, its coats cracking, curling and blowing away in the wind forever, one colour under another.">
+<meta property="og:url" content="https://kefirfromperm.github.io/pollock-dreams/the-wall.html">
+<meta property="og:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og-wall.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="“The Wall” written in poured cursive lines over coats of paint cracked and peeling one under another">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Wall">
+<meta name="twitter:description" content="An old wall painted over and over, its coats cracking, curling and blowing away in the wind forever, one colour under another.">
+<meta name="twitter:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og-wall.png">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #8a8a8a; }
+  canvas {
+    display: block; position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); cursor: pointer;
+  }
+  #f { pointer-events: none; }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 170px);
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border-radius: 4px;
+    transition: opacity 1.2s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+  #swatches { display: flex; gap: 3px; margin-bottom: 5px; }
+  #swatches span { width: 14px; height: 14px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(244,239,227,.35); }
+  #sounds {
+    position: fixed; right: 16px; bottom: 14px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  }
+  #sounds button {
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
+    transition: opacity 1.2s; opacity: 1;
+  }
+  #sounds.dim button { opacity: .35; }
+  #sounds button:hover, #sounds button:focus-visible { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="f"></canvas>
+<div id="hint"><div id="swatches"></div><div id="hintText"></div></div>
+<div id="sounds">
+  <button id="crackle" type="button" aria-pressed="false">∘ crackle: off</button>
+  <button id="sound" type="button" aria-pressed="false">♪ music: off</button>
+</div>
+<script src="pollock.js"></script>
+<script src="colour.js"></script>
+<script src="wall-music.js"></script>
+<script>
+(() => {
+  const PD = PollockDreams, { TAU, rgba } = PD;
+  const { toRgb, fit, hueName } = Colours;
+  const canvas = document.getElementById('c');
+  const over = document.getElementById('f');
+  const hint = document.getElementById('hint');
+  const hintText = document.getElementById('hintText');
+  const swatchBox = document.getElementById('swatches');
+  const sounds = document.getElementById('sounds');
+  const sound = document.getElementById('sound');
+  const crackleButton = document.getElementById('crackle');
+
+  const seed = (Math.random() * 1e9) | 0;
+  // the canvas (CW × CH css px, CPW × CPH device px) and the screen (VW × VH)
+  let CW, CH, VW, VH, CPW, CPH;
+  const touch = matchMedia('(pointer: coarse)').matches;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // ---- the wall ----
+  // An old wall, painted over and over again: under every coat lies another.
+  // Now the top coat cracks, in long wandering cracks that branch and run
+  // into one another, the coat under it showing in them; and a little bit of
+  // paint the cracks ring in comes loose, and a gust blows it away.
+  //
+  // The wall is a grid of cells, each knowing which coat is on top there (its
+  // depth: 0 is the newest coat, deeper ones older), how far it has cracked
+  // and how far its paint cups up beside a crack.
+  //
+  // Sizes are fractions of the screen, √(VW·VH) (U), so the wall looks the
+  // same on any screen; the paint's thickness is in css px, as real paint's
+  // would be.
+  const MAX_CELLS = 1.6e6; // cells of at least 1 css px, not many more than this
+  // Cracks run at CRACK_SPEED U a second, their heading wandering by about a
+  // radian every WANDER U, jagged on a smaller scale; they branch every
+  // BRANCH U and give out after DIE U on average, or where they meet another
+  // crack or the edge of their coat.
+  // Between kinks every KINK U or so, where they turn sharply, they run
+  // nearly straight.
+  const CRACK_SPEED = [0.03, 0.08], WANDER = 0.6, KINK = 0.1, BRANCH = 0.35, DIE = 3;
+  const CRACK_WIDTH = [0.8, 1.6], MAX_TIPS = 250; // css px
+  const SEEDS = 0.6; // new cracks a second over a whole screen of cracking paint
+  const CLEAR = 0.04; // U: how far from any other crack a new one begins
+  // and SPLITS a second that set off from a crack across the plate beside it,
+  // where it is at least SPLIT_ROOM wide that way, so the cracking goes on.
+  // As the plates get smaller the cracks get shorter; so more of them start,
+  // across ever narrower plates (down to SPLIT_ROOM_MIN), to keep the cracks
+  // growing CRACK_RATE U a second in all.
+  const SPLITS = 0.8, SPLIT_ROOM = 0.06, SPLIT_ROOM_MIN = 0.012, CRACK_RATE = 0.2;
+  // A bit of paint ringed in by cracks, of area a up to FRAG (U²), comes loose;
+  // a gust of strength g blows it off at BLOW·m·(g − 0.05)·FRAG_REF/a a second:
+  // the smaller, the more readily. m is its coat's pace, kept so that the coat
+  // loses half of what is left of it every HALF seconds from when it first
+  // begins to come off.
+  const FRAG = 0.003, FRAG_REF = 0.0002, BLOW = 30, HALF = 60;
+  // the paint: its highest lift (as LIFT, to scale the rest), a crack's
+  // groove and how far the paint cups up beside it, css px
+  const LIT_FPS = 30;
+  const LIFT = 4, GROOVE = 1.6, CUP = 0.45, CUP_WIDTH = 1.8, BRUSH = 0.18;
+  const LIGHT = (() => { const v = [-0.6, -0.7, 0.62], l = Math.hypot(...v); return v.map(c => c / l); })(); // y down
+
+  // The canvas is as canvasSize gives it: on a touch device a square as wide
+  // as the screen's long side, so turning it leaves no margins.
+  function setupCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    [CW, CH, VW, VH] = PD.canvasSize();
+    for (const c of [canvas, over]) {
+      c.style.width = CW + 'px';
+      c.style.height = CH + 'px';
+      c.width = Math.round(CW * dpr);
+      c.height = Math.round(CH * dpr);
+    }
+    CPW = canvas.width; CPH = canvas.height;
+  }
+
+  // ---- colour ----
+  // Every coat was a new start: any colour, as long as it is vivid and tells
+  // itself apart from the coat it covered, now and then a white or a deep one.
+  function coats(rng) {
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    const lab = [], rgb = [];
+    const hueDist = (a, b) => Math.abs(((a - b) % 360 + 540) % 360 - 180);
+    let prev = null;
+    function make() {
+      let c;
+      for (let i = 0; i < 30; i++) {
+        const r = rng();
+        c = r < 0.1 ? { L: 0.92 + rng() * 0.05, C: 0.01 + rng() * 0.03, h: rng() * 360 } // whitewash
+          : r < 0.16 ? { L: 0.3 + rng() * 0.08, C: 0.08 + rng() * 0.06, h: rng() * 360 } // a deep one
+          : { L: 0.5 + rng() * 0.36, C: 0.13 + rng() * 0.14, h: rng() * 360 };
+        if (!prev) break;
+        const far = hueDist(c.h, prev.h) > 70 || prev.C < 0.05 || c.C < 0.05;
+        if (far && Math.abs(c.L - prev.L) + (hueDist(c.h, prev.h) / 360) > 0.2) break;
+      }
+      prev = c;
+      const l = fit(c.L, c.C, c.h + gauss() * 2);
+      lab.push(l);
+      rgb.push(toRgb(l));
+    }
+    return {
+      // the colour of coat k (depth), made as far down as it is asked for
+      rgb(k) { while (rgb.length <= k) make(); return rgb[k]; },
+      lab(k) { while (lab.length <= k) make(); return lab[k]; },
+      count: () => rgb.length,
+    };
+  }
+
+  // ---- the wind ----
+  // One wind over the whole wall: a slowly changing breeze, its heading
+  // drifting round, and gusts that come, swell and die away (sometimes a few
+  // at once), turning the wind a little as they pass; and some turbulence.
+  // speed is about 0.3 in a breeze, over 1 in a strong gust. A gust comes
+  // every 0.5–2 s.
+  function windModel(rng) {
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    const ou = (v, mean, tau, sigma, dt) => { const e = Math.exp(-dt / tau); return mean + (v - mean) * e + sigma * Math.sqrt(1 - e * e) * gauss(); };
+    let mean = rng() * TAU, heading = mean, breeze = 0.25, turb = 0, gusts = [], next = 0.5 + rng() * 1.5;
+    const w = { speed: 0.25, gust: 0, dir: heading };
+    w.step = dt => {
+      mean += gauss() * 0.1 * Math.sqrt(dt);
+      heading += (mean - heading) * Math.min(1, dt / 12) + gauss() * 0.1 * Math.sqrt(dt);
+      breeze = ou(breeze, 0.28, 30, 0.12, dt);
+      turb = ou(turb, 0, 0.6, 1, dt);
+      if ((next -= dt) <= 0) {
+        gusts.push({ t: 0, rise: 0.8 + rng() * 2.2, fall: 2 + rng() * 5, a: 0.25 + Math.pow(rng(), 1.5) * 1.1, turn: gauss() * 0.35 });
+        next = 0.5 + rng() * 1.5; // one every 0.5–2 s
+      }
+      let g = 0, turn = 0;
+      gusts = gusts.filter(q => (q.t += dt) < q.rise + q.fall);
+      for (const q of gusts) {
+        const e = q.t < q.rise ? 0.5 - 0.5 * Math.cos(Math.PI * q.t / q.rise) : 0.5 + 0.5 * Math.cos(Math.PI * (q.t - q.rise) / q.fall);
+        g += q.a * e; turn += q.turn * e;
+      }
+      w.gust = g;
+      w.speed = Math.max(0.04, Math.max(0.06, breeze) + g + 0.07 * turb * (0.6 + g));
+      w.dir = heading + turn;
+    };
+    return w;
+  }
+
+  // ---- drawing: WebGL2 ----
+  const VERT = `#version 300 es
+in vec2 pos;
+void main() { gl_Position = vec4(pos, 0.0, 1.0); }`;
+  // The wall, lit by a raking light from the upper left. Coats meet flat
+  // along the smoothed borders of their cells, each with brush strokes of
+  // its own; the paint is grooved and cupped where it cracks.
+  const WALL = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+uniform usampler2D depth; // the coat on top, mod 256
+uniform sampler2D crack, lift, palette;
+uniform vec2 grid, cellPx; // grid cells, device px per cell
+uniform float cellCss, viewH; // css px per cell, the canvas's height in device px
+uniform float liftMax, groove, brushH, shadowStep, aa;
+uniform vec3 light; // towards the light, y down
+out vec4 o;
+int dAt(ivec2 c) { return int(texelFetch(depth, clamp(c, ivec2(0), ivec2(grid) - 1), 0).r); }
+// a coat's depth from ref's, wrapped (only a few coats ever show at once)
+float rel(int d, int ref) { return float(((d - ref + 128) & 255) - 128); }
+vec3 paintOf(int k) { return texelFetch(palette, ivec2(k & 255, 0), 0).rgb; }
+vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
+// the wall's height at q (cells), css px
+float heightAt(vec2 q) {
+  vec2 uv = q / grid;
+  return liftMax * texture(lift, uv).r - groove * texture(crack, uv).r;
+}
+// The coats on the 4×4 cells round q, relative to ref, with Gaussian
+// weights: a smooth field of them, so their borders run in smooth curves
+// rather than along the cells.
+const float SIGMA = 0.6;
+void around(vec2 q, int ref, out float r[16], out float w[16]) {
+  vec2 b = floor(q - 0.5) - 1.0;
+  float ws = 0.0;
+  for (int k = 0; k < 16; k++) {
+    vec2 c = b + vec2(k % 4, k / 4), d = q - c - 0.5;
+    r[k] = rel(dAt(ivec2(c)), ref);
+    w[k] = exp(-dot(d, d) / (2.0 * SIGMA * SIGMA));
+    ws += w[k];
+  }
+  for (int k = 0; k < 16; k++) w[k] /= ws;
+}
+float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+// a coat's brushwork, at p (css px): strokes along the coat's own direction
+float brush(vec2 p, int k) {
+  float id = float(k & 255), a = hash(vec2(id, 7.0)) * 3.14159;
+  vec2 r = mat2(cos(a), sin(a), -sin(a), cos(a)) * p + 300.0 * hash(vec2(id, 3.0));
+  return 0.45 * vnoise(r * vec2(0.025, 0.16)) + 0.3 * vnoise(r * vec2(0.08, 0.4)) + 0.25 * vnoise(r * 0.35);
+}
+void main() {
+  vec2 q = vec2(gl_FragCoord.x, viewH - gl_FragCoord.y) / cellPx;
+  int ref = dAt(ivec2(floor(q - 0.5)));
+  float r[16], w[16], lo = 0.0, hi = 0.0;
+  around(q, ref, r, w);
+  for (int k = 0; k < 16; k++) if (w[k] > 0.01) { lo = min(lo, r[k]); hi = max(hi, r[k]); }
+  // from the deepest coat around up: each covers what is under it where
+  // the cells it is on top of say so, its border smoothed
+  int top = ref + int(hi);
+  vec3 c = lin(paintOf(top));
+  for (int k = 1; k <= 4; k++) {
+    float L = hi - float(k);
+    if (L < lo) break;
+    float cov = 0.0;
+    for (int m = 0; m < 16; m++) cov += w[m] * step(r[m], L);
+    float a = smoothstep(0.5 - aa, 0.5 + aa, cov);
+    c = mix(c, lin(paintOf(ref + int(L))), a);
+    if (a > 0.5) top = ref + int(L);
+  }
+  // the brush strokes show a little in the colour too, and the years'
+  // grime over everything
+  vec2 p = q * cellCss;
+  vec2 uv = q / grid;
+  float b0 = brush(p, top);
+  float dirt = 0.5 * vnoise(p / 230.0) + 0.3 * vnoise(p / 70.0 + 17.0) + 0.2 * vnoise(p / 19.0 + 5.0);
+  c *= (0.97 + 0.06 * b0) * (1.04 - 0.16 * dirt * dirt);
+  // a crack shows the coat under it, deep in shadow
+  float cr = texture(crack, uv).r;
+  c = mix(c, lin(paintOf(top + 1)) * 0.22, smoothstep(0.15, 0.85, cr));
+
+  // the surface
+  float e = 1.0;
+  vec2 g = vec2(heightAt(q + vec2(e, 0.0)) - heightAt(q - vec2(e, 0.0)),
+                heightAt(q + vec2(0.0, e)) - heightAt(q - vec2(0.0, e))) / (2.0 * e * cellCss);
+  g += brushH * vec2(brush(p + vec2(0.7, 0.0), top) - b0, brush(p + vec2(0.0, 0.7), top) - b0) / 0.7;
+  vec3 n = normalize(vec3(-g, 1.0));
+  // the shadow cast by whatever stands between here and the light
+  float h0 = heightAt(q), sh = 0.0;
+  vec2 ld = normalize(light.xy);
+  float rise = light.z / length(light.xy);
+  for (int k = 1; k <= 12; k++) {
+    float dc = float(k) * shadowStep;
+    float hs = heightAt(q + ld * dc / cellCss);
+    sh = max(sh, clamp((hs - h0 - dc * rise) / 0.8, 0.0, 1.0));
+  }
+  float dif = max(dot(n, light), 0.0) / light.z; // flat paint shows its own colour
+  vec3 hv = normalize(light + vec3(0.0, 0.0, 1.0));
+  float spec = 0.05 * pow(max(dot(n, hv), 0.0), 30.0) - 0.05 * pow(hv.z, 30.0);
+  vec3 lit = max(c * (0.3 + 0.7 * dif * (1.0 - 0.7 * sh)) + spec * (1.0 - sh), 0.0);
+  o = vec4(pow(lit, vec3(1.0 / 2.2)), 1.0);
+}`;
+  // The lit wall onto the screen: in the light of a lamp up beyond the top
+  // left corner, falling off towards the bottom right, with a little static
+  // grain.
+  const ROOM = `#version 300 es
+precision highp float;
+uniform sampler2D scene;
+uniform vec2 view;
+out vec4 o;
+float grain(vec2 p) {
+  uvec2 q = uvec2(p);
+  uint h = q.x * 1664525u + q.y * 1013904223u;
+  h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+  return float(h) / 4294967295.0 - 0.5;
+}
+float room(vec2 p) {
+  vec2 lamp = vec2(-0.15, 1.15) * view;
+  float d2 = dot(view, view), c = dot(0.5 * view - lamp, 0.5 * view - lamp) / d2;
+  return mix(1.0, (1.0 + c) / (1.0 + dot(p - lamp, p - lamp) / d2), 0.5);
+}
+void main() {
+  vec2 p = gl_FragCoord.xy;
+  vec3 c = pow(texelFetch(scene, ivec2(p), 0).rgb, vec3(2.2)) * room(p);
+  o = vec4(pow(c, vec3(1.0 / 2.2)) + 0.025 * grain(p), 1.0);
+}`;
+
+  function glWall(gl, GW, GH, arrays) {
+    function program(fs) {
+      const p = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, VERT], [gl.FRAGMENT_SHADER, fs]]) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        gl.attachShader(p, s);
+      }
+      gl.bindAttribLocation(p, 0, 'pos');
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const u = {};
+      for (let i = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i--;) {
+        const name = gl.getActiveUniform(p, i).name;
+        u[name] = gl.getUniformLocation(p, name);
+      }
+      return { p, u };
+    }
+    function texture(w, h, internal, filter) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, internal, w, h);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, filter);
+      for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+      return t;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    const wall = program(WALL), room = program(ROOM);
+    const tex = {
+      depth: [texture(GW, GH, gl.R8UI, gl.NEAREST), gl.RED_INTEGER, arrays.depth],
+      crack: [texture(GW, GH, gl.R8, gl.LINEAR), gl.RED, arrays.crack],
+      lift: [texture(GW, GH, gl.R8, gl.LINEAR), gl.RED, arrays.lift],
+    };
+    const palette = texture(256, 1, gl.RGBA8, gl.NEAREST);
+    const scene = texture(CPW, CPH, gl.RGBA8, gl.NEAREST), sceneFb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, scene, 0);
+    const cellPx = [CPW / GW, CPH / GH];
+    let shown = null; // the framebuffer the wall is read back from
+
+    return {
+      // cells x0..x1 × y0..y1 of every array, into their textures
+      upload(x0, y0, x1, y1) {
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, GW);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x0);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y0);
+        for (const [t, format, data] of Object.values(tex)) {
+          gl.bindTexture(gl.TEXTURE_2D, t);
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, y0, x1 - x0 + 1, y1 - y0 + 1, format, gl.UNSIGNED_BYTE, data);
+        }
+        for (const k of [gl.UNPACK_ROW_LENGTH, gl.UNPACK_SKIP_PIXELS, gl.UNPACK_SKIP_ROWS]) gl.pixelStorei(k, 0);
+      },
+      // coat k's colour is rgbs[k & 255]
+      palette(rgbs) {
+        const data = new Uint8Array(256 * 4);
+        rgbs.forEach((c, k) => data.set([c[0], c[1], c[2], 255], 4 * (k & 255)));
+        gl.bindTexture(gl.TEXTURE_2D, palette);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      },
+      // the wall lit anew within device px x0..x1 × y0..y1 (from the top)
+      light(x0, y0, x1, y1, cellCss) {
+        const u = wall.u;
+        gl.useProgram(wall.p);
+        [tex.depth[0], tex.crack[0], tex.lift[0], palette].forEach((t, i) => {
+          gl.activeTexture(gl.TEXTURE0 + i);
+          gl.bindTexture(gl.TEXTURE_2D, t);
+        });
+        gl.uniform1i(u.depth, 0); gl.uniform1i(u.crack, 1); gl.uniform1i(u.lift, 2); gl.uniform1i(u.palette, 3);
+        gl.uniform2f(u.grid, GW, GH);
+        gl.uniform2f(u.cellPx, cellPx[0], cellPx[1]);
+        gl.uniform1f(u.cellCss, cellCss);
+        gl.uniform1f(u.viewH, CPH);
+        gl.uniform1f(u.liftMax, LIFT);
+        gl.uniform1f(u.groove, GROOVE);
+        gl.uniform1f(u.brushH, BRUSH);
+        gl.uniform1f(u.shadowStep, SHADOW / 12);
+        gl.uniform1f(u.aa, clamp(0.6 / cellPx[0], 0.05, 0.5));
+        gl.uniform3fv(u.light, LIGHT);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFb);
+        gl.viewport(0, 0, CPW, CPH);
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(x0, CPH - 1 - y1, x1 - x0 + 1, y1 - y0 + 1);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.disable(gl.SCISSOR_TEST);
+      },
+      // the lit wall onto the screen (or into fb)
+      show(fb = null) {
+        gl.useProgram(room.p);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, scene);
+        gl.uniform1i(room.u.scene, 0);
+        gl.uniform2f(room.u.view, CPW, CPH);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.viewport(0, 0, CPW, CPH);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      },
+      // The wall as shown, device px x, y, w × h from the top left, as
+      // ImageData: drawn again into a framebuffer of our own and read from
+      // that, never copied off the canvas (some browsers, Firefox on Linux
+      // among them, swap red and blue doing that).
+      read(x, y, w, h) {
+        if (!shown) {
+          shown = gl.createFramebuffer();
+          const t = texture(CPW, CPH, gl.RGBA8, gl.NEAREST);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, shown);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+        }
+        gl.enable(gl.SCISSOR_TEST); // (only the part read)
+        gl.scissor(x, CPH - y - h, w, h);
+        this.show(shown);
+        gl.disable(gl.SCISSOR_TEST);
+        const px = new Uint8Array(w * h * 4);
+        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+        gl.readPixels(x, CPH - y - h, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const img = new ImageData(w, h), row = w * 4; // (GL's rows run from the bottom)
+        for (let r = 0; r < h; r++) img.data.set(px.subarray((h - 1 - r) * row, (h - r) * row), r * row);
+        return img;
+      },
+    };
+  }
+  // the longest shadow looked for, css px: as long as the highest paint casts
+  const SHADOW = LIFT * Math.hypot(LIGHT[0], LIGHT[1]) / LIGHT[2];
+
+  // ---- painting ----
+  function painter(gl, rng) {
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
+    const cellCss = Math.max(1, Math.sqrt(CW * CH / MAX_CELLS));
+    const GW = Math.round(CW / cellCss), GH = Math.round(CH / cellCss), N = GW * GH;
+    const pxX = CPW / GW, pxY = CPH / GH; // device px per cell
+    const U = Math.sqrt(VW * VH), Uc = U / cellCss; // the screen's size, css px and cells
+
+    const dep = new Int32Array(N); // the coat on top
+    const depth = new Uint8Array(N); // …mod 256, for the GPU
+    const crack = new Uint8Array(N); // how much of the cell a crack covers, 0–255 (fainter where it is thin)
+    const split = new Uint8Array(N); // a crack runs through the cell, however faint: it parts the paint
+    const lift = new Uint8Array(N); // how far the paint stands off, 255 = LIFT css px
+    const g = glWall(gl, GW, GH, { depth, crack, lift });
+    const colours = coats(PD.mulberry32(seed ^ 0x2545f491));
+    let deepest = 0;
+    const paletteUp = () => {
+      const all = [];
+      for (let k = Math.max(0, deepest - 200); k <= deepest + 3; k++) all[k] = colours.rgb(k);
+      g.palette(all.map(c => c ?? [0, 0, 0]));
+    };
+    paletteUp();
+
+    // What has changed since the wall was last lit, in tiles of TILE cells:
+    // the cells changed, and as far round them as their light and shadows
+    // reach. Only those tiles are lit anew.
+    const TILE = 32, tw = Math.ceil(GW / TILE), th = Math.ceil(GH / TILE), dirty = new Uint8Array(tw * th);
+    const margin = Math.ceil((SHADOW + 4 * cellCss) / cellCss) + 2;
+    const touched = (x0, y0, x1, y1) => {
+      const tx0 = Math.max(0, ((x0 - margin) / TILE) | 0), tx1 = Math.min(tw - 1, ((x1 + margin) / TILE) | 0);
+      const ty0 = Math.max(0, ((y0 - margin) / TILE) | 0), ty1 = Math.min(th - 1, ((y1 + margin) / TILE) | 0);
+      for (let ty = ty0; ty <= ty1; ty++) dirty.fill(1, ty * tw + tx0, ty * tw + tx1 + 1);
+    };
+
+    // ---- cracks ----
+    const tips = [];
+    let cracked = 0, crackX = 0; // this frame: crack length (U) and where (for the sound)
+    // a disc of crack w cells wide at (x, y) (cells) in coat k, and the paint
+    // cupping up beside it
+    function stamp(x, y, w, k) {
+      // (one thinner than a cell is a cell wide but fainter, not dotted)
+      const R = Math.max(w / 2, 0.6), faint = clamp(w / 1.2, 0.5, 1), cupW = CUP_WIDTH / cellCss, ext = Math.ceil(R + cupW + 1);
+      const cx = Math.floor(x), cy = Math.floor(y), cup = 255 * CUP / LIFT;
+      const x0 = Math.max(0, cx - ext), x1 = Math.min(GW - 1, cx + ext), y0 = Math.max(0, cy - ext), y1 = Math.min(GH - 1, cy + ext);
+      for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) {
+        const i = yy * GW + xx;
+        if (dep[i] !== k) continue;
+        const d = Math.hypot(xx + 0.5 - x, yy + 0.5 - y);
+        const cov = clamp(R + 0.5 - d, 0, 1) * faint;
+        if (cov > 0) crack[i] = Math.max(crack[i], Math.round(cov * 255));
+        if (d < R + 0.6) split[i] = 1; // every cell the crack goes through, all across it
+        const up = cup * clamp(1 - (d - R) / cupW, 0, 1) * (d > R ? 1 : 0);
+        if (up > lift[i]) lift[i] = up;
+      }
+      touched(x0, y0, x1, y1);
+    }
+    function tip(x, y, th, w, k, grace) {
+      return { x, y, th, slow: th, jag: 0, w, k, grace, speed: (CRACK_SPEED[0] + rng() * (CRACK_SPEED[1] - CRACK_SPEED[0])) * Uc,
+        trail: [x, y, th], trailD: 0 }; // (where it has run, every 2 cells: x, y, heading)
+    }
+    // a new crack at (x, y) (cells), running both ways from there
+    function seedCrack(x, y) {
+      const cx = Math.floor(x), cy = Math.floor(y);
+      if (cx < 2 || cy < 2 || cx >= GW - 2 || cy >= GH - 2 || tips.length >= MAX_TIPS) return false;
+      const i = cy * GW + cx, k = dep[i];
+      if (loose[i]) return false;
+      // well clear of any other crack, so it doesn't run into one at once, and
+      // of the coat above (not in a little hole in it, which would leave it a
+      // stub once the coat round the hole has gone)
+      for (let yy = cy - 3; yy <= cy + 3; yy++) for (let xx = cx - 3; xx <= cx + 3; xx++) {
+        const j = clamp(yy, 0, GH - 1) * GW + clamp(xx, 0, GW - 1);
+        if (crack[j] || dep[j] !== k) return false;
+      }
+      // (the less room the cracks are leaving, the less it needs; it waits
+      // at the coat above anyway, and runs on as that comes off)
+      const clear = Math.ceil(Math.max(SPLIT_ROOM_MIN, CLEAR / Math.sqrt(more)) * Uc), above = Math.ceil(SPLIT_ROOM_MIN * Uc);
+      if (cx < clear || cy < clear || cx >= GW - clear || cy >= GH - clear) return false; // or the wall's edge
+      for (let yy = Math.max(0, cy - clear); yy <= Math.min(GH - 1, cy + clear); yy += 2)
+        for (let xx = Math.max(0, cx - clear); xx <= Math.min(GW - 1, cx + clear); xx += 2) {
+          const r2 = (xx - cx) ** 2 + (yy - cy) ** 2, j = yy * GW + xx;
+          if (r2 < clear * clear && split[j]) return false;
+          if (r2 < above * above && dep[j] < k) return false;
+        }
+      const th = rng() * TAU, w = (CRACK_WIDTH[0] + rng() * (CRACK_WIDTH[1] - CRACK_WIDTH[0])) / cellCss;
+      tips.push(tip(x, y, th, w, k, 4), tip(x, y, th + Math.PI, w, k, 4)); // (clear of each other before they may join anything)
+      return true;
+    }
+    // Points along the cracks, kept for new cracks to set off from (as they
+    // were when they were made; checked when picked).
+    const crackPts = [], CRACK_PTS = 30000;
+    function along(x, y, th, w, k) {
+      const p = [x, y, th, w, k];
+      if (crackPts.length < CRACK_PTS) crackPts.push(p);
+      else crackPts[(rng() * CRACK_PTS) | 0] = p;
+    }
+    // a new crack setting off from a crack, across the plate on one side of it
+    function splitCrack() {
+      if (!crackPts.length || tips.length >= MAX_TIPS) return false;
+      const j = (rng() * crackPts.length) | 0, [x, y, th, w0, k] = crackPts[j];
+      const i = Math.floor(y) * GW + Math.floor(x);
+      if (!split[i] || dep[i] !== k) { crackPts[j] = crackPts[crackPts.length - 1]; crackPts.pop(); return false; }
+      const side = rng() < 0.5 ? -1 : 1, bt = th + side * (Math.PI / 2 + (rng() - 0.5) * 0.8);
+      const c = Math.cos(bt), s = Math.sin(bt), w = w0 * (0.6 + rng() * 0.3);
+      // room for it: its own coat, no crack, and not the coat above, all the way
+      const room = Math.max(SPLIT_ROOM_MIN, SPLIT_ROOM / Math.sqrt(more)) * Uc;
+      for (let d = w0 + 3; d < room; d += 1.5) {
+        const bx = Math.floor(x + c * d), by = Math.floor(y + s * d);
+        if (bx < 0 || by < 0 || bx >= GW || by >= GH) return false;
+        const n = by * GW + bx;
+        if (split[n] || dep[n] !== k || loose[n]) return false;
+      }
+      tips.push(tip(x, y, bt, Math.max(w, CRACK_WIDTH[0] * 0.6 / cellCss), k, w0 + 6));
+      return true;
+    }
+    const STEP = 0.7; // cells
+    // (where it ends running into a crack or an edge, it may close a ring)
+    const waiting = [];
+    function wait(t) {
+      if (waiting.length >= 4000) waiting.splice(0, 1000);
+      waiting.push(t);
+    }
+    // the cracks waiting at the edge of the coat above: where it has come
+    // off ahead of one, it runs on
+    function wake() { // (every frame: no waiting once the way is clear)
+      for (let n = waiting.length; n--;) {
+        const t = waiting[n], ax = Math.floor(t.x + Math.cos(t.th) * 1.5), ay = Math.floor(t.y + Math.sin(t.th) * 1.5);
+        if (ax < 0 || ay < 0 || ax >= GW || ay >= GH) { waiting.splice(n, 1); continue; }
+        const d = dep[ay * GW + ax];
+        if (d < t.k) continue;
+        waiting.splice(n, 1);
+        if (d === t.k && tips.length < MAX_TIPS) { t.grace = t.w + 2; tips.push(t); }
+      }
+    }
+    function grow(t, dt) {
+      let left = t.speed * dt;
+      const jagE = Math.exp(-STEP / (3 / cellCss));
+      while (left > 0) {
+        const ds = Math.min(STEP, left);
+        left -= ds;
+        t.slow += gauss() * Math.sqrt(ds / (WANDER * Uc));
+        if (rng() < ds / (KINK * Uc)) t.slow += (rng() < 0.5 ? -1 : 1) * (0.3 + rng() * 0.6);
+        t.jag = t.jag * jagE + Math.sqrt(1 - jagE * jagE) * gauss() * 0.3;
+        t.th = t.slow + t.jag;
+        const nx = t.x + Math.cos(t.th) * ds, ny = t.y + Math.sin(t.th) * ds;
+        const cx = Math.floor(nx), cy = Math.floor(ny);
+        if (cx < 0 || cy < 0 || cx >= GW || cy >= GH) return enclose(t);
+        const i = cy * GW + cx;
+        // at the edge of its coat, it ends; but where the coat above it is,
+        // it only waits, and runs on under it as that comes off
+        if (dep[i] < t.k) { wait(t); return false; }
+        if (dep[i] !== t.k) return enclose(t);
+        // running into another crack, it joins it and ends
+        t.grace -= ds;
+        // (looking far enough ahead to be clear of what it marks as itself,
+        // however thin it is, and never at a cell beside where it just was)
+        const look = Math.max(t.w / 2, 0.6) + 0.6 + 1.2;
+        const ax = Math.floor(nx + Math.cos(t.th) * look), ay = Math.floor(ny + Math.sin(t.th) * look);
+        const joins = t.grace <= 0 && ax >= 0 && ay >= 0 && ax < GW && ay < GH && split[ay * GW + ax] === 1 &&
+          Math.hypot(ax + 0.5 - t.x, ay + 0.5 - t.y) > Math.max(t.w / 2, 0.6) + 1.2;
+        stamp(nx, ny, t.w, t.k);
+        cracked += ds / Uc; crackX += ds / Uc * nx;
+        t.x = nx; t.y = ny;
+        if ((t.trailD += ds) > 2 && t.trail.length < 6000) {
+          t.trailD = 0; t.trail.push(nx, ny, t.th);
+          if (rng() < 0.25) along(nx, ny, t.th, t.w, t.k);
+        }
+        if (joins) {
+          for (let d = 0.6; d < look; d += 0.6) stamp(nx + Math.cos(t.th) * d, ny + Math.sin(t.th) * d, t.w, t.k); // (right up to it)
+          return enclose(t);
+        }
+        if (rng() < ds / (BRANCH * Uc) && tips.length < MAX_TIPS && t.w > 0.6 / cellCss) {
+          const side = rng() < 0.5 ? -1 : 1, w = t.w * (0.6 + rng() * 0.25);
+          // (only where it has room ahead, not straight into another crack)
+          const bt = t.th + side * (0.7 + rng() * 0.6), c = Math.cos(bt), sn = Math.sin(bt);
+          let room = true;
+          for (let d = t.w + 6; d < CLEAR * Uc && room; d += 2) {
+            const bx = Math.floor(nx + c * d), by = Math.floor(ny + sn * d);
+            room = bx >= 0 && by >= 0 && bx < GW && by < GH && !split[by * GW + bx] && dep[by * GW + bx] === t.k;
+          }
+          if (room) tips.push(tip(nx, ny, bt, w, t.k, t.w + 6)); // (clear of its parent before it may join one)
+        }
+        if (rng() < ds / (DIE * Uc)) return false;
+      }
+      return true;
+    }
+
+    // ---- loose bits ----
+    // A crack that runs into another, or into the edge of its coat or of the
+    // wall, may close a ring of cracks round a bit of paint: of its own coat
+    // (or where that has gone already), never the edge of a coat above it,
+    // under which the paint goes on. A bit no bigger
+    // than FRAG no longer holds on, and the next gust may blow it off the
+    // wall (the smaller, the likelier): cut out of the wall as it is, it flies.
+    const loose = new Uint8Array(N); // in a loose bit
+    const mark = new Uint32Array(N);
+    const fragMax = Math.max(4, Math.round(FRAG * Uc * Uc)), fragRef = FRAG_REF * Uc * Uc;
+    let marking = 0;
+    const bits = [], blowing = [];
+    let snaps = []; // bits blown off since the wall last told (they go as it is drawn), for the sound
+    // the paint beside crack t, all along both sides of it and round where it
+    // ended, which it may have ringed in (a sliver between two cracks that run
+    // side by side as much as any)
+    function enclose(t) {
+      const at = [];
+      for (let a = 0; a < 36; a++) {
+        const r = t.w / 2 + 1.5 + 2 * (a % 3);
+        at.push(t.x + Math.cos(a * TAU / 36) * r, t.y + Math.sin(a * TAU / 36) * r);
+      }
+      // (at a few distances, so a sliver narrower than the crack is found)
+      for (let m = 0; m < t.trail.length; m += 3) {
+        const [x, y, th] = [t.trail[m], t.trail[m + 1], t.trail[m + 2]], c = Math.cos(th), s = Math.sin(th);
+        for (const r of [t.w / 2 + 0.7, t.w / 2 + 1.4, t.w / 2 + 2.5]) at.push(x - s * r, y + c * r, x + s * r, y - c * r);
+      }
+      return ringed(at, t.k);
+    }
+    // the paint of coat k at points at (cells, x, y, …): any of it ringed in
+    // by cracks and small is a loose bit; how many
+    // (each fill marks what it reaches with its own number; one that runs into
+    // what an earlier one reached and gave up on, as too big, is in that too)
+    function ringed(at, k) {
+      const first = marking + 1;
+      let made = 0;
+      for (let a = 0; a < at.length; a += 2) {
+        const sx = Math.floor(at[a]), sy = Math.floor(at[a + 1]);
+        if (sx < 0 || sy < 0 || sx >= GW || sy >= GH) continue;
+        const s0 = sy * GW + sx;
+        if (mark[s0] >= first || dep[s0] !== k || split[s0] || loose[s0]) continue;
+        const id = ++marking;
+        mark[s0] = id;
+        const cells = [s0];
+        let small = true, inCrack = false;
+        for (let q = 0; q < cells.length && small; q++) {
+          const i = cells[q], x = i % GW, y = (i / GW) | 0;
+          for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+            if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
+            const n = ny * GW + nx;
+            // under a coat above, it goes on: not ringed in by its own cracks
+            if (dep[n] < k) { small = false; break; }
+            if (dep[n] === k && split[n]) inCrack = true;
+            if (dep[n] !== k || split[n] || mark[n] === id) continue;
+            // a bit already loose beside it: not this one's to take
+            if (loose[n]) { small = false; break; }
+            if (mark[n] >= first) { small = false; break; }
+            mark[n] = id;
+            cells.push(n);
+            if (cells.length > fragMax) { small = false; break; }
+          }
+        }
+        if (!small) continue;
+        if (cells.length < 4) {
+          // (a speck inside a crack is the crack.) A speck the paint all round
+          // has come off from, too small to come off itself, stays: a fleck of
+          // this coat on the one under it, which it shows as, but which is
+          // that coat's to crack and to take away with it, not a bit of a
+          // coat above it holding that one down
+          if (!inCrack) for (const i of cells) {
+            dep[i] = k + 1; crack[i] = 0; split[i] = 0; lift[i] = 0; // (depth, as shown, still k)
+            touched(i % GW, (i / GW) | 0, i % GW, (i / GW) | 0);
+          }
+          continue;
+        }
+        let bx0 = GW, by0 = GH, bx1 = 0, by1 = 0;
+        for (const i of cells) {
+          loose[i] = 1;
+          const x = i % GW, y = (i / GW) | 0;
+          bx0 = Math.min(bx0, x); bx1 = Math.max(bx1, x); by0 = Math.min(by0, y); by1 = Math.max(by1, y);
+        }
+        bits.push({ cells, k: k, bx0, by0, bx1, by1 });
+        made++;
+      }
+      return made;
+    }
+    // In a gust (not in a breeze) the loose bits go, one by one, each as
+    // readily as it is small (inversely as its area), at its coat's pace.
+    function gusts(dt, wind) {
+      pacing(dt);
+      const push = Math.max(0, wind.gust - 0.05) * BLOW;
+      if (!push) return;
+      for (let n = bits.length; n--;)
+        if (rng() < dt * push * (pace.get(bits[n].k)?.m ?? 1) * fragRef / bits[n].cells.length) blowing.push(bits.splice(n, 1)[0]);
+    }
+    // Each coat's pace, and since when it has been coming off; looked at
+    // every half second: how much of the wall it has been on top of (where it,
+    // or one under it, shows) it is gone from, against how much it should be.
+    const pace = new Map();
+    let paceDue = 0;
+    function pacing(dt) {
+      if ((paceDue -= dt) > 0) return;
+      paceDue = 0.5;
+      const count = new Map(), stride = Math.max(1, Math.floor(N / 20000)) | 1;
+      let n = 0, lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < N; i += stride, n++) { const k = dep[i]; count.set(k, (count.get(k) ?? 0) + 1); lo = Math.min(lo, k); hi = Math.max(hi, k); }
+      let under = 0; // share of the wall deeper than k
+      for (let k = hi; k >= lo; k--) {
+        const lost = under / (under + (count.get(k) ?? 0));
+        under += count.get(k) ?? 0;
+        let p = pace.get(k);
+        if (!p) { if (!lost) continue; p = { m: 1, t0: clock }; pace.set(k, p); }
+        const should = 1 - Math.pow(0.5, (clock - p.t0) / HALF);
+        p.m = clamp(p.m * Math.exp(2 * (should - lost)), 0.05, 1000);
+      }
+      for (const k of pace.keys()) if (k < lo) pace.delete(k);
+    }
+
+    // ---- flying ----
+    // A bit blown off flies as it was cut out of the wall, its back (the same
+    // paint, chalkier, a little of the coat it lay on stuck to it) and a soft
+    // shadow with it. The wind carries it, pulling it along the faster the
+    // smaller it is, and gravity; it flutters across its path, spins and
+    // tumbles, showing one side and the other in turn, and drifts out
+    // towards the viewer, its shadow falling further from it on the wall.
+    const flying = [];
+    const WIND = 1.5, GRAVITY = 0.15, LIFE = [0.5, 1]; // U a second per unit of wind; U/s²; s, fading out at the end
+    const dpr = CPW / CW; // device px per css px
+    const PAD = 2; // device px round a sprite
+    const sheet = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+    // Bit b off the wall: cut out of the canvas as it shows now (only right
+    // after it was shown: it can't be read later), and the coat under it,
+    // and the cracks round it, bared.
+    function blowOff(b, wind) {
+      // (only what is still its coat's, and loose: the wall may have changed
+      // under it since it came loose)
+      const { k } = b, cells = b.cells.filter(i => dep[i] === k && loose[i]);
+      if (cells.length < 4) {
+        const at = [];
+        for (const i of b.cells) if (dep[i] === k) { loose[i] = 0; at.push(i % GW + 0.5, ((i / GW) | 0) + 0.5); }
+        ringed(at, k); // (what is left of it may be a fleck now)
+        return;
+      }
+      let bx0 = GW, by0 = GH, bx1 = 0, by1 = 0;
+      for (const i of cells) { const x = i % GW, y = (i / GW) | 0; bx0 = Math.min(bx0, x); bx1 = Math.max(bx1, x); by0 = Math.min(by0, y); by1 = Math.max(by1, y); }
+      const w = bx1 - bx0 + 1, h = by1 - by0 + 1, inside = new Uint8Array(w * h);
+      for (const i of cells) inside[(((i / GW) | 0) - by0) * w + i % GW - bx0] = 1;
+      const small = sheet(w, h), mc = small.getContext('2d'), img = mc.createImageData(w, h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { // edges softened by a 3×3 box
+        if (!inside[y * w + x]) continue;
+        let m = 0;
+        for (let v = Math.max(0, y - 1); v <= Math.min(h - 1, y + 1); v++)
+          for (let u = Math.max(0, x - 1); u <= Math.min(w - 1, x + 1); u++) m += inside[v * w + u];
+        img.data[4 * (y * w + x) + 3] = Math.min(255, 255 * m / 6);
+      }
+      mc.putImageData(img, 0, 0);
+      const sw = Math.ceil(w * pxX) + 2 * PAD, sh = Math.ceil(h * pxY) + 2 * PAD, ox = Math.round(bx0 * pxX) - PAD, oy = Math.round(by0 * pxY) - PAD;
+      const tinted = rgb => {
+        const c = sheet(sw, sh), x = c.getContext('2d');
+        x.imageSmoothingEnabled = true;
+        x.drawImage(small, PAD, PAD, w * pxX, h * pxY);
+        x.globalCompositeOperation = 'source-in';
+        x.fillStyle = rgba(rgb, 1);
+        x.fillRect(0, 0, sw, sh);
+        return c;
+      };
+      const faceRgb = colours.rgb(k), under = colours.rgb(k + 1);
+      const back = tinted(faceRgb.map((v, i) => 0.65 * v + 0.2 * [236, 231, 222][i] + 0.15 * under[i])), dark = tinted([0, 0, 0]);
+      const face = sheet(sw, sh), fx = face.getContext('2d');
+      const sx0 = Math.max(0, ox), sy0 = Math.max(0, oy), sx1 = Math.min(CPW, ox + sw), sy1 = Math.min(CPH, oy + sh);
+      if (sx1 > sx0 && sy1 > sy0) fx.putImageData(g.read(sx0, sy0, sx1 - sx0, sy1 - sy0), sx0 - ox, sy0 - oy);
+      fx.globalCompositeOperation = 'destination-in';
+      fx.drawImage(dark, 0, 0);
+      // off the wall
+      const take = i => { dep[i] = k + 1; depth[i] = (k + 1) & 255; crack[i] = 0; split[i] = 0; lift[i] = 0; loose[i] = 0; };
+      for (const i of cells) {
+        take(i);
+        const x = i % GW, y = (i / GW) | 0;
+        for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+          if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
+          const n = ny * GW + nx;
+          if (dep[n] === k && split[n]) take(n);
+        }
+      }
+      // the paint round it now ends at its rim, not at a crack; and the rim
+      // may close a ring round a bit beside it
+      const rim = [];
+      for (let y = Math.max(1, by0 - 2); y <= Math.min(GH - 2, by1 + 2); y++)
+        for (let x = Math.max(1, bx0 - 2); x <= Math.min(GW - 2, bx1 + 2); x++) {
+          const i = y * GW + x;
+          if (dep[i] === k && (dep[i - 1] > k || dep[i + 1] > k || dep[i - GW] > k || dep[i + GW] > k)) {
+            crack[i] = 0; split[i] = 0; lift[i] = 0;
+            rim.push(x + 0.5, y + 0.5);
+          }
+        }
+      touched(bx0 - 2, by0 - 2, bx1 + 2, by1 + 2);
+      ringed(rim, k);
+      if (k + 1 > deepest) { deepest = k + 1; paletteUp(); }
+      // and away, the way the gust blows
+      const blur = Math.max(1, 2.5 * pxX), sp = Math.ceil(2 * blur), off = sw + 4 * sp + 10;
+      const shadow = sheet(sw + 2 * sp, sh + 2 * sp), sx = shadow.getContext('2d');
+      sx.shadowColor = 'rgba(0,0,0,1)'; sx.shadowBlur = blur; sx.shadowOffsetX = off;
+      sx.drawImage(dark, sp - off, sp);
+      const s = Math.sqrt(cells.length / Math.PI) * cellCss / U, kw = 2.2 / (0.6 + s / 0.02); // how fast the wind takes it, 1/s
+      const go = 0.15 * U * (0.5 + rng()), dir = wind.dir + gauss() * 0.4;
+      flying.push({ face, back, dark, shadow, sp, k: kw,
+        x: ox + sw / 2, y: oy + sh / 2, // device px
+        vx: Math.cos(dir) * go, vy: Math.sin(dir) * go, // css px/s
+        z: 0, vz: 0.15 + 0.2 * rng(), life: LIFE[0] + rng() * (LIFE[1] - LIFE[0]), // towards the viewer, U; s
+        axis: rng() * TAU, spin: 0, spinV: gauss() * 1.5, tumble: 0, tumbleV: (rng() < 0.5 ? -1 : 1) * (1 + rng() * 3),
+        flutter: rng() * TAU, flutterHz: 0.6 + rng() * 1.5, age: 0 });
+      snaps.push({ size: s, pan: clamp(((bx0 + bx1) / 2 / GW * CW - CW / 2) / (innerWidth / 2), -1, 1) });
+    }
+    function fly(p, dt, wind) {
+      p.age += dt;
+      const ws = wind.speed * WIND * U, wx = Math.cos(wind.dir) * ws, wy = Math.sin(wind.dir) * ws;
+      const sp = Math.hypot(p.vx, p.vy) + 1e-6;
+      p.flutter += TAU * p.flutterHz * dt;
+      const fl = Math.sin(p.flutter) * 0.04 * U * (0.3 + wind.speed); // across its path
+      p.vx += ((wx - p.vx) * p.k + (-p.vy / sp) * fl) * dt;
+      p.vy += ((wy - p.vy) * p.k + (p.vx / sp) * fl + GRAVITY * U) * dt;
+      p.x += p.vx * dt * dpr; p.y += p.vy * dt * dpr;
+      p.vz *= Math.exp(-dt / 3);
+      p.z += p.vz * dt;
+      p.spin += p.spinV * (0.4 + wind.speed) * dt;
+      p.tumble += p.tumbleV * (0.4 + wind.speed) * dt;
+      const m = Math.max(p.face.width, p.face.height) * (1 + p.z);
+      return p.age < p.life && p.x > -m && p.y > -m && p.x < CPW + m && p.y < CPH + m;
+    }
+    // the bits flying, shadows first
+    const octx = over.getContext('2d');
+    function drawFlying() {
+      octx.setTransform(1, 0, 0, 1, 0, 0);
+      octx.clearRect(0, 0, over.width, over.height);
+      for (const pass of [0, 1]) for (const p of flying) {
+        const sc = 1 + p.z, ct = Math.cos(p.tumble), fade = clamp((p.life - p.age) / 0.3, 0, 1);
+        const sx = Math.max(0.15, Math.abs(ct)), turn = p.axis + p.spin;
+        if (pass === 0) { // the shadow on the wall, the further the softer
+          const d = p.z * 0.25 * U * dpr;
+          octx.setTransform(1, 0, 0, 1, p.x - LIGHT[0] / LIGHT[2] * d, p.y - LIGHT[1] / LIGHT[2] * d);
+          octx.rotate(turn);
+          octx.scale(sx * (1 + 0.6 * p.z), 1 + 0.6 * p.z);
+          octx.rotate(-p.axis);
+          octx.globalAlpha = 0.25 * fade / (1 + 3 * p.z);
+          octx.drawImage(p.shadow, -p.shadow.width / 2, -p.shadow.height / 2);
+          continue;
+        }
+        octx.setTransform(1, 0, 0, 1, p.x, p.y);
+        octx.rotate(turn);
+        octx.scale(sx * sc, sc);
+        octx.rotate(-p.axis);
+        // lit as a tilted sheet: its normal leans across the tumbling axis
+        const st = Math.sin(p.tumble), cs = Math.cos(turn), sn = Math.sin(turn);
+        let nx = st * cs, ny = st * sn, nz = ct;
+        if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        const lit = 0.5 + 0.5 * Math.max(0, nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]) / LIGHT[2];
+        octx.globalAlpha = fade;
+        octx.drawImage(ct >= 0 ? p.face : p.back, -p.face.width / 2, -p.face.height / 2);
+        if (lit < 1) {
+          octx.globalAlpha = fade * Math.min(0.5, 1 - lit);
+          octx.drawImage(p.dark, -p.face.width / 2, -p.face.height / 2);
+        }
+      }
+      octx.setTransform(1, 0, 0, 1, 0, 0);
+      octx.globalAlpha = 1;
+    }
+
+    // ---- the wall as it is ----
+    const wind = windModel(rng);
+    let seedDue = 0, splitDue = 0, clock = 0; // (cracking from the start)
+    // how much more often than SPLITS cracks set off from cracks, kept so
+    // the cracks grow CRACK_RATE in all (as an average over some seconds)
+    let more = 1, grown = CRACK_RATE;
+    let wasFlying = false, litAt = -Infinity;
+
+    // the coats showing, from the top: [depth, share of the wall]
+    function showing() {
+      const count = new Map(), stride = Math.max(1, Math.floor(N / 20000)) | 1;
+      let n = 0;
+      for (let i = 0; i < N; i += stride, n++) count.set(dep[i], (count.get(dep[i]) ?? 0) + 1);
+      return [...count].map(([k, c]) => [k, c / n]).filter(([, s]) => s > 0.002).sort((a, b) => a[0] - b[0]);
+    }
+
+    return {
+      bg: colours.rgb(0), colours, showing,
+      // the wall as shown, as ImageData
+      picture: () => g.read(0, 0, CPW, CPH),
+      // a frame dt real seconds long; tells what the wind and the paint did
+      advance(dt) {
+        clock += dt;
+        wind.step(dt);
+        cracked = 0; crackX = 0;
+        const blown = snaps;
+        snaps = [];
+        // new cracks, now and then, anywhere free to crack
+        const seed = () => { for (let tries = 0; tries < 30; tries++) if (seedCrack(rng() * GW, rng() * GH)) return true; return false; };
+        const splitOff = () => { for (let tries = 0; tries < 30; tries++) if (splitCrack()) return true; return false; };
+        for (seedDue -= dt; seedDue <= 0; seedDue += -Math.log(1 - rng()) / (SEEDS * more)) seed();
+        // and off the cracks there are, across the plates
+        for (splitDue -= dt; splitDue <= 0; splitDue += -Math.log(1 - rng()) / (SPLITS * more)) splitOff();
+        // and never a moment with no crack running: when the last has stopped, a new one at once
+        if (!tips.length) rng() < 0.5 ? seed() || splitOff() : splitOff() || seed();
+        wake();
+        for (let n = tips.length; n--;) if (!grow(tips[n], dt)) tips.splice(n, 1);
+        if (clock > 20 && dt > 0) { // (once the first cracks are under way)
+          grown += (cracked / dt - grown) * Math.min(1, dt / 8);
+          more = clamp(more * Math.exp(dt * 0.4 * (1 - grown / CRACK_RATE)), 0.2, 60);
+        }
+        gusts(dt, wind);
+        for (let n = flying.length; n--;) if (!fly(flying[n], dt, wind)) flying.splice(n, 1);
+        const pan = x => clamp((x / GW * CW - CW / 2) / (innerWidth / 2), -1, 1);
+        return { dt, wind: { speed: wind.speed, gust: wind.gust, dir: wind.dir }, crack: cracked,
+          crackPan: cracked ? pan(crackX / cracked) : 0, snaps: blown };
+      },
+      // the wall lit anew where it has changed (or all of it), and the bits flying
+      draw(all = false) {
+        if (all) dirty.fill(1);
+        let changed = false;
+        // the wall is lit at most LIT_FPS times a second (the bits fly at
+        // every frame): it changes slowly, and lighting is the costly part
+        const now = performance.now(), lighting = all || now - litAt >= 1000 / LIT_FPS - 2;
+        if (lighting) litAt = now;
+        // each row of tiles, in runs of dirty ones
+        if (lighting) for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw;) {
+          if (!dirty[ty * tw + tx]) { tx++; continue; }
+          const from = tx;
+          while (tx < tw && dirty[ty * tw + tx]) dirty[ty * tw + tx++] = 0;
+          const x0 = from * TILE, x1 = Math.min(GW, tx * TILE) - 1, y0 = ty * TILE, y1 = Math.min(GH, y0 + TILE) - 1;
+          g.upload(x0, y0, x1, y1);
+          g.light(Math.floor(x0 * pxX), Math.floor(y0 * pxY), Math.min(CPW - 1, Math.ceil((x1 + 1) * pxX) - 1), Math.min(CPH - 1, Math.ceil((y1 + 1) * pxY) - 1), cellCss);
+          changed = true;
+        }
+        // the canvas keeps showing what it showed when nothing was drawn;
+        // bits blown off are cut out of it as it shows
+        if (changed || all || blowing.length) g.show();
+        for (const b of blowing) blowOff(b, wind);
+        blowing.length = 0;
+        if (flying.length || wasFlying || all) drawFlying();
+        wasFlying = flying.length > 0;
+      },
+    };
+  }
+
+  // the colours showing, and how deep they go
+  function showCoats(p) {
+    const s = p.showing();
+    swatchBox.replaceChildren(...s.map(([k]) => {
+      const el = document.createElement('span');
+      el.style.background = rgba(p.colours.rgb(k), 1);
+      return el;
+    }));
+    const lo = s[0][0] + 1, hi = s[s.length - 1][0] + 1;
+    hintText.textContent = (lo === hi ? `coat ${lo}` : `coats ${lo}–${hi}`) + ' of ∞' +
+      (paused ? ' · paused' : '') +
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · M: music · C: crackle · S: save PNG`);
+  }
+
+  // Click / tap pauses and resumes the wall; while paused the hint stays up.
+  // The screen is kept awake while it goes on, as for a video.
+  let paused = false, painting;
+  const awake = PD.screenAwake();
+  canvas.addEventListener('click', () => {
+    if (!painting) return;
+    paused = !paused;
+    awake(!paused);
+    syncSound();
+    showCoats(painting);
+    showHint();
+  });
+
+  // Music (wall-music.js), off until asked for: browsers only let sound start
+  // from a click or a key press. It pauses with the wall.
+  // The music is nature coming to take the wall back: the wind that blows
+  // the bits off, told every frame as a wall event (so a recording can
+  // listen in too), with the cracking and the bits, which crackle. The crackle can be heard on its own, without the music,
+  // but the music never goes without it: turning the music on turns the
+  // crackle on, and turning the crackle off turns the music off.
+  const music = WallMusic.player(seed);
+  addEventListener('wall', e => music.hear(e.detail));
+  let musicOn = false, crackleOn = false;
+  const syncSound = () => (musicOn || crackleOn) && !paused ? music.play(musicOn) : music.stop();
+  function setSound(m, c) {
+    musicOn = m; crackleOn = c || m;
+    syncSound();
+    sound.textContent = `♪ music: ${musicOn ? 'on' : 'off'}`;
+    sound.setAttribute('aria-pressed', musicOn);
+    crackleButton.textContent = `∘ crackle: ${crackleOn ? 'on' : 'off'}`;
+    crackleButton.setAttribute('aria-pressed', crackleOn);
+    showHint();
+  }
+  const toggleMusic = () => setSound(!musicOn, crackleOn);
+  const toggleCrackle = () => setSound(musicOn && !crackleOn, !crackleOn);
+  sound.addEventListener('click', toggleMusic);
+  crackleButton.addEventListener('click', toggleCrackle);
+
+  // The wall and the bits flying before it, as one picture.
+  function snapshot() {
+    painting.draw(true);
+    const c = document.createElement('canvas');
+    c.width = CPW; c.height = CPH;
+    const x = c.getContext('2d');
+    x.putImageData(painting.picture(), 0, 0); // (read from GL, not copied off the canvas)
+    x.drawImage(over, 0, 0);
+    return c;
+  }
+  window.snapshot = snapshot;
+
+  // The PNG tagged as sRGB (the canvas's colours are), so that viewers show
+  // it in the colours the page shows, not stretched to a wide-gamut screen:
+  // an sRGB chunk put in after the header.
+  async function tagSrgb(blob) {
+    const png = new Uint8Array(await blob.arrayBuffer());
+    const crc = bytes => {
+      let c = ~0;
+      for (const b of bytes) { c ^= b; for (let k = 0; k < 8; k++) c = c >>> 1 ^ (0xEDB88320 & -(c & 1)); }
+      return ~c >>> 0;
+    };
+    const body = new Uint8Array([0x73, 0x52, 0x47, 0x42, 0]); // 'sRGB', perceptual
+    const chunk = new Uint8Array(4 + body.length + 4), v = new DataView(chunk.buffer);
+    v.setUint32(0, 1); chunk.set(body, 4); v.setUint32(4 + body.length, crc(body));
+    const at = 8 + 8 + 13 + 4; // signature, then the header chunk
+    return new Blob([png.subarray(0, at), chunk, png.subarray(at)], { type: 'image/png' });
+  }
+
+  // One wall per page load: it is never restarted, only reloading the page
+  // begins a new one.
+  function start() {
+    setupCanvas();
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+    if (!gl) { hintText.textContent = 'This painting needs WebGL2.'; return; }
+    const most = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    if (Math.max(CPW, CPH) > most) {
+      const fit = most / Math.max(CPW, CPH);
+      for (const c of [canvas, over]) { c.width = Math.floor(c.width * fit); c.height = Math.floor(c.height * fit); }
+      CPW = canvas.width; CPH = canvas.height;
+    }
+    const p = painting = painter(gl, PD.mulberry32(seed));
+    document.body.style.background = rgba(p.bg, 1);
+    p.draw(true);
+    showCoats(p);
+    showHint();
+    awake(true);
+    let last, coatsAt = 0;
+    // time spent in a hidden tab, or while paused, doesn't pile up into a
+    // burst when it comes back
+    const frame = now => {
+      const dt = Math.min(100, now - (last ?? now)) / 1000;
+      last = now;
+      if (!paused) {
+        dispatchEvent(new CustomEvent('wall', { detail: p.advance(dt) }));
+        p.draw();
+        if (now - coatsAt > 1000) { coatsAt = now; showCoats(p); }
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  // the hint (with the colours showing) comes back while the mouse moves
+  let lastMove = 0;
+  window.addEventListener('mousemove', () => {
+    const now = performance.now();
+    if (now - lastMove > 500) { lastMove = now; showHint(); }
+  });
+  window.addEventListener('keydown', e => {
+    if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleMusic();
+    if ((e.key === 'c' || e.key === 'C') && !e.repeat) toggleCrackle();
+    if ((e.key === 's' || e.key === 'S') && painting) {
+      snapshot().toBlob(async blob => {
+        const a = document.createElement('a');
+        a.download = `the-wall-${seed}.png`;
+        a.href = URL.createObjectURL(await tagSrgb(blob));
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      }, 'image/png');
+    }
+  });
+  let ht;
+  function showHint() {
+    hint.classList.remove('hidden');
+    sounds.classList.remove('dim');
+    clearTimeout(ht);
+    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); sounds.classList.add('dim'); }, 4000);
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

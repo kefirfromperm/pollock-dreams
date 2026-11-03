@@ -6,6 +6,8 @@
 //                                    [--seed N] [--seconds S] [--out og/og-rectangles.png]
 //   node scripts/make-og-endless.cjs --page pour-dreams.html --text "Pour Dreams" \
 //                                    --seed 5 --seconds 150 --out og/og-pour.png
+//   node scripts/make-og-endless.cjs --page the-wall.html --text "The Wall" \
+//                                    --seed 5 --seconds 720 --out og/og-wall.png
 //
 // Needs playwright-core (NODE_PATH) and chromium (WebGL paintings are drawn
 // by its software GPU, SwiftShader); og.html loads opentype.js from cdnjs,
@@ -61,7 +63,8 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
         const q = queue; queue = [];
         q.forEach(f => f(now));
       }
-      return document.getElementById('c').toDataURL('image/png').slice(22);
+      // the painting as a whole, where it is more than its canvas (The Wall's flakes)
+      return (window.snapshot?.() ?? document.getElementById('c')).toDataURL('image/png').slice(22);
     };
   }, { seed, width, height, pageName });
   await page.goto(`http://og.local/${pageName}`);

@@ -19,6 +19,8 @@ const PAINTINGS = [
   { page: 'rectangle-dreams.html', seed: 23, out: 'previews/rectangle-dreams.jpg' },
   // slower to fill the canvas, so painted for longer
   { page: 'pour-dreams.html', seed: 5, out: 'previews/pour-dreams.jpg', webgl: true, seconds: 150 },
+  // peeled for long enough to show a few coats
+  { page: 'the-wall.html', seed: 5, out: 'previews/the-wall.jpg', webgl: true, seconds: 720 },
 ].filter(p => !args.only || p.page === args.only);
 const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome']
   .find(p => fs.existsSync(p));
@@ -58,7 +60,8 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
           const q = queue; queue = [];
           q.forEach(f => f(now));
         }
-        return document.getElementById('c').toDataURL('image/jpeg', 0.85).slice(23);
+        // the painting as a whole, where it is more than its canvas (The Wall's flakes)
+        return (window.snapshot?.() ?? document.getElementById('c')).toDataURL('image/jpeg', 0.85).slice(23);
       };
     }, { seed, width, height });
     await page.goto(`http://preview.local/${name}`);
