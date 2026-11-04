@@ -65,7 +65,7 @@
 <canvas id="f"></canvas>
 <div id="hint"><div id="swatches"></div><div id="hintText"></div></div>
 <div id="sounds">
-  <button id="crackle" type="button" aria-pressed="false">∘ crackle: off</button>
+  <button id="wind" type="button" aria-pressed="false">∘ wind: off</button>
   <button id="sound" type="button" aria-pressed="false">♪ music: off</button>
 </div>
 <script src="pollock.js"></script>
@@ -82,7 +82,7 @@
   const swatchBox = document.getElementById('swatches');
   const sounds = document.getElementById('sounds');
   const sound = document.getElementById('sound');
-  const crackleButton = document.getElementById('crackle');
+  const windButton = document.getElementById('wind');
 
   const seed = (Math.random() * 1e9) | 0;
   // the canvas (CW × CH css px, CPW × CPH device px) and the screen (VW × VH)
@@ -104,28 +104,43 @@
   // same on any screen; the paint's thickness is in css px, as real paint's
   // would be.
   const MAX_CELLS = 1.6e6; // cells of at least 1 css px, not many more than this
-  // Cracks run at CRACK_SPEED U a second, their heading wandering by about a
+  // Cracks run at CRACK_SPEED U a second, their way wandering by about a
   // radian every WANDER U, jagged on a smaller scale; they branch every
   // BRANCH U and give out after DIE U on average, or where they meet another
   // crack or the edge of their coat.
   // Between kinks every KINK U or so, where they turn sharply, they run
-  // nearly straight.
-  const CRACK_SPEED = [0.03, 0.08], WANDER = 0.6, KINK = 0.1, BRANCH = 0.35, DIE = 3;
+  // straight; and they zigzag about their way, a kink mostly turning them
+  // back towards it, rather than curling round.
+  const CRACK_SPEED = [0.03, 0.08], WANDER = 2.5, KINK = 0.1, BRANCH = 0.35, DIE = 3;
   const CRACK_WIDTH = [0.8, 1.6], MAX_TIPS = 250; // css px
   const SEEDS = 0.6; // new cracks a second over a whole screen of cracking paint
   const CLEAR = 0.04; // U: how far from any other crack a new one begins
-  // and SPLITS a second that set off from a crack across the plate beside it,
-  // where it is at least SPLIT_ROOM wide that way, so the cracking goes on.
+  // and SPLITS a second that set off from a crack: across the plate beside
+  // it, where it is at least SPLIT_ROOM wide that way; on from where one
+  // ended, or forking there; into a plate from a concave corner of it (more
+  // than CONCAVE of the disc CORNER_R round it paint: where a crack turns
+  // sharply, on the outside of the turn, or where the paint's edge round a
+  // hole bends in), where the stress gathers; or across the middle of a
+  // plate ringed in but too big to come loose; so the cracking goes on.
   // As the plates get smaller the cracks get shorter; so more of them start,
   // across ever narrower plates (down to SPLIT_ROOM_MIN), to keep the cracks
   // growing CRACK_RATE U a second in all.
   const SPLITS = 0.8, SPLIT_ROOM = 0.06, SPLIT_ROOM_MIN = 0.012, CRACK_RATE = 0.2;
+  const CONCAVE = 0.62, CORNER_R = 0.01;
   // A bit of paint ringed in by cracks, of area a up to FRAG (U²), comes loose;
-  // a gust of strength g blows it off at BLOW·m·(g − 0.05)·FRAG_REF/a a second:
-  // the smaller, the more readily. m is its coat's pace, kept so that the coat
-  // loses half of what is left of it every HALF seconds from when it first
-  // begins to come off.
-  const FRAG = 0.003, FRAG_REF = 0.0002, BLOW = 30, HALF = 60;
+  // one with little or none of its coat left round it (open, 0–1), up to
+  // FRAG·(1 + (ISLAND − 1)·open^1.5): a free edge lets go of the wall.
+  // A gust (puff p, see the wind) blows it off at
+  // BLOW·m·(p − PUFF_BLOW)²·e^(−rise/RISE)·ease·(FRAG_REF/a)^(1 − open/2)
+  // a second: in a gust well begun, the more, the stronger it is, and hardly
+  // while it is still rising fast (rise, its strength's rate, 1/s), so the
+  // bits go about its peak, its sound heard swelling before; the smaller,
+  // the more readily, and the more open (ease, OPEN times as much for a bit
+  // all open as for one hemmed in all round), the less its size matters, the
+  // wind getting under its free edge. m is its coat's pace, kept so that the
+  // coat loses half of what is left of it every HALF seconds from when it
+  // first begins to come off.
+  const FRAG = 0.003, FRAG_REF = 0.0002, BLOW = 1700, PUFF_BLOW = 0.1, RISE = 0.1, HALF = 60, ISLAND = 8, OPEN = 12;
   // the paint: its highest lift (as LIFT, to scale the rest), a crack's
   // groove and how far the paint cups up beside it, css px
   const LIT_FPS = 30;
@@ -147,23 +162,41 @@
   }
 
   // ---- colour ----
-  // Every coat was a new start: any colour, as long as it is vivid and tells
-  // itself apart from the coat it covered, now and then a white or a deep one.
+  // Every coat was a new start, in one of the paints walls are painted in
+  // (OKLCH: how often, L ± dL, C ± dC, h ± dh), the years having dulled it,
+  // and never the same paint as the coat it covered, nor one hard to tell
+  // from it.
+  const PAINTS = [
+    [3, 0.93, 0.03, 0.012, 0.01, 90, 30], // whitewash, off-white
+    [2, 0.89, 0.03, 0.04, 0.015, 92, 10], // cream, ivory
+    [2, 0.8, 0.05, 0.085, 0.025, 84, 10], // ochre, yellow distemper
+    [2, 0.78, 0.06, 0.06, 0.02, 155, 20], // pale green, the hospital's and the school's
+    [1, 0.5, 0.06, 0.065, 0.02, 162, 14], // deep green
+    [2, 0.79, 0.06, 0.05, 0.02, 232, 14], // pale blue
+    [1, 0.46, 0.06, 0.07, 0.02, 252, 10], // deep blue
+    [1, 0.72, 0.05, 0.06, 0.02, 198, 12], // turquoise
+    [1.5, 0.56, 0.05, 0.1, 0.025, 38, 9], // terracotta, brick red
+    [1, 0.8, 0.04, 0.05, 0.02, 35, 14], // dusty pink, salmon
+    [1, 0.47, 0.05, 0.05, 0.02, 60, 12], // brown
+    [1, 0.7, 0.1, 0.01, 0.008, 250, 60], // grey
+    [0.6, 0.75, 0.04, 0.045, 0.015, 305, 15], // lilac
+  ];
   function coats(rng) {
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
     const lab = [], rgb = [];
     const hueDist = (a, b) => Math.abs(((a - b) % 360 + 540) % 360 - 180);
+    const all = PAINTS.reduce((s, p) => s + p[0], 0);
     let prev = null;
     function make() {
       let c;
       for (let i = 0; i < 30; i++) {
-        const r = rng();
-        c = r < 0.1 ? { L: 0.92 + rng() * 0.05, C: 0.01 + rng() * 0.03, h: rng() * 360 } // whitewash
-          : r < 0.16 ? { L: 0.3 + rng() * 0.08, C: 0.08 + rng() * 0.06, h: rng() * 360 } // a deep one
-          : { L: 0.5 + rng() * 0.36, C: 0.13 + rng() * 0.14, h: rng() * 360 };
+        let r = rng() * all, kind = 0;
+        while ((r -= PAINTS[kind][0]) > 0) kind++;
+        const [, L, dL, C, dC, h, dh] = PAINTS[kind], u = () => 2 * rng() - 1;
+        c = { kind, L: L + dL * u(), C: Math.max(0.004, C + dC * u()), h: h + dh * u() };
         if (!prev) break;
-        const far = hueDist(c.h, prev.h) > 70 || prev.C < 0.05 || c.C < 0.05;
-        if (far && Math.abs(c.L - prev.L) + (hueDist(c.h, prev.h) / 360) > 0.2) break;
+        const grey = Math.min(c.C, prev.C) < 0.035;
+        if (kind !== prev.kind && (Math.abs(c.L - prev.L) > 0.1 || (!grey && hueDist(c.h, prev.h) > 55))) break;
       }
       prev = c;
       const l = fit(c.L, c.C, c.h + gauss() * 2);
@@ -183,12 +216,18 @@
   // drifting round, and gusts that come, swell and die away (sometimes a few
   // at once), turning the wind a little as they pass; and some turbulence.
   // speed is about 0.3 in a breeze, over 1 in a strong gust. A gust comes
-  // every 0.5–2 s.
+  // every 0.5–2 s. They overlap, so the wind seldom falls low; what blows
+  // the bits off, and is heard, is the wind rising over its lull (lull:
+  // following the wind down within LULL[0] s, up only over LULL[1] s) by
+  // more than PUFF_MIN: puff, about 0–1, 0 about half the time. So a gust
+  // swells and dies away even in a strong wind, and in between it is quiet.
+  const LULL = [0.8, 3], PUFF_MIN = 0.2;
   function windModel(rng) {
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
     const ou = (v, mean, tau, sigma, dt) => { const e = Math.exp(-dt / tau); return mean + (v - mean) * e + sigma * Math.sqrt(1 - e * e) * gauss(); };
     let mean = rng() * TAU, heading = mean, breeze = 0.25, turb = 0, gusts = [], next = 0.5 + rng() * 1.5;
-    const w = { speed: 0.25, gust: 0, dir: heading };
+    let lull = null;
+    const w = { speed: 0.25, gust: 0, rise: 0, puff: 0, dir: heading };
     w.step = dt => {
       mean += gauss() * 0.1 * Math.sqrt(dt);
       heading += (mean - heading) * Math.min(1, dt / 12) + gauss() * 0.1 * Math.sqrt(dt);
@@ -204,9 +243,13 @@
         const e = q.t < q.rise ? 0.5 - 0.5 * Math.cos(Math.PI * q.t / q.rise) : 0.5 + 0.5 * Math.cos(Math.PI * (q.t - q.rise) / q.fall);
         g += q.a * e; turn += q.turn * e;
       }
+      if (dt > 0) w.rise = (g - w.gust) / dt; // (the gusts' rising, smooth: not the turbulence)
       w.gust = g;
       w.speed = Math.max(0.04, Math.max(0.06, breeze) + g + 0.07 * turb * (0.6 + g));
       w.dir = heading + turn;
+      if (lull === null) lull = w.speed;
+      lull += (w.speed - lull) * (1 - Math.exp(-dt / LULL[w.speed < lull ? 0 : 1]));
+      w.puff = Math.max(0, w.speed - lull - PUFF_MIN);
     };
     return w;
   }
@@ -530,7 +573,7 @@ void main() {
       touched(x0, y0, x1, y1);
     }
     function tip(x, y, th, w, k, grace) {
-      return { x, y, th, slow: th, jag: 0, w, k, grace, speed: (CRACK_SPEED[0] + rng() * (CRACK_SPEED[1] - CRACK_SPEED[0])) * Uc,
+      return { x, y, th, dir: th, slow: th, jag: 0, w, k, grace, speed: (CRACK_SPEED[0] + rng() * (CRACK_SPEED[1] - CRACK_SPEED[0])) * Uc,
         trail: [x, y, th], trailD: 0 }; // (where it has run, every 2 cells: x, y, heading)
     }
     // a new crack at (x, y) (cells), running both ways from there
@@ -560,31 +603,111 @@ void main() {
       tips.push(tip(x, y, th, w, k, 4), tip(x, y, th + Math.PI, w, k, 4)); // (clear of each other before they may join anything)
       return true;
     }
-    // Points along the cracks, kept for new cracks to set off from (as they
-    // were when they were made; checked when picked).
-    const crackPts = [], CRACK_PTS = 30000;
-    function along(x, y, th, w, k) {
-      const p = [x, y, th, w, k];
-      if (crackPts.length < CRACK_PTS) crackPts.push(p);
-      else crackPts[(rng() * CRACK_PTS) | 0] = p;
+    // Points on the cracks that new cracks may set off from, kept as they were
+    // when they were made and checked when picked: along them (to run across
+    // the plate beside them), where they ended in the paint (to run on from
+    // there, or fork); and the plates' concave corners, at the cracks' sharp
+    // turns and on the paint's edge round a hole (to run into the plate).
+    const crackPts = [], ends = [], corners = [], CRACK_PTS = 30000;
+    function keep(list, p) {
+      if (list.length < CRACK_PTS) list.push(p);
+      else list[(rng() * CRACK_PTS) | 0] = p;
     }
-    // a new crack setting off from a crack, across the plate on one side of it
-    function splitCrack() {
-      if (!crackPts.length || tips.length >= MAX_TIPS) return false;
-      const j = (rng() * crackPts.length) | 0, [x, y, th, w0, k] = crackPts[j];
-      const i = Math.floor(y) * GW + Math.floor(x);
-      if (!split[i] || dep[i] !== k) { crackPts[j] = crackPts[crackPts.length - 1]; crackPts.pop(); return false; }
-      const side = rng() < 0.5 ? -1 : 1, bt = th + side * (Math.PI / 2 + (rng() - 0.5) * 0.8);
-      const c = Math.cos(bt), s = Math.sin(bt), w = w0 * (0.6 + rng() * 0.3);
-      // room for it: its own coat, no crack, and not the coat above, all the way
-      const room = Math.max(SPLIT_ROOM_MIN, SPLIT_ROOM / Math.sqrt(more)) * Uc;
-      for (let d = w0 + 3; d < room; d += 1.5) {
+    const along = (x, y, th, w, k) => keep(crackPts, [x, y, th, w, k]);
+    // (an end or a corner is set off from once)
+    function pick(list) {
+      const j = (rng() * list.length) | 0, p = list[j];
+      list[j] = list[list.length - 1]; list.pop();
+      return p;
+    }
+    const thinnest = CRACK_WIDTH[0] * 0.6 / cellCss;
+    const splitRoom = () => Math.max(SPLIT_ROOM_MIN, SPLIT_ROOM / Math.sqrt(more)) * Uc;
+    // room for a crack from (x, y) heading th, from distance d0 to d1 (cells):
+    // its own coat, no crack, and not the coat above, all the way
+    function clearAhead(x, y, th, d0, d1, k) {
+      const c = Math.cos(th), s = Math.sin(th);
+      for (let d = d0; d < d1; d += 1.5) {
         const bx = Math.floor(x + c * d), by = Math.floor(y + s * d);
         if (bx < 0 || by < 0 || bx >= GW || by >= GH) return false;
         const n = by * GW + bx;
         if (split[n] || dep[n] !== k || loose[n]) return false;
       }
-      tips.push(tip(x, y, bt, Math.max(w, CRACK_WIDTH[0] * 0.6 / cellCss), k, w0 + 6));
+      return true;
+    }
+    const onCrack = (x, y, k) => { const i = Math.floor(y) * GW + Math.floor(x); return split[i] && dep[i] === k; };
+    // a new crack setting off from a crack, across the plate on one side of it
+    function splitCrack() {
+      if (!crackPts.length || tips.length >= MAX_TIPS) return false;
+      const j = (rng() * crackPts.length) | 0, [x, y, th, w0, k] = crackPts[j];
+      if (!onCrack(x, y, k)) { crackPts[j] = crackPts[crackPts.length - 1]; crackPts.pop(); return false; }
+      const side = rng() < 0.5 ? -1 : 1, bt = th + side * (Math.PI / 2 + (rng() - 0.5) * 0.8);
+      if (!clearAhead(x, y, bt, w0 + 3, splitRoom(), k)) return false;
+      tips.push(tip(x, y, bt, Math.max(w0 * (0.6 + rng() * 0.3), thinnest), k, w0 + 6));
+      return true;
+    }
+    // a crack running on from where one ended in the paint, now and then
+    // forking there
+    function fromEnd() {
+      if (!ends.length || tips.length >= MAX_TIPS - 1) return false;
+      const [x, y, th, w, k] = pick(ends);
+      if (!onCrack(x, y, k)) return false;
+      const fork = rng() < 0.35, room = splitRoom();
+      let made = false;
+      for (const side of fork ? [-1, 1] : [0]) {
+        const bt = th + side * (0.35 + rng() * 0.4) + gauss() * 0.2;
+        if (!clearAhead(x, y, bt, w + 2, room, k)) continue;
+        tips.push(tip(x, y, bt, Math.max(w * (fork ? 0.85 : 1), thinnest), k, w + 4));
+        made = true;
+      }
+      return made;
+    }
+    // a crack into a plate from a concave corner of it, halfway between its
+    // sides (a corner on the paint's edge, not on a crack: edge)
+    function fromCorner() {
+      if (!corners.length || tips.length >= MAX_TIPS) return false;
+      const [x, y, th, w, k, edge] = pick(corners), i = Math.floor(y) * GW + Math.floor(x);
+      if (edge ? dep[i] !== k || split[i] || loose[i] : !onCrack(x, y, k)) return false;
+      const bt = th + gauss() * 0.2;
+      if (!clearAhead(x, y, bt, w + 3, splitRoom(), k)) return false;
+      tips.push(tip(x, y, bt, Math.max(w * (0.6 + rng() * 0.3), thinnest), k, w + 6));
+      return true;
+    }
+    // A crack through about the middle of a plate ringed in by cracks but too
+    // big to come loose, across its length, running both ways. The plate is
+    // found from a cell picked anywhere (so the bigger, the likelier), filled
+    // as far as PLATE_MAX cells, within fillLeft cells a frame.
+    const PLATE_MAX = Math.min(N, 16 * Math.max(4, Math.round(FRAG * Uc * Uc)));
+    const plate = new Int32Array(PLATE_MAX + 4);
+    let fillLeft = 0;
+    function fromCentre() {
+      if (tips.length >= MAX_TIPS - 1 || fillLeft <= 0) return false;
+      const s0 = ((rng() * GH) | 0) * GW + ((rng() * GW) | 0), k = dep[s0];
+      if (split[s0] || loose[s0]) return false;
+      const id = ++marking;
+      mark[s0] = id; plate[0] = s0;
+      let n = 1, closed = true, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+      for (let q = 0; q < n && closed; q++) {
+        const i = plate[q], x = i % GW, y = (i / GW) | 0;
+        sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+        for (let e = 0; e < 4; e++) {
+          if (e === 0 ? x === GW - 1 : e === 1 ? x === 0 : e === 2 ? y === GH - 1 : y === 0) continue;
+          const m = i + (e === 0 ? 1 : e === 1 ? -1 : e === 2 ? GW : -GW);
+          if (dep[m] < k || n >= PLATE_MAX) { closed = false; break; } // (under the coat above it goes on)
+          if (dep[m] !== k || split[m] || loose[m] || mark[m] === id) continue;
+          mark[m] = id;
+          plate[n++] = m;
+        }
+      }
+      fillLeft -= n;
+      if (!closed || n <= fragMax) return false;
+      const mx = sx / n, my = sy / n, cxx = sxx / n - mx * mx, cyy = syy / n - my * my, cxy = sxy / n - mx * my;
+      const x = mx + 0.5, y = my + 0.5, cx = Math.floor(x), cy = Math.floor(y);
+      // (the middle in the plate, and clear of its cracks)
+      for (let yy = cy - 3; yy <= cy + 3; yy++) for (let xx = cx - 3; xx <= cx + 3; xx++)
+        if (xx < 0 || yy < 0 || xx >= GW || yy >= GH || mark[yy * GW + xx] !== id) return false;
+      const th = 0.5 * Math.atan2(2 * cxy, cxx - cyy) + Math.PI / 2 + gauss() * 0.2; // across its long axis
+      const w = (CRACK_WIDTH[0] + rng() * (CRACK_WIDTH[1] - CRACK_WIDTH[0])) / cellCss;
+      tips.push(tip(x, y, th, w, k, 4), tip(x, y, th + Math.PI, w, k, 4));
       return true;
     }
     const STEP = 0.7; // cells
@@ -612,8 +735,20 @@ void main() {
       while (left > 0) {
         const ds = Math.min(STEP, left);
         left -= ds;
-        t.slow += gauss() * Math.sqrt(ds / (WANDER * Uc));
-        if (rng() < ds / (KINK * Uc)) t.slow += (rng() < 0.5 ? -1 : 1) * (0.3 + rng() * 0.6);
+        const drift = gauss() * Math.sqrt(ds / (WANDER * Uc));
+        t.dir += drift; t.slow += drift;
+        if (rng() < ds / (KINK * Uc)) {
+          // (off its way, mostly back towards it)
+          const off = t.slow - t.dir, back = off > 0 ? -1 : 1;
+          const th0 = t.th, turn = (rng() < 0.5 + Math.min(Math.abs(off), 0.8) * 0.5 ? back : -back) * (0.3 + rng() * 0.6);
+          t.slow += turn;
+          // a sharp one: the concave corner on its outside, halfway between
+          // the way it came from and the way it goes
+          if (Math.abs(turn) > 0.5) {
+            const th1 = t.slow + t.jag;
+            keep(corners, [t.x, t.y, Math.atan2(Math.sin(th0) - Math.sin(th1), Math.cos(th0) - Math.cos(th1)), t.w, t.k]);
+          }
+        }
         t.jag = t.jag * jagE + Math.sqrt(1 - jagE * jagE) * gauss() * 0.3;
         t.th = t.slow + t.jag;
         const nx = t.x + Math.cos(t.th) * ds, ny = t.y + Math.sin(t.th) * ds;
@@ -654,7 +789,7 @@ void main() {
           }
           if (room) tips.push(tip(nx, ny, bt, w, t.k, t.w + 6)); // (clear of its parent before it may join one)
         }
-        if (rng() < ds / (DIE * Uc)) return false;
+        if (rng() < ds / (DIE * Uc)) { keep(ends, [t.x, t.y, t.th, t.w, t.k]); return false; }
       }
       return true;
     }
@@ -663,10 +798,11 @@ void main() {
     // A crack that runs into another, or into the edge of its coat or of the
     // wall, may close a ring of cracks round a bit of paint: of its own coat
     // (or where that has gone already), never the edge of a coat above it,
-    // under which the paint goes on. A bit no bigger
-    // than FRAG no longer holds on, and the next gust may blow it off the
-    // wall (the smaller, the likelier): cut out of the wall as it is, it flies.
-    const loose = new Uint8Array(N); // in a loose bit
+    // under which the paint goes on. A bit no bigger than FRAG (or, the less
+    // of its coat is left round it, up to ISLAND times that) no longer holds
+    // on, and the next gust may blow it off the wall: cut out of the wall as
+    // it is, it flies.
+    const loose = new Uint32Array(N); // the loose bit it is in (its number), or 0
     const mark = new Uint32Array(N);
     const fragMax = Math.max(4, Math.round(FRAG * Uc * Uc)), fragRef = FRAG_REF * Uc * Uc;
     let marking = 0;
@@ -718,10 +854,22 @@ void main() {
             if (mark[n] >= first) { small = false; break; }
             mark[n] = id;
             cells.push(n);
-            if (cells.length > fragMax) { small = false; break; }
+            if (cells.length > fragMax * ISLAND) { small = false; break; }
           }
         }
         if (!small) continue;
+        // its rim (edge cells, and which way out of it: 0–3, +x, −x, +y, −y),
+        // and how open it lies, looking out from all along it
+        const rim = [];
+        for (const i of cells) {
+          const x = i % GW, y = (i / GW) | 0;
+          for (let e = 0; e < 4; e++) {
+            const nx = x + DX[e], ny = y + DY[e];
+            if (nx >= 0 && ny >= 0 && nx < GW && ny < GH && mark[ny * GW + nx] !== id) rim.push(i, e);
+          }
+        }
+        const open = openFrom(rim, k, c => mark[c] === id);
+        if (cells.length > fragMax * (1 + (ISLAND - 1) * Math.pow(open, 1.5))) continue;
         if (cells.length < 4) {
           // (a speck inside a crack is the crack.) A speck the paint all round
           // has come off from, too small to come off itself, stays: a fleck of
@@ -736,23 +884,59 @@ void main() {
         }
         let bx0 = GW, by0 = GH, bx1 = 0, by1 = 0;
         for (const i of cells) {
-          loose[i] = 1;
+          loose[i] = id;
           const x = i % GW, y = (i / GW) | 0;
           bx0 = Math.min(bx0, x); bx1 = Math.max(bx1, x); by0 = Math.min(by0, y); by1 = Math.max(by1, y);
         }
-        bits.push({ cells, k: k, bx0, by0, bx1, by1 });
+        // (looked out from again, as the paint round it goes, at PROBES places all round it)
+        const probes = [], every = Math.max(1, rim.length / 2 / PROBES);
+        for (let r = 0; r < rim.length / 2; r += every) probes.push(rim[2 * Math.floor(r)], rim[2 * Math.floor(r) + 1]);
+        bits.push({ cells, k, id, probes, open, openAt: clock - rng(), bx0, by0, bx1, by1 });
         made++;
       }
       return made;
     }
-    // In a gust (not in a breeze) the loose bits go, one by one, each as
-    // readily as it is small (inversely as its area), at its coat's pace.
+    // How open a bit of coat k lies, 0–1: looking out from its rim (cells
+    // and ways out) across the crack, how much of it has no paint of its
+    // coat beside it any more, only the coat under it
+    // (its own paint, beyond a crack that ends in it, and the wall's edge
+    // tell nothing: the wall goes on beyond that).
+    const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1], PROBES = 24;
+    const reach = Math.ceil(CRACK_WIDTH[1] / cellCss) + 4;
+    function openFrom(rim, k, own) {
+      let out = 0, seen = 0;
+      for (let p = 0; p < rim.length; p += 2) {
+        const i = rim[p], e = rim[p + 1];
+        if (dep[i] !== k) continue;
+        let x = i % GW, y = (i / GW) | 0;
+        for (let s = 1; s <= reach; s++) {
+          x += DX[e]; y += DY[e];
+          if (x < 0 || y < 0 || x >= GW || y >= GH) break;
+          const c = y * GW + x;
+          if (dep[c] > k) { out++; seen++; break; } // gone
+          if (dep[c] < k) { seen++; break; } // (under the coat above)
+          if (split[c]) continue; // (the crack)
+          if (!own(c)) seen++; // paint beside it, holding it in
+          break;
+        }
+      }
+      return seen ? out / seen : 0;
+    }
+    const openness = b => openFrom(b.probes, b.k, c => loose[c] === b.id);
+    // In a gust (a puff, not in a lull), about its peak, the loose bits go,
+    // one by one, each as readily as it is small and as it lies open, at its
+    // coat's pace.
     function gusts(dt, wind) {
       pacing(dt);
-      const push = Math.max(0, wind.gust - 0.05) * BLOW;
+      const push = Math.max(0, wind.puff - PUFF_BLOW) ** 2 * Math.exp(-Math.max(0, wind.rise) / RISE) * BLOW;
       if (!push) return;
-      for (let n = bits.length; n--;)
-        if (rng() < dt * push * (pace.get(bits[n].k)?.m ?? 1) * fragRef / bits[n].cells.length) blowing.push(bits.splice(n, 1)[0]);
+      for (let n = bits.length; n--;) {
+        const b = bits[n];
+        if (clock - b.openAt > 1) { b.open = openness(b); b.openAt = clock - 0.5 * rng(); } // (looked at again now and then)
+        const ease = 2 * (1 + (OPEN - 1) * b.open) / (1 + OPEN);
+        const size = Math.pow(fragRef / b.cells.length, 1 - 0.5 * b.open);
+        if (rng() < dt * push * ease * size * (pace.get(b.k)?.m ?? 1)) blowing.push(bits.splice(n, 1)[0]);
+      }
     }
     // Each coat's pace, and since when it has been coming off; looked at
     // every half second: how much of the wall it has been on top of (where it,
@@ -775,6 +959,34 @@ void main() {
         p.m = clamp(p.m * Math.exp(2 * (should - lost)), 0.05, 1000);
       }
       for (const k of pace.keys()) if (k < lo) pace.delete(k);
+    }
+
+    // The concave corners of the paint's edge along rim (cells, x, y, …), of
+    // coat k: where its paint (or a coat above, under which it goes on)
+    // fills more than CONCAVE of the disc round it, the most concave in each
+    // stretch of it, kept for cracks to set off from into the paint, towards
+    // the middle of the paint in the disc.
+    const cornerR = Math.max(4, Math.round(CORNER_R * Uc));
+    function concave(rim, k) {
+      const found = [];
+      for (let a = 0; a < rim.length; a += 6) { // (every third)
+        const x = Math.floor(rim[a]), y = Math.floor(rim[a + 1]);
+        if (x < cornerR || y < cornerR || x >= GW - cornerR || y >= GH - cornerR) continue; // (all its disc on the wall)
+        let paint = 0, all = 0, vx = 0, vy = 0;
+        for (let dy = -cornerR; dy <= cornerR; dy += 2) for (let dx = -cornerR; dx <= cornerR; dx += 2) {
+          if (dx * dx + dy * dy > cornerR * cornerR) continue;
+          all++;
+          if (dep[(y + dy) * GW + x + dx] <= k) { paint++; vx += dx; vy += dy; }
+        }
+        if (paint > CONCAVE * all) found.push([paint / all, x + 0.5, y + 0.5, Math.atan2(vy, vx)]);
+      }
+      found.sort((p, q) => q[0] - p[0]);
+      const kept = [];
+      for (const f of found) {
+        if (kept.some(g => (g[1] - f[1]) ** 2 + (g[2] - f[2]) ** 2 < cornerR * cornerR)) continue;
+        kept.push(f);
+        keep(corners, [f[1], f[2], f[3], (CRACK_WIDTH[0] + rng() * (CRACK_WIDTH[1] - CRACK_WIDTH[0])) / cellCss, k, true]);
+      }
     }
 
     // ---- flying ----
@@ -856,6 +1068,7 @@ void main() {
         }
       touched(bx0 - 2, by0 - 2, bx1 + 2, by1 + 2);
       ringed(rim, k);
+      concave(rim, k);
       if (k + 1 > deepest) { deepest = k + 1; paletteUp(); }
       // and away, the way the gust blows
       const blur = Math.max(1, 2.5 * pxX), sp = Math.ceil(2 * blur), off = sw + 4 * sp + 10;
@@ -955,7 +1168,15 @@ void main() {
         snaps = [];
         // new cracks, now and then, anywhere free to crack
         const seed = () => { for (let tries = 0; tries < 30; tries++) if (seedCrack(rng() * GW, rng() * GH)) return true; return false; };
-        const splitOff = () => { for (let tries = 0; tries < 30; tries++) if (splitCrack()) return true; return false; };
+        // (from along a crack, its end, a plate's concave corner, or the middle of a plate)
+        fillLeft = PLATE_MAX;
+        const splitOff = () => {
+          for (let tries = 0; tries < 30; tries++) {
+            const r = rng();
+            if (r < 0.2 ? fromEnd() : r < 0.4 ? fromCorner() : r < 0.55 ? fromCentre() : splitCrack()) return true;
+          }
+          return false;
+        };
         for (seedDue -= dt; seedDue <= 0; seedDue += -Math.log(1 - rng()) / (SEEDS * more)) seed();
         // and off the cracks there are, across the plates
         for (splitDue -= dt; splitDue <= 0; splitDue += -Math.log(1 - rng()) / (SPLITS * more)) splitOff();
@@ -970,7 +1191,7 @@ void main() {
         gusts(dt, wind);
         for (let n = flying.length; n--;) if (!fly(flying[n], dt, wind)) flying.splice(n, 1);
         const pan = x => clamp((x / GW * CW - CW / 2) / (innerWidth / 2), -1, 1);
-        return { dt, wind: { speed: wind.speed, gust: wind.gust, dir: wind.dir }, crack: cracked,
+        return { dt, wind: { speed: wind.speed, puff: wind.puff, dir: wind.dir }, crack: cracked,
           crackPan: cracked ? pan(crackX / cracked) : 0, snaps: blown };
       },
       // the wall lit anew where it has changed (or all of it), and the bits flying
@@ -981,16 +1202,21 @@ void main() {
         // every frame): it changes slowly, and lighting is the costly part
         const now = performance.now(), lighting = all || now - litAt >= 1000 / LIT_FPS - 2;
         if (lighting) litAt = now;
-        // each row of tiles, in runs of dirty ones
+        // each row of tiles, in runs of dirty ones: all of them up first, then
+        // lit (a tile's light reads the cells round it, in the tiles beside it,
+        // which must be as they are now, or a seam of the old wall stays)
+        const runs = [];
         if (lighting) for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw;) {
           if (!dirty[ty * tw + tx]) { tx++; continue; }
           const from = tx;
           while (tx < tw && dirty[ty * tw + tx]) dirty[ty * tw + tx++] = 0;
           const x0 = from * TILE, x1 = Math.min(GW, tx * TILE) - 1, y0 = ty * TILE, y1 = Math.min(GH, y0 + TILE) - 1;
           g.upload(x0, y0, x1, y1);
-          g.light(Math.floor(x0 * pxX), Math.floor(y0 * pxY), Math.min(CPW - 1, Math.ceil((x1 + 1) * pxX) - 1), Math.min(CPH - 1, Math.ceil((y1 + 1) * pxY) - 1), cellCss);
-          changed = true;
+          runs.push([x0, y0, x1, y1]);
         }
+        for (const [x0, y0, x1, y1] of runs)
+          g.light(Math.floor(x0 * pxX), Math.floor(y0 * pxY), Math.min(CPW - 1, Math.ceil((x1 + 1) * pxX) - 1), Math.min(CPH - 1, Math.ceil((y1 + 1) * pxY) - 1), cellCss);
+        changed = runs.length > 0;
         // the canvas keeps showing what it showed when nothing was drawn;
         // bits blown off are cut out of it as it shows
         if (changed || all || blowing.length) g.show();
@@ -1013,7 +1239,7 @@ void main() {
     const lo = s[0][0] + 1, hi = s[s.length - 1][0] + 1;
     hintText.textContent = (lo === hi ? `coat ${lo}` : `coats ${lo}–${hi}`) + ' of ∞' +
       (paused ? ' · paused' : '') +
-      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · M: music · C: crackle · S: save PNG`);
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · click: ${paused ? 'resume' : 'pause'} · M: music · W: wind · S: save PNG`);
   }
 
   // Click / tap pauses and resumes the wall; while paused the hint stays up.
@@ -1031,28 +1257,30 @@ void main() {
 
   // Music (wall-music.js), off until asked for: browsers only let sound start
   // from a click or a key press. It pauses with the wall.
-  // The music is nature coming to take the wall back: the wind that blows
-  // the bits off, told every frame as a wall event (so a recording can
-  // listen in too), with the cracking and the bits, which crackle. The crackle can be heard on its own, without the music,
+  // The sound is nature coming to take the wall back. The wind switch: the
+  // wind that blows the bits off, told every frame as a wall event (so a
+  // recording can listen in too), and the cracking and the bits, which
+  // crackle. The music: the leaves and the grass rustling in that wind,
+  // birds and insects. The wind can be heard on its own, without the music,
   // but the music never goes without it: turning the music on turns the
-  // crackle on, and turning the crackle off turns the music off.
+  // wind on, and turning the wind off turns the music off.
   const music = WallMusic.player(seed);
   addEventListener('wall', e => music.hear(e.detail));
-  let musicOn = false, crackleOn = false;
-  const syncSound = () => (musicOn || crackleOn) && !paused ? music.play(musicOn) : music.stop();
-  function setSound(m, c) {
-    musicOn = m; crackleOn = c || m;
+  let musicOn = false, windOn = false;
+  const syncSound = () => (musicOn || windOn) && !paused ? music.play(musicOn) : music.stop();
+  function setSound(m, w) {
+    musicOn = m; windOn = w || m;
     syncSound();
     sound.textContent = `♪ music: ${musicOn ? 'on' : 'off'}`;
     sound.setAttribute('aria-pressed', musicOn);
-    crackleButton.textContent = `∘ crackle: ${crackleOn ? 'on' : 'off'}`;
-    crackleButton.setAttribute('aria-pressed', crackleOn);
+    windButton.textContent = `∘ wind: ${windOn ? 'on' : 'off'}`;
+    windButton.setAttribute('aria-pressed', windOn);
     showHint();
   }
-  const toggleMusic = () => setSound(!musicOn, crackleOn);
-  const toggleCrackle = () => setSound(musicOn && !crackleOn, !crackleOn);
+  const toggleMusic = () => setSound(!musicOn, windOn);
+  const toggleWind = () => setSound(musicOn && !windOn, !windOn);
   sound.addEventListener('click', toggleMusic);
-  crackleButton.addEventListener('click', toggleCrackle);
+  windButton.addEventListener('click', toggleWind);
 
   // The wall and the bits flying before it, as one picture.
   function snapshot() {
@@ -1125,7 +1353,7 @@ void main() {
   });
   window.addEventListener('keydown', e => {
     if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleMusic();
-    if ((e.key === 'c' || e.key === 'C') && !e.repeat) toggleCrackle();
+    if ((e.key === 'w' || e.key === 'W') && !e.repeat) toggleWind();
     if ((e.key === 's' || e.key === 'S') && painting) {
       snapshot().toBlob(async blob => {
         const a = document.createElement('a');

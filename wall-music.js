@@ -1,10 +1,11 @@
-// The Wall — its music, played live with Web Audio, is no music at all but
-// nature come to take the wall back: the wind, the trees' leaves and the
-// grass rustling in it, birds and insects. The wind is the wall's own: the
+// The Wall — its sound, played live with Web Audio, is no music at all but
+// nature come to take the wall back. The wind is the wall's own: the
 // painting tells, frame by frame, how hard it blows and which way, the same
-// wind that tears the flakes off, so a gust is heard as it is seen. The
-// paint cracking and the flakes snapping off crackle, from where they are,
-// with a switch of their own.
+// wind that tears the flakes off, so a gust is heard as it is seen; and the
+// paint cracking and the flakes snapping off crackle, from where they are.
+// The wind and the crackle have a switch of their own. The music is the
+// rest of nature about the wall: the trees' leaves and the grass rustling
+// in that wind, birds and insects.
 // Every voice is made of filtered noise and sines; the birds sing phrases of
 // their own, each from its own place, more in the lulls than in the gusts.
 // 1/f noise walks how lively the birds and insects are.
@@ -55,11 +56,14 @@ const WallMusic = (() => {
     verb.buffer = impulse(1.6, 2.4);
     send.connect(verb);
     verb.connect(gain(0.7, air));
-    // The music can be silenced while the crackle goes on: every voice's bus
-    // passes through a gain set by one shared level (band, 1 or 0, faded),
-    // all but the crackle's.
+    // The music can be silenced while the wind and the crackle go on: every
+    // voice's bus passes through a gain set by one shared level (band, 1 or
+    // 0, faded), all but the wind's and the crackle's; and so does any
+    // voice's own way into the open air (musical(to): a gain into to, gated
+    // by band).
     const band = ac.createConstantSource();
     band.start();
+    const musical = to => { const g = gain(0, to); band.connect(g.gain); return g; };
     const bus = (wet, level = 1, muted = true) => {
       const g = gain(muted ? 0 : level, dry);
       if (muted) band.connect(gain(level, g.gain)); // level × band
@@ -110,12 +114,15 @@ const WallMusic = (() => {
       return level;
     }
 
-    // ---- the wind ----
-    // On each side the wind's body, noise darkened the more the calmer it is,
-    // and its breath, a broad band sweeping up as it blows harder: breathy,
-    // never a ringing tone. The side it blows from hears a gust first.
+    // ---- the wind (not the music's) ----
+    // Only its gusts are heard, not the steady blowing, but every one of
+    // them, a faint one too, for it may blow a bit off: on each side the
+    // gust's body, noise brightening as it swells, and its breath, a broad
+    // band sweeping up with it: breathy, never a ringing tone (and never so
+    // low that small speakers lose it). The side it blows from hears a gust
+    // first.
     const winds = [-1, 1].map(side => {
-      const out = panner(side * 0.8, bus(0.3, 1));
+      const out = panner(side * 0.8, bus(0.3, 1, false));
       const body = gain(0, out), breath = gain(0, out);
       const dark = filter('lowpass', 300, 0.5), band = filter('bandpass', 500, 0.7);
       const src = noiseFrom();
@@ -124,7 +131,7 @@ const WallMusic = (() => {
       return { side, body, breath, dark, band };
     });
     // Trees on either side, their leaves rustling: high noise, its loudness
-    // fluttering fast and deep, the louder the stronger the wind (∝ speed²).
+    // fluttering fast and deep, a little in the breeze, tossing in a gust.
     const trees = [-1, 1].map(side => {
       const out = panner(side * (0.5 + rng() * 0.4), bus(0.4, 1));
       const amp = gain(0, out);
@@ -136,32 +143,49 @@ const WallMusic = (() => {
     noiseFrom().connect(filter('bandpass', 2200, 0.5)).connect(grassAmp);
     const grass = flutter(2.5, 120, grassAmp);
 
-    // What the wind is now, as the wall last told it.
-    let wind = { speed: 0.25, gust: 0, dir: 0 }, ctrlAt = -1;
-    function blow(t, w) {
+    // What the wind is now, as the wall last told it: its speed, and its
+    // puff, the gust heard (0 in a lull, about 1 in a strong gust), the very
+    // one that blows the bits off. And never a bit blown off without a gust
+    // heard: each lifts it to at least KICK, dying away over about KICK_T s.
+    const KICK = 0.3, KICK_T = 0.5;
+    let wind = { speed: 0.25, puff: 0, dir: 0 }, ctrlAt = -1, kick = 0, kickAt = 0;
+    const kicked = t => kick * Math.exp(-(t - kickAt) / KICK_T);
+    function blow(t, w, blown) {
       wind = w;
-      if (t - ctrlAt < 0.1) return; // control rate
+      if (blown) { kick = Math.max(kicked(t), KICK); kickAt = t; }
+      else if (t - ctrlAt < 0.05) return; // control rate
       ctrlAt = t;
       const at = t0 + t, s = w.speed, along = Math.cos(w.dir); // > 0: blowing to the right
+      const e = Math.max(w.puff, kicked(t));
       const set = (p, v, tc = 0.25, lag = 0) => p.setTargetAtTime(v, at + lag, tc);
+      const lagOf = (side, most) => Math.max(0, side * along) * most;
       for (const x of winds) {
-        const lag = Math.max(0, x.side * along) * 0.35; // downwind hears it later
-        set(x.dark.frequency, 180 + 900 * s, 0.4, lag);
-        set(x.band.frequency, 260 + 520 * s + 260 * w.gust, 0.5, lag);
-        set(x.body.gain, (0.03 + 0.38 * s) * (1 - 0.25 * x.side * along), 0.3, lag);
-        set(x.breath.gain, 0.03 + 0.1 * s * s, 0.4, lag);
+        const lag = lagOf(x.side, 0.08); // downwind hears it a little later
+        set(x.dark.frequency, 500 + 1300 * Math.sqrt(e), 0.15, lag);
+        set(x.band.frequency, 600 + 900 * e, 0.2, lag);
+        // (heard as soon as it rises, louder as it swells, but ever less so;
+        // quick to follow it, as the bits it blows off are seen at once)
+        set(x.body.gain, 0.3 * Math.sqrt(e) / (1 + 0.3 * e) * (1 - 0.25 * x.side * along), 0.1, lag);
+        set(x.breath.gain, 0.1 * e / (1 + 0.5 * e), 0.15, lag);
       }
-      for (const x of trees) set(x.level.gain, (0.01 + 0.06 * s * s) * (1 + 0.3 * x.side * along), 0.4, Math.max(0, x.side * along) * 0.5);
-      set(grass.gain, 0.003 + 0.012 * Math.pow(s, 1.5), 0.5);
+      // the leaves and the grass stirring in the breeze, tossing in a gust
+      const stir = Math.min(s, 1.2);
+      for (const x of trees) set(x.level.gain, (0.006 + 0.012 * stir + 0.07 * e) * (1 + 0.3 * x.side * along), 0.2, lagOf(x.side, 0.15));
+      set(grass.gain, 0.002 + 0.003 * stir + 0.015 * e, 0.3);
+      // the birds and the crickets hushed by a gust (a song begun before it
+      // fades in it)
+      const hush = 1 / (1 + 8 * e);
+      for (const b of cast) set(b.hush.gain, hush, 0.15);
+      for (const c of crickets) set(c.out.gain, hush, 0.15);
     }
 
     // ---- birds ----
     // A few birds about, each in its own place (nearer ones louder and
     // brighter), each with a song of its own kind: whistled phrases repeated
     // two or three times, quick warbling runs, a two-note call, a trill, a
-    // dove's soft hoots far off. They sing when the 1/f liveliness is up, and
-    // fall silent in a strong gust.
-    const birdBus = bus(0.55, 1);
+    // dove's soft hoots far off. They sing when the 1/f liveliness is up, in
+    // the lulls, and are hushed by a gust.
+    const birdBus = bus(0.55, 1), birdAir = musical(send);
     // one note: a sine (and a little of its octave) gliding from f0 to f1 by
     // shape (0 straight, > 0 arching up, < 0 dipping), in a smooth envelope
     function note(b, at, dur, f0, f1, shape, g) {
@@ -213,12 +237,13 @@ const WallMusic = (() => {
       .map(kind => {
         const k = KINDS[kind](), dist = k.far ? 0.7 + rng() * 0.3 : rng();
         const out = gain(1 - 0.75 * dist, panner(rng() * 1.8 - 0.9, birdBus));
-        return { ...k, kind, dist, out: filter('lowpass', 9000 - 6000 * dist, 0.5, out), t: 3 + rng() * 15 };
+        const lp = filter('lowpass', 9000 - 6000 * dist, 0.5, out), hush = gain(1, lp);
+        lp.connect(gain(0.5 + dist, birdAir)); // the further, the more of the air (only with the music)
+        return { ...k, kind, dist, out: hush, hush, t: 3 + rng() * 15 };
       });
-    for (const b of cast) b.out.connect(gain(0.5 + b.dist, send)); // the further, the more of the air
     function sing(b) {
       const I = life(b.t);
-      if (wind.speed < 0.75 + 0.5 * rng() && rng() < 0.3 + 0.7 * I) {
+      if (wind.puff < 0.05 + 0.15 * rng() && rng() < 0.3 + 0.7 * I) {
         let at = t0 + b.t;
         const g = 1.6 * b.g * (0.7 + 0.3 * rng());
         for (const [gap, d, f0, f1, shape] of b.song()) {
@@ -233,8 +258,8 @@ const WallMusic = (() => {
 
     // ---- insects ----
     // Crickets, each chirping in its own steady rhythm for a while, then
-    // resting: a few short pulses of a high sine per chirp. Quieter as the
-    // wind blows.
+    // resting: a few short pulses of a high sine per chirp. Quieter in a
+    // gust.
     const bugs = bus(0.25, 1);
     const crickets = Array.from({ length: 2 + (rng() * 2 | 0) }, () => ({
       f: 4100 + rng() * 900, pulses: 3 + (rng() * 2 | 0), rate: 24 + rng() * 12, every: 0.5 + rng() * 0.6,
@@ -249,7 +274,7 @@ const WallMusic = (() => {
         return;
       }
       const at = t0 + c.t, pulse = 1 / c.rate, len = c.pulses * pulse;
-      const N = c.pulses * 8, g = 0.006 * (0.5 + I) / (1 + 2 * wind.speed);
+      const N = c.pulses * 8, g = 0.006 * (0.5 + I) / (1 + 3 * wind.puff);
       const env = gain(0, c.out), o = osc('sine', c.f);
       env.gain.setValueCurveAtTime(Float32Array.from({ length: N }, (_, i) => g * Math.pow(Math.sin(Math.PI * ((i % 8) + 0.5) / 8), 2)), at, len);
       o.connect(env);
@@ -267,7 +292,7 @@ const WallMusic = (() => {
     let buzzAt = 15 + rng() * 30;
     function buzz() {
       const I = life(buzzAt + 200);
-      if (wind.speed < 0.6 && rng() < 0.4 + 0.6 * I) {
+      if (wind.puff < 0.15 && rng() < 0.4 + 0.6 * I) {
         const at = t0 + buzzAt, len = 2 + rng() * 4, f = 150 + rng() * 110, from = rng() < 0.5 ? -1 : 1;
         const o = ac.createOscillator();
         o.setPeriodicWave(buzzWave);
@@ -287,7 +312,7 @@ const WallMusic = (() => {
       buzzAt += 20 + rng() * 60;
     }
 
-    // ---- crackle ----
+    // ---- crackle (not the music's) ----
     // The paint cracking ticks: tiny dry clicks, as many as the cracks grow,
     // from where they grow; a flake snapping off cracks louder, a few clicks
     // at once, and a bigger one with a low knock. Its own random numbers, so
@@ -320,7 +345,7 @@ const WallMusic = (() => {
     // painting's advance).
     function hear(t, s) {
       if (t < 0) return;
-      blow(t, s.wind);
+      blow(t, s.wind, s.snaps.length > 0);
       if (s.crack > 0) cracking(t, s.crack, s.crackPan);
       for (const x of s.snaps) snap(t, x.size, x.pan);
     }
@@ -345,7 +370,8 @@ const WallMusic = (() => {
 
   // The player: a context made on the first play() (it has to come from a
   // click or a key press), faded in and out, suspended while off. It plays
-  // the crackle, with the music (play(true)) or without it (play(false)).
+  // the wind and the crackle, with the music (play(true)) or without it
+  // (play(false)).
   // hear(s) is what the wall did over its last frame: heard straight away,
   // just far enough ahead to be scheduled cleanly, and not at all while the
   // sound is off.
