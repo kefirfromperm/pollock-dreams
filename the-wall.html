@@ -334,9 +334,16 @@ void main() {
   float b0 = brush(p, top);
   float dirt = 0.5 * vnoise(p / 230.0) + 0.3 * vnoise(p / 70.0 + 17.0) + 0.2 * vnoise(p / 19.0 + 5.0);
   c *= (0.97 + 0.06 * b0) * (1.04 - 0.16 * dirt * dirt);
-  // a crack shows the coat under it, deep in shadow
+  // a crack shows the coat under it, deep in shadow: as much darker than the
+  // paint round it to the eye (in lightness, the cube root of luminance) in
+  // a dark coat as in a pale one, so it shows in a dark coat too, even over
+  // a pale one
   float cr = texture(crack, uv).r;
-  c = mix(c, lin(paintOf(top + 1)) * 0.22, smoothstep(0.15, 0.85, cr));
+  vec3 under = lin(paintOf(top + 1));
+  const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
+  float Lc = pow(dot(c, Y), 1.0 / 3.0), Lu = pow(max(dot(under, Y), 1e-4), 1.0 / 3.0);
+  float dim = pow(min(0.6, max(Lc - 0.4, 0.06) / Lu), 3.0);
+  c = mix(c, under * dim, smoothstep(0.15, 0.85, cr));
 
   // the surface
   float e = 1.0;
@@ -356,7 +363,11 @@ void main() {
   float dif = max(dot(n, light), 0.0) / light.z; // flat paint shows its own colour
   vec3 hv = normalize(light + vec3(0.0, 0.0, 1.0));
   float spec = 0.05 * pow(max(dot(n, hv), 0.0), 30.0) - 0.05 * pow(hv.z, 30.0);
-  vec3 lit = max(c * (0.3 + 0.7 * dif * (1.0 - 0.7 * sh)) + spec * (1.0 - sh), 0.0);
+  // the light and shade of the relief, as a part of the paint's colour, and
+  // a little of it on its own besides: so a crack's lips catch the light and
+  // its groove is in shadow as plainly in a dark coat as in a pale one
+  float shade = dif * (1.0 - 0.7 * sh);
+  vec3 lit = max(c * (0.3 + 0.7 * shade) + 0.09 * (shade - 1.0) + spec * (1.0 - sh), 0.0);
   o = vec4(pow(lit, vec3(1.0 / 2.2)), 1.0);
 }`;
   // The lit wall onto the screen: in the light of a lamp up beyond the top
