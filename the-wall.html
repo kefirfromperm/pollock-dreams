@@ -155,7 +155,8 @@
   // the paint: its highest lift (as LIFT, to scale the rest), a crack's
   // groove and how far the paint cups up beside it, css px
   const LIT_FPS = 30;
-  const LIFT = 4, GROOVE = 0.7, CUP = 0.2, CUP_WIDTH = 1.8, BRUSH = 0.18;
+  const LIFT = 4, GROOVE = 1.6, CUP = 0.45, CUP_WIDTH = 1.8, BRUSH = 0.18;
+  const FINE_GROOVE = 0.11, FINE_CUP = 0.11;
   const LIGHT = (() => { const v = [-0.6, -0.7, 0.62], l = Math.hypot(...v); return v.map(c => c / l); })(); // y down
 
   // The canvas is as canvasSize gives it: on a touch device a square as wide
@@ -281,7 +282,7 @@ uniform usampler2D depth; // the coat on top, mod 256
 uniform sampler2D crack, lift, palette;
 uniform vec2 grid, cellPx; // grid cells, device px per cell
 uniform float cellCss, viewH, unit, wallSeed; // css px per cell, the canvas's height in device px, U in css px, 0–1000
-uniform float liftMax, groove, brushH, shadowStep, aa, fine; // fine: 0–1, how much a crack is drawn as on a phone
+uniform float liftMax, groove, brushH, shadowStep, aa, fine; // fine: 0–1, how fine a device px is
 uniform vec3 light; // towards the light, y down
 out vec4 o;
 int dAt(ivec2 c) { return int(texelFetch(depth, clamp(c, ivec2(0), ivec2(grid) - 1), 0).r); }
@@ -414,35 +415,36 @@ void main() {
   // the brush strokes show a little in the colour too
   float b0 = brush(p, top);
   c *= 0.97 + 0.06 * b0;
-  // a crack is a fine gap, the coat under it half seen at its bottom, its
-  // broken edges in its own: their colours mixed, in shadow, a little
-  // darker than the paint round it to the eye (in lightness, the cube root
-  // of luminance), the same part of it in a dark coat as in a pale one; and
-  // deeper here, shallower there. (On a coarse screen, where a crack is
-  // hardly a px wide, its colour reaches up to half a device px further out
-  // either side, so it still shows plainly; on a fine one, not at all. And
-  // on a phone's, seen close, only its very middle shows, at most half seen,
-  // a strong crack hardly more than a faint one, so they are all fine lines,
-  // finer than the cells they are marked on.)
-  float dpr = cellPx.x / cellCss;
-  vec2 hp = clamp(1.6 - dpr, 0.0, 0.5) / (cellPx * grid), hc = 0.8 / grid;
-  float cr = max(texture(crack, uv).r, max(
-    max(texture(crack, uv + vec2(hp.x, 0.0)).r, texture(crack, uv - vec2(hp.x, 0.0)).r),
-    max(texture(crack, uv + vec2(0.0, hp.y)).r, texture(crack, uv - vec2(0.0, hp.y)).r)));
+  // A crack, where a device px is coarse, shows the coat under it, deep in
+  // shadow: as much darker than the paint round it to the eye (in
+  // lightness, the cube root of luminance) in a dark coat as in a pale one,
+  // so it shows in a dark coat too, even over a pale one.
+  // Where a device px is fine (fine, 1), as on a phone, a crack so drawn is
+  // bold: there it is a fine gap instead, the coat under it half seen at its
+  // bottom, its broken edges in its own, their colours mixed, in shadow, a
+  // little darker than the paint round it, the same part of it in a dark
+  // coat as in a pale one, deeper here, shallower there; and only its very
+  // middle shows, at most half seen, a strong crack hardly more than a faint
+  // one, so they are all fine lines, finer than the cells they are marked on.
+  vec2 hc = 0.8 / grid;
+  float cr = texture(crack, uv).r;
   float peak = max(cr, max(
     max(texture(crack, uv + vec2(hc.x, 0.0)).r, texture(crack, uv - vec2(hc.x, 0.0)).r),
     max(texture(crack, uv + vec2(0.0, hc.y)).r, texture(crack, uv - vec2(0.0, hc.y)).r)));
   vec3 under = lin(paintOf(top + 1));
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
-  float Lc = pow(dot(c, Y), 1.0 / 3.0);
+  float Lc = pow(dot(c, Y), 1.0 / 3.0), Lu = pow(max(dot(under, Y), 1e-4), 1.0 / 3.0);
+  vec3 deepIn = under * pow(min(0.6, max(Lc - 0.4, 0.06) / Lu), 3.0);
   vec3 gap = mix(c, under, 0.5);
-  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = mix(smoothstep(0.3, 0.8, min(cr * cellCss, 1.0)),
-    smoothstep(0.75, 0.95, cr / max(peak, 0.01)) * 0.55 * smoothstep(0.15, 0.9, peak * cellCss), fine);
+  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0);
   float deep = 0.55 + 0.25 * vnoise(p * 0.15 + wallSeed) + 0.2 * vnoise(p * 0.7 + 50.0);
-  c = mix(c, gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0), inCrack);
+  vec3 fineGap = gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0);
+  float inCrack = mix(smoothstep(0.15, 0.85, cr),
+    smoothstep(0.75, 0.95, cr / max(peak, 0.01)) * 0.55 * smoothstep(0.15, 0.9, peak * cellCss), fine);
+  c = mix(c, mix(deepIn, fineGap, fine), inCrack);
 
-  // the surface (its slope taken over a cell either side; on a phone's fine
-  // screen over half a cell, so a crack's groove is as fine as it is)
+  // the surface (its slope taken over a cell either side; where a device px
+  // is fine, over half a cell, so a crack's groove is as fine as it is)
   float e = mix(1.0, 0.5, fine);
   vec2 g = vec2(heightAt(q + vec2(e, 0.0)) - heightAt(q - vec2(e, 0.0)),
                 heightAt(q + vec2(0.0, e)) - heightAt(q - vec2(0.0, e))) / (2.0 * e * cellCss);
@@ -463,10 +465,10 @@ void main() {
   // the light and shade of the relief, as a part of the paint's colour, and
   // a little of it on its own besides: so a crack's lips catch the light and
   // its groove is in shadow as plainly in a dark coat as in a pale one. (But
-  // not in the crack itself, its colour already deep in shadow: that would
-  // make it black, as a screen fine enough to show its floor shows.)
-  float shade = dif * (1.0 - 0.7 * sh);
-  vec3 lit = max(c * mix(0.3 + 0.7 * shade, 0.55 + 0.45 * shade, inCrack) + 0.09 * (shade - 1.0) * (1.0 - inCrack) + spec * (1.0 - sh), 0.0);
+  // where a device px is fine, not in a crack itself, its colour in shadow
+  // already: that would make it black.)
+  float shade = dif * (1.0 - 0.7 * sh), own = fine * inCrack;
+  vec3 lit = max(c * mix(0.3 + 0.7 * shade, 0.55 + 0.45 * shade, own) + 0.09 * (shade - 1.0) * (1.0 - own) + spec * (1.0 - sh), 0.0);
   o = vec4(pow(lit, vec3(1.0 / 2.2)), 1.0);
 }`;
   // The lit wall onto the screen: in the light of a lamp up beyond the top
@@ -576,14 +578,14 @@ void main() {
         gl.uniform1f(u.unit, unit);
         gl.uniform1f(u.wallSeed, seed % 1000);
         gl.uniform1f(u.viewH, CPH);
-        // (on a phone's fine screen, seen close, a crack drawn finer, and its
-        // groove and the lips cupped up beside it shallower, so its light and
-        // shade are as fine as it is there; on a fine screen on a desk, seen
-        // from further, three quarters as much so)
-        const fine = clamp(cellPx[0] / cellCss - 1, 0, 1) * (touch ? 1 : 0.75), relief = 1 - 0.75 * fine;
+        // (where a device px is fine, of 2 to the css px or more, as on a
+        // phone, a crack drawn finer, and its groove and the lips cupped up
+        // beside it much shallower, so its light and shade are as fine as it
+        // is: FINE_GROOVE and FINE_CUP of their depth)
+        const fine = clamp((window.devicePixelRatio || 1) - 1, 0, 1);
         gl.uniform1f(u.fine, fine);
-        gl.uniform1f(u.liftMax, LIFT * relief);
-        gl.uniform1f(u.groove, GROOVE * relief);
+        gl.uniform1f(u.liftMax, LIFT * (1 - fine + fine * FINE_CUP));
+        gl.uniform1f(u.groove, GROOVE * (1 - fine + fine * FINE_GROOVE));
         gl.uniform1f(u.brushH, BRUSH);
         gl.uniform1f(u.shadowStep, SHADOW / 12);
         gl.uniform1f(u.aa, clamp(0.6 / cellPx[0], 0.05, 0.5));
