@@ -414,15 +414,20 @@ void main() {
   // the brush strokes show a little in the colour too
   float b0 = brush(p, top);
   c *= 0.97 + 0.06 * b0;
-  // a crack shows the coat under it, deep in shadow: as much darker than the
-  // paint round it to the eye (in lightness, the cube root of luminance) in
-  // a dark coat as in a pale one, so it shows in a dark coat too, even over
-  // a pale one
-  float cr = texture(crack, uv).r;
+  // a crack shows the coat under it, in shadow: darker than the paint round
+  // it to the eye (in lightness, the cube root of luminance) by as much in a
+  // pale coat as in a mid one, and by half in a dark one, so it shows in a
+  // dark coat too, even over a pale one; grey, never black. (Its colour
+  // reaches half a device px further out either side, so on a coarse
+  // screen, where a crack is hardly a px wide, it still shows plainly.)
+  vec2 hp = 0.5 / (cellPx * grid);
+  float cr = max(texture(crack, uv).r, max(
+    max(texture(crack, uv + vec2(hp.x, 0.0)).r, texture(crack, uv - vec2(hp.x, 0.0)).r),
+    max(texture(crack, uv + vec2(0.0, hp.y)).r, texture(crack, uv - vec2(0.0, hp.y)).r)));
   vec3 under = lin(paintOf(top + 1));
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
   float Lc = pow(dot(c, Y), 1.0 / 3.0), Lu = pow(max(dot(under, Y), 1e-4), 1.0 / 3.0);
-  float dim = pow(min(0.6, max(Lc - 0.4, 0.06) / Lu), 3.0), inCrack = smoothstep(0.15, 0.85, cr);
+  float dim = pow(min(0.75, max(Lc - 0.25, 0.5 * Lc) / Lu), 3.0), inCrack = smoothstep(0.15, 0.85, cr);
   c = mix(c, under * dim, inCrack);
 
   // the surface
@@ -449,7 +454,7 @@ void main() {
   // not in the crack itself, its colour already deep in shadow: that would
   // make it black, as a screen fine enough to show its floor shows.)
   float shade = dif * (1.0 - 0.7 * sh);
-  vec3 lit = max(c * (0.3 + 0.7 * shade) + 0.09 * (shade - 1.0) * (1.0 - inCrack) + spec * (1.0 - sh), 0.0);
+  vec3 lit = max(c * mix(0.3 + 0.7 * shade, 0.55 + 0.45 * shade, inCrack) + 0.09 * (shade - 1.0) * (1.0 - inCrack) + spec * (1.0 - sh), 0.0);
   o = vec4(pow(lit, vec3(1.0 / 2.2)), 1.0);
 }`;
   // The lit wall onto the screen: in the light of a lamp up beyond the top
