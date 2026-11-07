@@ -3,15 +3,16 @@
 // play it for the same seed, and write it to stdout as a stereo 32-bit float WAV.
 //
 //   node scripts/render-music.cjs [--page P] [--seed N] [--seconds S]
-//                                 [--pours F] [--from S] > music.wav
+//                                 [--events F] [--from S] > music.wav
 //
 //   page   the painting (default pollock-dreams.html); its music is the
 //          *-music.js it loads, at the master LEVEL given there
 //   seed   the seed given to render-frames.cjs: the page's own seed is the
 //          first Math.random() it draws from it
-//   pours  how the painting poured, as render-frames.cjs writes it, for music
-//          that hears the paint (pour-music.js): it gurgles in time with the
-//          video, a video second v being music second from + v
+//   events what the painting did, as render-frames.cjs writes it, for music
+//          that hears it: the paint poured (pour-music.js) gurgles, the
+//          wall's wind blows and its cracks crackle (wall-music.js), in time
+//          with the video, a video second v being music second from + v
 //   from   where the video starts in the music (default 0)
 //
 // Needs playwright-core (NODE_PATH) and chromium.
@@ -23,7 +24,7 @@ const args = Object.fromEntries(process.argv.slice(2).join(' ').split('--').filt
   .map(s => s.trim().split(/\s+/)).map(([k, v]) => [k, isNaN(v) ? v : Number(v)]));
 const pageName = args.page ?? 'pollock-dreams.html';
 const seed = args.seed ?? 1, seconds = args.seconds ?? 60, from = args.from ?? 0, SR = 48000;
-const pours = args.pours ? JSON.parse(fs.readFileSync(args.pours, 'utf8')) : [];
+const events = args.events ? JSON.parse(fs.readFileSync(args.events, 'utf8')) : [];
 const root = path.resolve(__dirname, '..');
 
 const html = fs.readFileSync(path.join(root, pageName), 'utf8');
@@ -53,7 +54,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
   for (const file of ['pollock.js', musicFile]) await page.addScriptTag({ path: path.join(root, file) });
 
   // the player's chain, without its fade in: a limiter as a safety net and the master gain
-  const b64 = await page.evaluate(async ({ musicName, pageSeed, seconds, level, ahead, SR, pours, from }) => {
+  const b64 = await page.evaluate(async ({ musicName, pageSeed, seconds, level, ahead, SR, events, from }) => {
     const ac = new OfflineAudioContext(2, Math.round(seconds * SR), SR);
     const limit = ac.createDynamicsCompressor();
     limit.threshold.value = -3; limit.knee.value = 0; limit.ratio.value = 20;
@@ -63,8 +64,11 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
     master.gain.value = level;
     master.connect(limit);
     const music = eval(musicName).graph(ac, pageSeed, master), at = music.time?.(); // a WAV second w is music second w + at
-    if (music.pour) for (const [t, dt, flow, pan, fresh] of pours)
-      if (from + t < seconds) music.pour(from + t + at, dt, { flow, pan, fresh });
+    for (const [t, type, d] of events) {
+      if (from + t >= seconds) continue;
+      if (type === 'pour' && music.pour) music.pour(from + t + at, d.dt, d);
+      if (type === 'wall' && music.hear) music.hear(from + t + at, d);
+    }
     music.schedule(seconds + ahead);
     const buf = await ac.startRendering();
     const L = buf.getChannelData(0), R = buf.getChannelData(1), out = new Float32Array(L.length * 2);
@@ -73,7 +77,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
     const bytes = new Uint8Array(out.buffer);
     for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return btoa(s);
-  }, { musicName, pageSeed, seconds, level, ahead, SR, pours, from });
+  }, { musicName, pageSeed, seconds, level, ahead, SR, events, from });
   await browser.close();
 
   const data = Buffer.from(b64, 'base64'), wav = Buffer.alloc(44);

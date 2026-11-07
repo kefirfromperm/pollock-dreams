@@ -3,14 +3,17 @@
 // frames to stdout as a PNG stream (for ffmpeg -f image2pipe).
 //
 //   node scripts/render-frames.cjs [--page P] [--seed N] [--seconds S] [--fps F]
-//                                  [--width W] [--height H] [--skip S] [--pours F]
+//                                  [--width W] [--height H] [--skip S] [--events F]
 //
 //   page   the painting (default pollock-dreams.html)
 //   skip   seconds painted before the first frame is written (default 0)
-//   pours  a JSON file to write how the painting poured (its pour events:
-//          [video seconds, dt, flow, pan, fresh] each frame), for
-//          render-music.cjs to gurgle in time with the video
+//   events a JSON file to write what the painting did each frame, for music
+//          that hears it: how it poured (its pour events) or what the wall
+//          did (its wall events), as [video seconds, type, detail], for
+//          render-music.cjs to play in time with the video
 //
+// A painting of more than one canvas (The Wall's flying bits over it) is
+// written as they are stacked.
 // The page's clock (performance.now, requestAnimationFrame) is replaced, so
 // every frame advances exactly 1/fps seconds however long it takes to draw,
 // and Math.random is seeded, so one seed always gives the same painting.
@@ -24,7 +27,7 @@ const args = Object.fromEntries(process.argv.slice(2).join(' ').split('--').filt
   .map(s => s.trim().split(/\s+/)).map(([k, v]) => [k, isNaN(v) ? v : Number(v)]));
 const pageName = args.page ?? 'pollock-dreams.html';
 const seed = args.seed ?? 1, seconds = args.seconds ?? 600, fps = args.fps ?? 30;
-const width = args.width ?? 1920, height = args.height ?? 1080, skip = args.skip ?? 0, poursFile = args.pours;
+const width = args.width ?? 1920, height = args.height ?? 1080, skip = args.skip ?? 0, eventsFile = args.events;
 const frames = Math.round(seconds * fps), root = path.resolve(__dirname, '..');
 const webgl = /getContext\('webgl/.test(fs.readFileSync(path.join(root, pageName), 'utf8'));
 
@@ -62,11 +65,24 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       q.forEach(f => f(now));
     };
     window.__skip = (ms, n) => { for (let i = 0; i < n; i++) step(ms); };
-    window.__pours = [];
-    addEventListener('pour', ({ detail: d }) => window.__pours.push([now / 1000, d.dt, d.flow, d.pan, d.fresh]));
+    window.__events = [];
+    for (const type of ['pour', 'wall'])
+      addEventListener(type, ({ detail }) => window.__events.push([now / 1000, type, detail]));
+    // a WebGL canvas kept as it was last drawn, to be read between frames
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, opts) {
+      return getContext.call(this, type, /webgl/.test(type) ? { ...opts, preserveDrawingBuffer: true } : opts);
+    };
+    let flat;
     window.__frame = ms => {
       step(ms);
-      return document.getElementById('c').toDataURL('image/png').slice(22);
+      const canvases = [...document.querySelectorAll('canvas')];
+      if (canvases.length === 1) return canvases[0].toDataURL('image/png').slice(22);
+      const [c] = canvases;
+      flat ??= Object.assign(document.createElement('canvas'), { width: c.width, height: c.height });
+      const x = flat.getContext('2d');
+      for (const k of canvases) x.drawImage(k, 0, 0);
+      return flat.toDataURL('image/png').slice(22);
     };
     addEventListener('DOMContentLoaded', () => {
       const s = document.createElement('style');
@@ -88,11 +104,11 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       process.stderr.write(`frame ${f}/${frames}  ${el.toFixed(0)} s elapsed, ~${(el / (f + 1) * (frames - f) / 60).toFixed(0)} min left\n`);
     }
   }
-  if (poursFile) {
+  if (eventsFile) {
     // frame f, at f / fps in the video, shows the painting at skip + (f + 1) / fps
-    const pours = (await page.evaluate(() => window.__pours))
-      .map(([t, ...p]) => [+(t - skip - 1 / fps).toFixed(4), ...p]);
-    fs.writeFileSync(poursFile, JSON.stringify(pours));
+    const events = (await page.evaluate(() => window.__events))
+      .map(([t, ...e]) => [+(t - skip - 1 / fps).toFixed(4), ...e]);
+    fs.writeFileSync(eventsFile, JSON.stringify(events));
   }
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });

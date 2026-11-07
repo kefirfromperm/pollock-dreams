@@ -6,12 +6,15 @@
 #
 #   seconds  length of each reel (default 45)
 #   outdir   where the MP4s go (default reels)
-#   page     which paintings (default all three)
+#   page     which paintings (default all four)
 #
 # Each painting uses the seed of its preview in the gallery. Pour Dreams fills
-# its canvas slowly, so its reel starts once it has been painting for a while;
-# the music starts past its quiet opening, so a short reel isn't all intro.
-# Pour Dreams' paint gurgles in the music as it is poured, where it is poured.
+# its canvas slowly, so its reel starts once it has been painting for a while,
+# and The Wall once it has peeled for as long as its preview, a few coats
+# deep; the music starts past its quiet opening, so a short reel isn't all
+# intro. Pour Dreams' paint gurgles in the music as it is poured, where it is
+# poured; The Wall's wind blows as it blows the bits off, and its cracks
+# crackle where they crack.
 # Needs node, ffmpeg (libx264) and chromium; playwright-core is installed into
 # a temporary directory if it can't be found.
 set -euo pipefail
@@ -25,7 +28,8 @@ fps=30 music_from=30
 # page seed skip
 REELS="pollock-dreams 7 0
 rectangle-dreams 23 0
-pour-dreams 5 90"
+pour-dreams 5 90
+the-wall 5 720"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -39,15 +43,15 @@ mkdir -p "$outdir"
 reel() {
   local page=$1 seed=$2 skip=$3 out="$outdir/$1-reel-$2.mp4"
   local fade_out=$((seconds - 3))
-  # the picture first, noting how the painting pours, so the music can gurgle with it
+  # the picture first, noting what the painting does, so the music can hear it
   node "$root/scripts/render-frames.cjs" --page "$page.html" --seed "$seed" --seconds "$seconds" --fps "$fps" \
-      --width 1080 --height 1920 --skip "$skip" --pours "$tmp/$page.json" |
+      --width 1080 --height 1920 --skip "$skip" --events "$tmp/$page.json" |
     ffmpeg -hide_banner -loglevel error -y -f image2pipe -framerate "$fps" -c:v png -i - \
       -vf "fade=t=in:st=0:d=1,fade=t=out:st=$fade_out:d=3" \
       -c:v libx264 -preset slow -crf 17 -maxrate 25M -bufsize 50M -profile:v high -pix_fmt yuv420p \
       "$tmp/$page.mp4"
   node "$root/scripts/render-music.cjs" --page "$page.html" --seed "$seed" --seconds $((music_from + seconds)) \
-      --pours "$tmp/$page.json" --from "$music_from" > "$tmp/$page.wav"
+      --events "$tmp/$page.json" --from "$music_from" > "$tmp/$page.wav"
   ffmpeg -hide_banner -loglevel error -y -i "$tmp/$page.mp4" -ss "$music_from" -i "$tmp/$page.wav" \
       -map 0:v -map 1:a -shortest -c:v copy \
       -af "afade=t=in:st=0:d=1.5,afade=t=out:st=$fade_out:d=3" \
