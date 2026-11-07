@@ -421,8 +421,9 @@ void main() {
   // deeper here, shallower there. (On a coarse screen, where a crack is
   // hardly a px wide, its colour reaches up to half a device px further out
   // either side, so it still shows plainly; on a fine one, not at all, and
-  // only its middle shows, the more of its own strength, so it is finer
-  // than the cells it is marked on.)
+  // only its very middle shows, at most half seen, a strong crack hardly
+  // more than a faint one, so they are all fine lines, finer than the cells
+  // they are marked on.)
   float dpr = cellPx.x / cellCss, fine = clamp(dpr - 1.0, 0.0, 1.0);
   vec2 hp = clamp(1.6 - dpr, 0.0, 0.5) / (cellPx * grid), hc = 0.8 / grid;
   float cr = max(texture(crack, uv).r, max(
@@ -436,7 +437,7 @@ void main() {
   float Lc = pow(dot(c, Y), 1.0 / 3.0);
   vec3 gap = mix(c, under, 0.5);
   float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = mix(smoothstep(0.3, 0.8, cr),
-    smoothstep(0.6, 0.9, cr / max(peak, 0.01)) * smoothstep(0.3, 0.8, peak), fine);
+    smoothstep(0.75, 0.95, cr / max(peak, 0.01)) * 0.55 * smoothstep(0.15, 0.9, peak), fine);
   float deep = 0.55 + 0.25 * vnoise(p * 0.15 + wallSeed) + 0.2 * vnoise(p * 0.7 + 50.0);
   c = mix(c, gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0), inCrack);
 
@@ -577,7 +578,7 @@ void main() {
         gl.uniform1f(u.viewH, CPH);
         // (a crack's groove and the lips cupped up beside it shallower on a
         // fine screen, so its light and shade are as fine as it is there)
-        const relief = 1 - 0.4 * clamp(cellPx[0] / cellCss - 1, 0, 1);
+        const relief = 1 - 0.75 * clamp(cellPx[0] / cellCss - 1, 0, 1);
         gl.uniform1f(u.liftMax, LIFT * relief);
         gl.uniform1f(u.groove, GROOVE * relief);
         gl.uniform1f(u.brushH, BRUSH);
