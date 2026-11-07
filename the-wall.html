@@ -110,8 +110,9 @@
   // longer it has been bared, by SHRINK0 + (seconds since)/SHRINK_T (of its
   // strength, as that is on average). Its strength fluctuates, by STRONG on
   // scales of about JAG css px, RELAX U and PATCH U, so it cracks
-  // irregularly. A crack lets the paint either side of it shrink across it:
-  // at its lips nothing is left of the stress across it, and that comes back
+  // irregularly. A crack lets the paint either side of it shrink across it,
+  // as soon as it runs there (so of two cracks running side by side, one
+  // turns into the other or stops): at its lips nothing is left of the stress across it, and that comes back
   // about RELAX U from it (as e^(−d/RELAX)); along it the paint is stretched
   // as ever. (Nothing else lets it shrink: the coat goes on for ever beyond
   // the wall's edge and under the coat above, and is as stretched round a
@@ -700,9 +701,10 @@ void main() {
       touched(x0, y0, x1, y1);
     }
     function tip(x, y, th, w, k, grace) {
+      relieve(x, y, th, k, 2);
       return { x, y, th, w, k, grace, speed: (CRACK_SPEED[0] + rng() * (CRACK_SPEED[1] - CRACK_SPEED[0])) * Uc, pace: 1,
         course: th, trail: [x, y, th], trailD: 0, // (where it has run, every 2 cells: x, y, heading)
-        pend: [x, y, th], pendAt: 0, // (and of that what doesn't relieve the paint yet)
+        fresh: [x, y, th], mate: null, // (and of that its last LAG, which it doesn't feel)
         bent: [[x, y]], bendD: 0 }; // (where it was lately, every 2 cells, and how far since it last turned sharply)
     }
     const cellAt = (x, y) => clamp(Math.floor(y), 0, GH - 1) * GW + clamp(Math.floor(x), 0, GW - 1);
@@ -748,6 +750,7 @@ void main() {
       K0[j] = s * 0.005;
     }
     const RREACH = 3 * relax, rcells = Math.ceil(RREACH / RS);
+    const kernel = r => K0[Math.min(350, Math.round(Math.max(r, 0.5 * RS) / relax * 100))];
     function relieve(x, y, th, k, ds) {
       const nx = -Math.sin(th), ny = Math.cos(th), a = ds / (Math.PI * relax);
       const gx = x / RS - 0.5, gy = y / RS - 0.5, ix = Math.round(gx), iy = Math.round(gy);
@@ -760,13 +763,15 @@ void main() {
             if (dep[cellAt(cx * RS + RS / 2, cy * RS + RS / 2)] !== k) continue;
             Rk[c] = k; Rxx[c] = 0; Rxy[c] = 0; Ryy[c] = 0;
           }
-          const v = a * K0[Math.min(350, Math.round(Math.max(r, 0.5 * RS) / relax * 100))];
+          const v = a * kernel(r);
           Rxx[c] += v * nx * nx; Rxy[c] += v * nx * ny; Ryy[c] += v * ny * ny;
         }
     }
     // The stress in coat k at (x, y), of how stretched it is unrelieved: L1
     // across the way it is most relieved, heading PHI, and L2 along it, the
     // greatest (none where it is relieved more than all of it)
+    // (as the tip felt, ownOf, feels it: all of it but what its own crack's
+    // last LAG relieves; see grow)
     let L1 = 1, L2 = 1, PHI = 0;
     function stress(x, y, k) {
       const gx = clamp(x / RS - 0.5, 0, RW - 1.001), gy = clamp(y / RS - 0.5, 0, RH - 1.001);
@@ -777,9 +782,33 @@ void main() {
         if (Rk[j] !== k) continue;
         const w = (e & 1 ? fx : 1 - fx) * (e >> 1 ? fy : 1 - fy);
         a += w * Rxx[j]; b += w * Rxy[j]; c += w * Ryy[j];
+        if (ownOf) { own(j); a -= w * Oxx[j]; b -= w * Oxy[j]; c -= w * Oyy[j]; }
       }
       const m = (a + c) / 2, d = Math.hypot((a - c) / 2, b);
-      L1 = Math.max(0, 1 - m - d); L2 = Math.max(0, 1 - m + d); PHI = 0.5 * Math.atan2(2 * b, a - c);
+      L1 = clamp(1 - m - d, 0, 1); L2 = clamp(1 - m + d, 0, 1); PHI = 0.5 * Math.atan2(2 * b, a - c);
+    }
+    // What the last LAG of tip t's crack relieves (its own, and its mate's,
+    // the other end of the same crack, where that began with it), at the
+    // relief's grid nodes as they are needed, worked out again whenever
+    // that changes (freshV)
+    let ownOf = null, ownV = -1, ownStamp = 0, freshV = 0;
+    const ownAt = new Int32Array(RW * RH), Oxx = new Float32Array(RW * RH), Oxy = new Float32Array(RW * RH), Oyy = new Float32Array(RW * RH);
+    function feel(t) {
+      if (t === ownOf && ownV === freshV) return;
+      ownOf = t; ownV = freshV; ownStamp++;
+    }
+    function own(j) {
+      if (ownAt[j] === ownStamp) return;
+      ownAt[j] = ownStamp;
+      const cx = j % RW, cy = (j / RW) | 0, a = 2 / (Math.PI * relax);
+      let xx = 0, xy = 0, yy = 0;
+      for (const t of [ownOf, ownOf.mate]) if (t) for (let p = 0; p < t.fresh.length; p += 3) {
+        const r = Math.hypot(cx - (t.fresh[p] / RS - 0.5), cy - (t.fresh[p + 1] / RS - 0.5)) * RS;
+        if (r > RREACH) continue;
+        const v = a * kernel(r), nx = -Math.sin(t.fresh[p + 2]), ny = Math.cos(t.fresh[p + 2]);
+        xx += v * nx * nx; xy += v * nx * ny; yy += v * ny * ny;
+      }
+      Oxx[j] = xx; Oxy[j] = xy; Oyy[j] = yy;
     }
     // …across a crack heading th
     function across(x, y, th, k) {
@@ -795,7 +824,8 @@ void main() {
     // ahead that way. (The paint beyond the wall's edge is as it is at it.)
     const AHEAD = [[1.5, 1], [JAG / cellCss, 0.8], [2 * JAG / cellCss, 0.5]];
     let WAY = 0, OVER = 0;
-    function steer(x, y, th, k, weak, turn, n, s0) {
+    function steer(x, y, th, k, weak, turn, n, s0, who = null) {
+      feel(who);
       let best = -Infinity;
       WAY = th; OVER = -1;
       for (let j = -n; j <= n; j++) {
@@ -843,7 +873,7 @@ void main() {
         if (endAt >= ends.length) endAt = 0;
         const t = ends[endAt];
         if (!onCrack(t.x, t.y, t.k)) { drop(ends, endAt); continue; }
-        steer(t.x, t.y, t.course, t.k, TIP, 0.5, 4, shrink(cellAt(t.x, t.y)));
+        steer(t.x, t.y, t.course, t.k, TIP, 0.5, 4, shrink(cellAt(t.x, t.y)), t);
         if (OVER <= 0) { endAt++; continue; }
         drop(ends, endAt);
         t.grace = t.w + 2;
@@ -864,6 +894,7 @@ void main() {
       // begun where the paint picked is the most over its strength, or the
       // least under it)
       const first = !begun && clock >= FIRST;
+      feel(null);
       let bx = 0, by = 0, bOver = -Infinity;
       for (let m = 0; m < SAMPLES + (first ? 1 : 0) && tips.length < MAX_TIPS - 1; m++) {
         const last = m === SAMPLES;
@@ -887,26 +918,25 @@ void main() {
         // (across the greatest stress; any way where it is the same every way)
         const th = l2 - l1 > 0.05 ? phi : rng() * TAU;
         const w = (CRACK_WIDTH[0] + rng() * (CRACK_WIDTH[1] - CRACK_WIDTH[0])) / cellCss * (0.6 + 0.4 * l1 / l2);
-        tips.push(tip(x, y, th, w, k, 4), tip(x, y, th + Math.PI, w, k, 4)); // (clear of each other before they may join anything)
+        const a = tip(x, y, th, w, k, 4), b = tip(x, y, th + Math.PI, w, k, 4); // (clear of each other before they may join anything)
+        a.mate = b; b.mate = a;
+        tips.push(a, b);
         begun = true;
       }
     }
 
     const STEP = 0.7; // cells
-    // A crack relieves the paint only well behind its tip, LAG cells: the
-    // tip goes on the way the stress round it, not its own, takes it
+    // A crack relieves the paint as it runs, right up to its tip, and every
+    // other crack, and any about to begin, feels that at once: two can't
+    // run on side by side, each in the other's relief, but one turns into
+    // the other or stops. Its own tip, though, doesn't feel its last LAG
+    // cells (nor its mate's, the other end of the crack, near where they
+    // began): it goes on the way the stress round it, not its own, takes
+    // it, as at a real tip, where the stress is the greatest
     const LAG = 2 * relax;
-    function relieveBehind(t, all) {
-      const p = t.pend;
-      while (t.pendAt < p.length && (all || (p.length - t.pendAt) / 3 * 2 > LAG)) {
-        relieve(p[t.pendAt], p[t.pendAt + 1], p[t.pendAt + 2], t.k, 2);
-        t.pendAt += 3;
-      }
-      if (t.pendAt > 3000) { p.splice(0, t.pendAt); t.pendAt = 0; }
-    }
     // (where it ends running into a crack or an edge, it may close a ring)
     function end(t) {
-      relieveBehind(t, true);
+      t.fresh.length = 0; freshV++; // (its mate feels all of it now)
       enclose(t);
       return false;
     }
@@ -934,7 +964,7 @@ void main() {
       while (left > 0) {
         const ds = Math.min(STEP, left);
         left -= ds;
-        steer(t.x, t.y, t.course, t.k, TIP, 0.5, 4, shrink(cellAt(t.x, t.y)));
+        steer(t.x, t.y, t.course, t.k, TIP, 0.5, 4, shrink(cellAt(t.x, t.y)), t);
         // nowhere the stress is over the paint's strength at its tip: it
         // stops, and waits there for the stress to grow
         if (OVER <= 0) { keepWeak(ends, t); return false; }
@@ -964,8 +994,11 @@ void main() {
         if ((t.trailD += ds) > 2) {
           t.trailD = 0;
           if (t.trail.length < 6000) t.trail.push(nx, ny, t.th);
-          t.pend.push(nx, ny, t.th);
-          relieveBehind(t, false);
+          relieve(nx, ny, t.th, t.k, 2);
+          const f = t.fresh;
+          f.push(nx, ny, t.th);
+          if (f.length / 3 * 2 > LAG) f.splice(0, 3);
+          freshV++;
           // a sharp turn, within bendLen: the paint on the outside of it,
           // halfway between the way it came and the way it goes, weaker
           const b = t.bent;
