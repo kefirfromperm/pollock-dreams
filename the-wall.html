@@ -155,7 +155,7 @@
   // the paint: its highest lift (as LIFT, to scale the rest), a crack's
   // groove and how far the paint cups up beside it, css px
   const LIT_FPS = 30;
-  const LIFT = 4, GROOVE = 1.6, CUP = 0.45, CUP_WIDTH = 1.8, BRUSH = 0.18;
+  const LIFT = 4, GROOVE = 0.7, CUP = 0.2, CUP_WIDTH = 1.8, BRUSH = 0.18;
   const LIGHT = (() => { const v = [-0.6, -0.7, 0.62], l = Math.hypot(...v); return v.map(c => c / l); })(); // y down
 
   // The canvas is as canvasSize gives it: on a touch device a square as wide
@@ -414,21 +414,24 @@ void main() {
   // the brush strokes show a little in the colour too
   float b0 = brush(p, top);
   c *= 0.97 + 0.06 * b0;
-  // a crack shows the coat under it, in shadow: darker than the paint round
-  // it to the eye (in lightness, the cube root of luminance) by as much in a
-  // pale coat as in a mid one, and by half in a dark one, so it shows in a
-  // dark coat too, even over a pale one; grey, never black. (Its colour
-  // reaches half a device px further out either side, so on a coarse
-  // screen, where a crack is hardly a px wide, it still shows plainly.)
+  // a crack is a fine gap, the coat under it half seen at its bottom, its
+  // broken edges in its own: their colours mixed, in shadow, a little
+  // darker than the paint round it to the eye (in lightness, the cube root
+  // of luminance), the same part of it in a dark coat as in a pale one; and
+  // deeper here, shallower there. (Its colour reaches half a device px
+  // further out either side, so on a coarse screen, where a crack is hardly
+  // a px wide, it still shows plainly.)
   vec2 hp = 0.5 / (cellPx * grid);
   float cr = max(texture(crack, uv).r, max(
     max(texture(crack, uv + vec2(hp.x, 0.0)).r, texture(crack, uv - vec2(hp.x, 0.0)).r),
     max(texture(crack, uv + vec2(0.0, hp.y)).r, texture(crack, uv - vec2(0.0, hp.y)).r)));
   vec3 under = lin(paintOf(top + 1));
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
-  float Lc = pow(dot(c, Y), 1.0 / 3.0), Lu = pow(max(dot(under, Y), 1e-4), 1.0 / 3.0);
-  float dim = pow(min(0.75, max(Lc - 0.25, 0.5 * Lc) / Lu), 3.0), inCrack = smoothstep(0.15, 0.85, cr);
-  c = mix(c, under * dim, inCrack);
+  float Lc = pow(dot(c, Y), 1.0 / 3.0);
+  vec3 gap = mix(c, under, 0.5);
+  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = smoothstep(0.15, 0.85, cr);
+  float deep = 0.55 + 0.25 * vnoise(p * 0.15 + wallSeed) + 0.2 * vnoise(p * 0.7 + 50.0);
+  c = mix(c, gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0), inCrack);
 
   // the surface
   float e = 1.0;
