@@ -156,7 +156,7 @@
   // groove and how far the paint cups up beside it, css px
   const LIT_FPS = 30;
   const LIFT = 4, GROOVE = 1.6, CUP = 0.45, CUP_WIDTH = 1.8, BRUSH = 0.18;
-  const FINE_GROOVE = 0.11, FINE_CUP = 0.11;
+  const FINE_GROOVE = 0.11, FINE_CUP = 0.11, FULL_U = Math.sqrt(3840 * 2160), WEIGH_MIN = 0.1;
   const LIGHT = (() => { const v = [-0.6, -0.7, 0.62], l = Math.hypot(...v); return v.map(c => c / l); })(); // y down
 
   // The canvas is as canvasSize gives it: on a touch device a square as wide
@@ -282,7 +282,8 @@ uniform usampler2D depth; // the coat on top, mod 256
 uniform sampler2D crack, lift, palette;
 uniform vec2 grid, cellPx; // grid cells, device px per cell
 uniform float cellCss, viewH, unit, wallSeed; // css px per cell, the canvas's height in device px, U in css px, 0–1000
-uniform float liftMax, groove, brushH, shadowStep, aa, fine; // fine: 0–1, how fine a device px is
+uniform float liftMax, groove, brushH, shadowStep, aa;
+uniform float fine, weigh; // 0–1: how fine a device px is; how strongly a crack is drawn where it is coarse
 uniform vec3 light; // towards the light, y down
 out vec4 o;
 int dAt(ivec2 c) { return int(texelFetch(depth, clamp(c, ivec2(0), ivec2(grid) - 1), 0).r); }
@@ -439,7 +440,7 @@ void main() {
   float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0);
   float deep = 0.55 + 0.25 * vnoise(p * 0.15 + wallSeed) + 0.2 * vnoise(p * 0.7 + 50.0);
   vec3 fineGap = gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0);
-  float inCrack = mix(smoothstep(0.15, 0.85, cr),
+  float inCrack = mix(weigh * smoothstep(0.15, 0.85, cr),
     smoothstep(0.75, 0.95, cr / max(peak, 0.01)) * 0.55 * smoothstep(0.15, 0.9, peak * cellCss), fine);
   c = mix(c, mix(deepIn, fineGap, fine), inCrack);
 
@@ -578,14 +579,20 @@ void main() {
         gl.uniform1f(u.unit, unit);
         gl.uniform1f(u.wallSeed, seed % 1000);
         gl.uniform1f(u.viewH, CPH);
-        // (where a device px is fine, of 2 to the css px or more, as on a
-        // phone, a crack drawn finer, and its groove and the lips cupped up
-        // beside it much shallower, so its light and shade are as fine as it
-        // is: FINE_GROOVE and FINE_CUP of their depth)
-        const fine = clamp((window.devicePixelRatio || 1) - 1, 0, 1);
+        // (A crack is as wide in device px on any screen of a device px to
+        // the css px, so on a smaller one, of fewer of them, it is wider to
+        // the wall: there it is drawn fainter, its groove and the lips cupped
+        // up beside it shallower, by the square of the screen's size in
+        // device px to a 4K one's (weigh), down to WEIGH_MIN. And where a device px is fine, of 2 to the css px or
+        // more, as on a phone, a crack is drawn as a fine line, its groove and
+        // lips FINE_GROOVE and FINE_CUP of their depth, so its light and
+        // shade are as fine as it is.)
+        const dpr = window.devicePixelRatio || 1, fine = clamp(dpr - 1, 0, 1);
+        const weigh = clamp((Math.sqrt(VW * VH) * dpr / FULL_U) ** 2, WEIGH_MIN, 1);
         gl.uniform1f(u.fine, fine);
-        gl.uniform1f(u.liftMax, LIFT * (1 - fine + fine * FINE_CUP));
-        gl.uniform1f(u.groove, GROOVE * (1 - fine + fine * FINE_GROOVE));
+        gl.uniform1f(u.weigh, weigh);
+        gl.uniform1f(u.liftMax, LIFT * ((1 - fine) * weigh + fine * FINE_CUP));
+        gl.uniform1f(u.groove, GROOVE * ((1 - fine) * weigh + fine * FINE_GROOVE));
         gl.uniform1f(u.brushH, BRUSH);
         gl.uniform1f(u.shadowStep, SHADOW / 12);
         gl.uniform1f(u.aa, clamp(0.6 / cellPx[0], 0.05, 0.5));
