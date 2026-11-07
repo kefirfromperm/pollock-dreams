@@ -422,8 +422,8 @@ void main() {
   vec3 under = lin(paintOf(top + 1));
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
   float Lc = pow(dot(c, Y), 1.0 / 3.0), Lu = pow(max(dot(under, Y), 1e-4), 1.0 / 3.0);
-  float dim = pow(min(0.6, max(Lc - 0.4, 0.06) / Lu), 3.0);
-  c = mix(c, under * dim, smoothstep(0.15, 0.85, cr));
+  float dim = pow(min(0.6, max(Lc - 0.4, 0.06) / Lu), 3.0), inCrack = smoothstep(0.15, 0.85, cr);
+  c = mix(c, under * dim, inCrack);
 
   // the surface
   float e = 1.0;
@@ -445,9 +445,11 @@ void main() {
   float spec = 0.05 * pow(max(dot(n, hv), 0.0), 30.0) - 0.05 * pow(hv.z, 30.0);
   // the light and shade of the relief, as a part of the paint's colour, and
   // a little of it on its own besides: so a crack's lips catch the light and
-  // its groove is in shadow as plainly in a dark coat as in a pale one
+  // its groove is in shadow as plainly in a dark coat as in a pale one. (But
+  // not in the crack itself, its colour already deep in shadow: that would
+  // make it black, as a screen fine enough to show its floor shows.)
   float shade = dif * (1.0 - 0.7 * sh);
-  vec3 lit = max(c * (0.3 + 0.7 * shade) + 0.09 * (shade - 1.0) + spec * (1.0 - sh), 0.0);
+  vec3 lit = max(c * (0.3 + 0.7 * shade) + 0.09 * (shade - 1.0) * (1.0 - inCrack) + spec * (1.0 - sh), 0.0);
   o = vec4(pow(lit, vec3(1.0 / 2.2)), 1.0);
 }`;
   // The lit wall onto the screen: in the light of a lamp up beyond the top
