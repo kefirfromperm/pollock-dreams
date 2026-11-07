@@ -578,9 +578,9 @@ void main() {
         gl.uniform1f(u.viewH, CPH);
         // (on a phone's fine screen, seen close, a crack drawn finer, and its
         // groove and the lips cupped up beside it shallower, so its light and
-        // shade are as fine as it is there; a fine screen on a desk, seen
-        // from further, shows it as it is)
-        const fine = touch ? clamp(cellPx[0] / cellCss - 1, 0, 1) : 0, relief = 1 - 0.75 * fine;
+        // shade are as fine as it is there; on a fine screen on a desk, seen
+        // from further, half as much so)
+        const fine = clamp(cellPx[0] / cellCss - 1, 0, 1) * (touch ? 1 : 0.5), relief = 1 - 0.75 * fine;
         gl.uniform1f(u.fine, fine);
         gl.uniform1f(u.liftMax, LIFT * relief);
         gl.uniform1f(u.groove, GROOVE * relief);
