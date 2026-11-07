@@ -418,10 +418,10 @@ void main() {
   // broken edges in its own: their colours mixed, in shadow, a little
   // darker than the paint round it to the eye (in lightness, the cube root
   // of luminance), the same part of it in a dark coat as in a pale one; and
-  // deeper here, shallower there. (Its colour reaches half a device px
-  // further out either side, so on a coarse screen, where a crack is hardly
-  // a px wide, it still shows plainly.)
-  vec2 hp = 0.5 / (cellPx * grid);
+  // deeper here, shallower there. (On a coarse screen, where a crack is
+  // hardly a px wide, its colour reaches up to half a device px further out
+  // either side, so it still shows plainly; on a fine one, not at all.)
+  vec2 hp = clamp(1.6 - cellPx.x / cellCss, 0.0, 0.5) / (cellPx * grid);
   float cr = max(texture(crack, uv).r, max(
     max(texture(crack, uv + vec2(hp.x, 0.0)).r, texture(crack, uv - vec2(hp.x, 0.0)).r),
     max(texture(crack, uv + vec2(0.0, hp.y)).r, texture(crack, uv - vec2(0.0, hp.y)).r)));
@@ -429,7 +429,7 @@ void main() {
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
   float Lc = pow(dot(c, Y), 1.0 / 3.0);
   vec3 gap = mix(c, under, 0.5);
-  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = smoothstep(0.15, 0.85, cr);
+  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = smoothstep(0.3, 0.8, cr);
   float deep = 0.55 + 0.25 * vnoise(p * 0.15 + wallSeed) + 0.2 * vnoise(p * 0.7 + 50.0);
   c = mix(c, gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0), inCrack);
 
