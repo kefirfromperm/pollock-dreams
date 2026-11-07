@@ -420,21 +420,29 @@ void main() {
   // of luminance), the same part of it in a dark coat as in a pale one; and
   // deeper here, shallower there. (On a coarse screen, where a crack is
   // hardly a px wide, its colour reaches up to half a device px further out
-  // either side, so it still shows plainly; on a fine one, not at all.)
-  vec2 hp = clamp(1.6 - cellPx.x / cellCss, 0.0, 0.5) / (cellPx * grid);
+  // either side, so it still shows plainly; on a fine one, not at all, and
+  // only its middle shows, the more of its own strength, so it is finer
+  // than the cells it is marked on.)
+  float dpr = cellPx.x / cellCss, fine = clamp(dpr - 1.0, 0.0, 1.0);
+  vec2 hp = clamp(1.6 - dpr, 0.0, 0.5) / (cellPx * grid), hc = 0.8 / grid;
   float cr = max(texture(crack, uv).r, max(
     max(texture(crack, uv + vec2(hp.x, 0.0)).r, texture(crack, uv - vec2(hp.x, 0.0)).r),
     max(texture(crack, uv + vec2(0.0, hp.y)).r, texture(crack, uv - vec2(0.0, hp.y)).r)));
+  float peak = max(cr, max(
+    max(texture(crack, uv + vec2(hc.x, 0.0)).r, texture(crack, uv - vec2(hc.x, 0.0)).r),
+    max(texture(crack, uv + vec2(0.0, hc.y)).r, texture(crack, uv - vec2(0.0, hc.y)).r)));
   vec3 under = lin(paintOf(top + 1));
   const vec3 Y = vec3(0.2126, 0.7152, 0.0722);
   float Lc = pow(dot(c, Y), 1.0 / 3.0);
   vec3 gap = mix(c, under, 0.5);
-  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = smoothstep(0.3, 0.8, cr);
+  float Lg = pow(max(dot(gap, Y), 1e-4), 1.0 / 3.0), inCrack = mix(smoothstep(0.3, 0.8, cr),
+    smoothstep(0.6, 0.9, cr / max(peak, 0.01)) * smoothstep(0.3, 0.8, peak), fine);
   float deep = 0.55 + 0.25 * vnoise(p * 0.15 + wallSeed) + 0.2 * vnoise(p * 0.7 + 50.0);
   c = mix(c, gap * pow((1.0 - 0.4 * deep) * Lc / Lg, 3.0), inCrack);
 
-  // the surface
-  float e = 1.0;
+  // the surface (its slope taken over a cell either side; on a fine screen
+  // over half a cell, so a crack's groove is as fine as it is)
+  float e = mix(1.0, 0.5, fine);
   vec2 g = vec2(heightAt(q + vec2(e, 0.0)) - heightAt(q - vec2(e, 0.0)),
                 heightAt(q + vec2(0.0, e)) - heightAt(q - vec2(0.0, e))) / (2.0 * e * cellCss);
   g += brushH * vec2(brush(p + vec2(0.7, 0.0), top) - b0, brush(p + vec2(0.0, 0.7), top) - b0) / 0.7;
@@ -567,8 +575,11 @@ void main() {
         gl.uniform1f(u.unit, unit);
         gl.uniform1f(u.wallSeed, seed % 1000);
         gl.uniform1f(u.viewH, CPH);
-        gl.uniform1f(u.liftMax, LIFT);
-        gl.uniform1f(u.groove, GROOVE);
+        // (a crack's groove and the lips cupped up beside it shallower on a
+        // fine screen, so its light and shade are as fine as it is there)
+        const relief = 1 - 0.4 * clamp(cellPx[0] / cellCss - 1, 0, 1);
+        gl.uniform1f(u.liftMax, LIFT * relief);
+        gl.uniform1f(u.groove, GROOVE * relief);
         gl.uniform1f(u.brushH, BRUSH);
         gl.uniform1f(u.shadowStep, SHADOW / 12);
         gl.uniform1f(u.aa, clamp(0.6 / cellPx[0], 0.05, 0.5));
