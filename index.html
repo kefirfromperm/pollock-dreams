@@ -86,11 +86,13 @@
   }
 
   * { box-sizing: border-box; }
-  html { background: var(--floor); }
+  /* the spotlights are wider than a phone. On body alone the clip would pass to the viewport,
+     which phones widen to fit the overflow anyway; with html clipping too, body clips its own box */
+  html { background: var(--floor); overflow-x: clip; }
   body {
     margin: 0; min-height: 100vh;
     display: flex; flex-direction: column;
-    overflow-x: clip; /* the spotlights are wider than a phone */
+    overflow-x: clip;
     color: var(--ink);
     font: 16px/1.5 Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
     /* the wall, darker towards the floor, with a skirting line at the bottom */
