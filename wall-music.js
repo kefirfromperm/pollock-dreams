@@ -3,14 +3,11 @@
 // the same wind that tears the flakes off, so a gust is heard as it is seen,
 // softly; and the paint cracking and the flakes snapping off crackle, from
 // where they are. The wind and the crackle have a switch of their own.
-// The music is a lament, far off in a glen beyond the wall: a big low horn
-// and a muffled barrel drum. Each lament is a ground played three or four
-// times: a motif of three or four notes' lengths, each note of it the motif
-// again, and each of those again, down three or four levels, so the lament
-// is the same shape on every scale, and slow. The drum beats where its spans
-// begin, the larger ones surely, the smaller seldom; the horn is blown in
-// long notes through it, swelling and dying away. Then the players rest,
-// and play another. A gust blowing from the glen carries them nearer.
+// The music is far off in a glen beyond the wall, and keeps no time: four
+// big low horns, each blown when its player pleases in long notes of 40 s to
+// 2 min, swelling and dying away, so none, one or all four may be sounding;
+// and a muffled barrel drum struck now and then, at random. A gust blowing
+// from the glen carries them nearer.
 // Needs pollock.js (mulberry32).
 const WallMusic = (() => {
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -122,8 +119,8 @@ const WallMusic = (() => {
         const lag = Math.max(0, x.side * along) * 0.1; // downwind hears it a little later
         set(x.dark.frequency, 320 + 480 * Math.sqrt(e), 0.5, lag);
         set(x.band.frequency, 420 + 380 * e, 0.6, lag);
-        set(x.body.gain, 0.05 * Math.sqrt(e) / (1 + 0.8 * e) * (1 - 0.2 * x.side * along), 0.35, lag);
-        set(x.breath.gain, 0.012 * e / (1 + e), 0.45, lag);
+        set(x.body.gain, 0.06 * Math.sqrt(e) / (1 + 0.8 * e) * (1 - 0.2 * x.side * along), 0.35, lag);
+        set(x.breath.gain, 0.0145 * e / (1 + e), 0.45, lag);
       }
       // a gust blowing from the glen carries the horn and the drum nearer,
       // brighter; one blowing towards it, further off
@@ -153,49 +150,57 @@ const WallMusic = (() => {
       return { dir, into, carry, tone };
     })();
 
-    // ---- the horn ----
-    // A big low horn, on A at about 57 Hz: brassy, all its harmonics, a
-    // broad bell about 480 Hz, three of it a hair apart so it is wide; its
-    // tone opening as it speaks and as it swells, closing as it fades. It is
-    // blown in long notes, 40–80 s, swelling and ebbing slowly as each is
-    // held, then dying away to nothing; then a moment's rest, the player
-    // getting their breath, and again, as long as the lament goes on.
+    // ---- the horns ----
+    // Four big low horns, on A at about 57 Hz and a fourth, a fifth and an
+    // octave over it, each player choosing their note as they blow: brassy,
+    // all its harmonics, a broad bell about 480 Hz, three of it a hair apart
+    // so it is wide; its tone opening as it speaks and as it swells, closing
+    // as it fades. Each is blown in long notes, 40 s to 2 min, swelling and
+    // ebbing slowly as each is held, then dying away to nothing; then its
+    // player rests as long as they please, and blows again. Nobody keeps
+    // time with anybody: none, one, or all four may be sounding at once.
     const players = gain(0.2, glen.into);
-    const HORN = (452 + rng() * 18) / 8, HORN_G = 1;
-    const hornOut = gain(0, players), hornTone = filter('lowpass', 300, 0.8), bell = filter('peaking', 480, 0.9);
-    bell.gain.value = 5;
-    hornTone.connect(bell).connect(hornOut);
-    const horns = [1, 1.0035, 0.9968].map(r => {
-      const o = osc('sawtooth', HORN * r);
-      o.connect(gain(0.33, hornTone));
-      o.start(t0);
-      return { o, f: HORN * r };
+    const HORN = (452 + rng() * 18) / 8, HORN_G = 0.7;
+    const NOTES = [1, 1, 4 / 3, 3 / 2, 2];
+    const horns = [0, 1, 2, 3].map(() => {
+      const out = gain(0, players), tone = filter('lowpass', 300, 0.8), bell = filter('peaking', 480, 0.9);
+      bell.gain.value = 5;
+      tone.connect(bell).connect(out);
+      const reeds = [1, 1.0035, 0.9968].map(r => {
+        const o = osc('sawtooth', HORN * r);
+        o.connect(gain(0.33, tone));
+        o.start(t0);
+        return { o, r };
+      });
+      return { out, tone, reeds, f: HORN, g: HORN_G };
     });
-    // the horn speaking: scooping up to its note, a brassy edge at once,
-    // settling, then swelling slowly
-    function hornIn(at) {
-      for (const h of horns) {
-        h.o.frequency.setValueAtTime(h.f * 0.95, at);
-        h.o.frequency.setTargetAtTime(h.f, at, 0.07);
+    // the horn speaking on its note f: scooping up to it, a brassy edge at
+    // once, settling, then swelling slowly
+    function hornIn(h, at, f, g) {
+      h.f = f; h.g = g;
+      for (const x of h.reeds) {
+        x.o.frequency.cancelScheduledValues(at);
+        x.o.frequency.setValueAtTime(f * x.r * 0.95, at);
+        x.o.frequency.setTargetAtTime(f * x.r, at, 0.07);
       }
-      hornOut.gain.setTargetAtTime(HORN_G, at, 0.08);
-      hornOut.gain.setTargetAtTime(HORN_G * 1.3, at + 0.6, 4);
-      hornTone.frequency.setTargetAtTime(1900, at, 0.04);
-      hornTone.frequency.setTargetAtTime(800, at + 0.2, 0.5);
-      hornTone.frequency.setTargetAtTime(1150, at + 1.5, 4);
+      h.out.gain.setTargetAtTime(g, at, 0.08);
+      h.out.gain.setTargetAtTime(g * 1.3, at + 0.6, 4);
+      h.tone.frequency.setTargetAtTime(1900, at, 0.04);
+      h.tone.frequency.setTargetAtTime(800, at + 0.2, 0.5);
+      h.tone.frequency.setTargetAtTime(1150, at + 1.5, 4);
     }
     // the horn, held, swelling or ebbing slowly to k of its level
-    function hornSwell(at, k) {
-      hornOut.gain.setTargetAtTime(HORN_G * k, at, 3);
-      hornTone.frequency.setTargetAtTime(500 + 550 * k, at, 3);
+    function hornSwell(h, at, k) {
+      h.out.gain.setTargetAtTime(h.g * k, at, 3);
+      h.tone.frequency.setTargetAtTime(500 + 550 * k, at, 3);
     }
-    // the horn dying away, gone in about HORN_FADE s (fade s: at once), its
-    // tone closing, sinking a little
+    // the horn dying away, gone in about HORN_FADE s, its tone closing,
+    // sinking a little
     const HORN_FADE = 4;
-    function hornFade(at, fade = HORN_FADE) {
-      hornOut.gain.setTargetAtTime(0, at, fade / 4.6); // (−40 dB by then)
-      hornTone.frequency.setTargetAtTime(250, at, fade / 4.6);
-      for (const h of horns) h.o.frequency.setTargetAtTime(h.f * 0.985, at + 1, 1.5);
+    function hornFade(h, at) {
+      h.out.gain.setTargetAtTime(0, at, HORN_FADE / 4.6); // (−40 dB by then)
+      h.tone.frequency.setTargetAtTime(250, at, HORN_FADE / 4.6);
+      for (const x of h.reeds) x.o.frequency.setTargetAtTime(h.f * x.r * 0.985, at + 1, 1.5);
     }
 
     // ---- the drum ----
@@ -229,90 +234,34 @@ const WallMusic = (() => {
       }
     }
 
-    // ---- the laments ----
-    // The ground: a motif of n notes' lengths, the first the longest, grown
-    // depth levels deep, every note of it the motif again, so the lament is
-    // the same shape on every scale. Each note keeps the level of the
-    // largest span it begins.
-    function ground() {
-      const n = rng() < 0.5 ? 3 : 4, depth = n === 3 ? 4 : 3;
-      const w = Array.from({ length: n }, (_, i) => i ? 0.5 + 0.8 * rng() : 1.1 + rng());
-      const sum = w.reduce((a, b) => a + b);
-      for (let i = 0; i < n; i++) w[i] /= sum;
-      const notes = [];
-      (function grow(d, lvl, from) {
-        if (!lvl) { notes.push({ d, lvl: from }); return; }
-        for (let i = 0; i < n; i++) grow(d * w[i], lvl - 1, i ? lvl - 1 : from);
-      })(1, depth, depth);
-      return { notes, depth };
+    // ---- the music: at random ----
+    // No tune, no time kept: each horn is blown when its player pleases, a
+    // long note of 40 s to 2 min, then rests anything from a breath to a few
+    // minutes; the drum is struck now and then, at random, loud or soft,
+    // sometimes with a soft one just before. One horn starts soon, and the
+    // drum, so turning the music on is soon heard.
+    const queue = []; // [time, fn], the horns' swells and fades to come
+    const rest = () => 2 - 70 * Math.log(1 - rng()); // s, mean about 70
+    const voices = horns.map((h, i) => ({ h, next: i ? 5 + rng() * 90 : 3 + rng() * 5 }));
+    function blowHorn(v) {
+      const h = v.h, t = v.next, held = 40 + 80 * rng();
+      const f = HORN * NOTES[Math.floor(rng() * NOTES.length)], g = HORN_G * (0.7 + 0.3 * rng());
+      queue.push([t, a => hornIn(h, a, f, g)]);
+      for (let sw = 8 + 4 * rng(); sw < held - 5; sw += 6 + 6 * rng()) { const k = 0.85 + 0.6 * rng(); queue.push([t + sw, a => hornSwell(h, a, k)]); }
+      queue.push([t + held, a => hornFade(h, a)]);
+      v.next = t + held + HORN_FADE + rest();
     }
-    // A lament from time t: the drum's two slow beats, the horn in, the
-    // ground four times or three, a little quicker the second time, slower
-    // the third, its notes heard only in the drum's beats; the horn dying
-    // away at the end. Its events, [time, (audio time) => …], go in the
-    // queue.
-    function lament(t) {
-      const q = [], at = (time, fn) => q.push([time, fn]);
-      const { notes, depth } = ground();
-      const pace = 1.6 + 0.4 * rng(); // s a note of the ground, on average
-      const T = pace * notes.length;
-      const parts = [T, T * 0.9, ...(rng() < 0.6 ? [T * 1.15] : []), T];
-      // the drum: surely where the largest spans begin; where the smaller
-      // ones do, now and then, the more often the further the lament has
-      // gone, but never within a rest of 5–10 s of the beat before
-      const beat = [[0.6, 0.1], [0.75, 0.2], [0.9, 0.35], [0.65, 0.12]];
-      let beatAt = -1e9, rest = 0;
-      const rubato = voss(6);
-      at(t, a => boom(a, 0.8));
-      at(t + 2.4 + 0.4 * rng(), a => boom(a, 0.55));
-      t += 4.2;
-      const hornFrom = t + 3; // (when the horn is first blown)
-      t += 4.5 + 2 * rng();
-      parts.forEach((len, p) => {
-        const bp = p === parts.length - 1 ? beat[3] : beat[Math.min(p, 2)];
-        notes.forEach((x, i) => {
-          const next = notes[i + 1];
-          // (slower where a span ends, the more the larger; the last note
-          // long, the lament's longest)
-          let d = Math.max(0.45, x.d * len * (0.8 + 0.4 * rubato()));
-          if (!next) d = p === parts.length - 1 ? Math.max(5, 3 * d) : 1.8 * d;
-          else if (next.lvl >= depth - 1) d *= 1.5;
-          else if (next.lvl === depth - 2) d *= 1.2;
-          const lvl = x.lvl, pb = lvl >= depth - 1 ? 1 : t - beatAt < rest ? 0 : lvl === depth - 2 ? bp[0] : lvl === depth - 3 ? bp[1] : 0;
-          if (rng() < pb) {
-            beatAt = t; rest = 5 + 5 * rng();
-            const v = 0.3 + 0.7 * Math.pow((lvl + 1) / (depth + 1), 1.5) * (0.8 + 0.4 * rng());
-            if (lvl >= depth - 1 && rng() < 0.25) at(t - 0.16 - 0.08 * rng(), a => boom(a, 0.25 * v)); // a soft one before
-            at(t, a => boom(a, v));
-          }
-          t += d;
-        });
-      });
-      // the horn's long notes, from when it is first blown to the end, a
-      // rest of 0.5–1 s between one dying away and the next
-      for (let h = hornFrom; h < t - 8;) {
-        const held = Math.min(40 + 40 * rng(), t - h);
-        at(h, hornIn);
-        for (let sw = 8 + 4 * rng(); sw < held - 5; sw += 6 + 6 * rng()) { const k = 0.85 + 0.6 * rng(); at(h + sw, a => hornSwell(a, k)); }
-        if (h + held < t) at(h + held, hornFade);
-        h += held + HORN_FADE + 0.5 + 0.5 * rng();
-      }
-      at(t, a => hornFade(a, 2.8));
-      at(t + 1.5, a => boom(a, 0.35));
-      q.sort((a, b) => a[0] - b[0]);
-      return { q, end: t + 2 };
-    }
-    // Laments one after another, a rest between (the first soon).
-    const queue = [];
-    let qi = 0, nextAt = 4 + rng() * 6;
+    let drumAt = 2 + rng() * 4;
     function play(until) {
-      for (;;) {
-        while (qi < queue.length && queue[qi][0] < until) { const [t, fn] = queue[qi++]; fn(t0 + t); }
-        if (qi < queue.length) return;
-        queue.length = qi = 0;
-        const l = lament(nextAt);
-        queue.push(...l.q);
-        nextAt = l.end + 25 + rng() * 75;
+      for (const v of voices) while (v.next < until) blowHorn(v);
+      queue.sort((a, b) => a[0] - b[0]);
+      let n = 0;
+      for (; n < queue.length && queue[n][0] < until; n++) queue[n][1](t0 + queue[n][0]);
+      queue.splice(0, n);
+      for (; drumAt < until; drumAt += 0.7 - 9 * Math.log(1 - rng())) { // (gaps: mean about 10 s)
+        const v = 0.25 + 0.75 * Math.pow(rng(), 0.7), at = drumAt;
+        if (rng() < 0.2) boom(t0 + at - 0.16 - 0.08 * rng(), 0.25 * v); // a soft one before
+        boom(t0 + at, v);
       }
     }
 
