@@ -251,14 +251,14 @@ const WallMusic = (() => {
       queue.push([t + held, a => hornFade(h, a)]);
       v.next = t + held + HORN_FADE + rest();
     }
-    let drumAt = 2 + rng() * 4;
+    let drumAt = 2 + rng() * 6;
     function play(until) {
       for (const v of voices) while (v.next < until) blowHorn(v);
       queue.sort((a, b) => a[0] - b[0]);
       let n = 0;
       for (; n < queue.length && queue[n][0] < until; n++) queue[n][1](t0 + queue[n][0]);
       queue.splice(0, n);
-      for (; drumAt < until; drumAt += 0.7 - 9 * Math.log(1 - rng())) { // (gaps: mean about 10 s)
+      for (; drumAt < until; drumAt += 4 - 26 * Math.log(1 - rng())) { // (gaps: mean about 30 s)
         const v = 0.25 + 0.75 * Math.pow(rng(), 0.7), at = drumAt;
         if (rng() < 0.2) boom(t0 + at - 0.16 - 0.08 * rng(), 0.25 * v); // a soft one before
         boom(t0 + at, v);
