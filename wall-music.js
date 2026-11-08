@@ -130,13 +130,13 @@ const WallMusic = (() => {
     }
 
     // ---- the glen ----
-    // The horn and the drum play far off, a little to one side: their
-    // sound comes dulled by the distance, mostly as the glen's long
-    // reverberation, and an echo off the hill across it.
+    // The horns and the drum play far off, spread across it, the drum a
+    // little to one side: their sound comes dulled by the distance, mostly
+    // as the glen's long reverberation, and an echo off the hill across it.
     const glen = (() => {
       const dir = rng() * Math.PI * 2, pan = (rng() < 0.5 ? -1 : 1) * (0.15 + 0.3 * rng());
       const out = bus(0.3, 0.45); // (the direct sound, faint)
-      const carry = gain(1, panner(pan, out)), tone = filter('lowpass', 3400, 0.5, carry);
+      const carry = gain(1, out), tone = filter('lowpass', 3400, 0.5, carry);
       const into = gain(1, tone);
       const reverb = ac.createConvolver();
       reverb.buffer = impulse(3.4, 5, 0.06, 0.5);
@@ -147,7 +147,7 @@ const WallMusic = (() => {
       const back = filter('lowpass', 1800, 0.5);
       out.connect(echo).connect(back).connect(gain(0.28, air));
       back.connect(gain(0.3, echo)); // (and again, fainter)
-      return { dir, into, carry, tone };
+      return { dir, pan, into, carry, tone };
     })();
 
     // ---- the horns ----
@@ -159,11 +159,15 @@ const WallMusic = (() => {
     // ebbing slowly as each is held, then dying away to nothing; then its
     // player rests as long as they please, and blows again. Nobody keeps
     // time with anybody: none, one, or all four may be sounding at once.
+    // They stand apart across the glen: one to the left, one in the middle,
+    // one to the right, and one between, so each is heard from its place.
     const players = gain(0.2, glen.into);
     const HORN = (452 + rng() * 18) / 8, HORN_G = 0.7;
     const NOTES = [1, 1, 4 / 3, 3 / 2, 2];
-    const horns = [0, 1, 2, 3].map(() => {
-      const out = gain(0, players), tone = filter('lowpass', 300, 0.8), bell = filter('peaking', 480, 0.9);
+    const places = [-0.7, 0, 0.7, rng() < 0.5 ? -0.35 : 0.35];
+    for (let i = places.length; --i;) { const j = Math.floor(rng() * (i + 1)); [places[i], places[j]] = [places[j], places[i]]; }
+    const horns = places.map(place => {
+      const out = gain(0, panner(place, players)), tone = filter('lowpass', 300, 0.8), bell = filter('peaking', 480, 0.9);
       bell.gain.value = 5;
       tone.connect(bell).connect(out);
       const reeds = [1, 1.0035, 0.9968].map(r => {
@@ -211,7 +215,7 @@ const WallMusic = (() => {
     const drum = gain(1);
     const skin = ac.createWaveShaper();
     skin.curve = Float32Array.from({ length: 1025 }, (_, i) => Math.tanh(1.8 * (i / 512 - 1)) / Math.tanh(1.8));
-    drum.connect(skin).connect(gain(3.6, players));
+    drum.connect(skin).connect(gain(3.6, panner(glen.pan, players)));
     function boom(at, v) {
       const f = 72 + rng() * 10;
       for (const [r, g, len] of [[1, 1, 1.4], [1.59, 0.45, 0.6], [2.14, 0.3, 0.4], [2.65, 0.18, 0.3]]) {
