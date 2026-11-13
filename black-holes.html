@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8J2V3WVJ2Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-8J2V3WVJ2Z');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Holes</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="description" content="A small universe on a torus, black holes and dust and nothing but gravity, its mass-energy kept constant forever: dust falls in, holes merge, and evaporate back into dust.">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1c; }
+  canvas {
+    display: block; position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); cursor: pointer;
+  }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border-radius: 4px;
+    transition: opacity 1.2s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+  #spectrum { height: 6px; width: 180px; margin-bottom: 5px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><div id="spectrum"></div><div id="hintText"></div></div>
+<script src="pollock.js"></script>
+<script src="black-holes.js"></script>
+<script>
+(() => {
+  const PD = PollockDreams;
+  const canvas = document.getElementById('c');
+  const hint = document.getElementById('hint');
+  const hintText = document.getElementById('hintText');
+  const spectrum = document.getElementById('spectrum');
+
+  const seed = (Math.random() * 1e9) | 0;
+  const touch = matchMedia('(pointer: coarse)').matches;
+  // the canvas (CW × CH css px) and the screen (VW × VH)
+  let CW, CH, VW, VH;
+
+  // ---- the universe ----
+  // Its own time runs TIME times as fast as ours: light crosses the screen's
+  // height in some seven seconds, dust in a quarter of a minute or so.
+  const TIME = 0.05, MAX_STEP = 0.0012; // (its seconds: a frame's time is cut into steps no longer)
+  // The trails: what a particle drew is half gone in TRAIL seconds (ours).
+  const TRAIL = 0.7;
+  // Colour: every particle glows as a hot body does, its light, at rest a
+  // dull red, shifted towards the blue the faster it goes, as light from a
+  // source coming nearer is, and towards the red, and dark, the deeper the
+  // well it is in, as light climbing out of one is. A body's glow, shifted,
+  // is a body's glow still, only hotter or cooler, so it is drawn as one of
+  // T = T_REST·α·((1 + β)/(1 − β))^(KAPPA/2): red, orange, white, blue,
+  // and past the bluest a body can be, violet. (The Doppler factor, squared:
+  // the dust is never fast enough to show it at its true strength.)
+  const T_REST = 1600, KAPPA = 2;
+  const tempOf = (beta, alpha) => T_REST * alpha * Math.pow((1 + beta) / (1 - beta), KAPPA / 2);
+  // a hot body's colour, sRGB 0–1 (after Tanner Helland's fit of the
+  // Planckian locus), violet past 25 000 K
+  function bodyColour(T) {
+    const t = T / 100;
+    const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
+    const g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+    const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+    let c = [r, g, b].map(v => Math.min(1, Math.max(0, v / 255)));
+    const v = Math.min(1, Math.max(0, (T - 25000) / 35000)), w = v * v * (3 - 2 * v);
+    return c.map((x, i) => x + ([0.62, 0.42, 1][i] - x) * w);
+  }
+
+  function setupCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    [CW, CH, VW, VH] = PD.canvasSize();
+    canvas.style.width = CW + 'px';
+    canvas.style.height = CH + 'px';
+    canvas.width = Math.round(CW * dpr);
+    canvas.height = Math.round(CH * dpr);
+  }
+
+  // ---- drawing: WebGL2 ----
+  const BODY = `
+    // a hot body's colour, linear RGB (as bodyColour), dimming as it cools past red
+    vec3 body(float T) {
+      float t = T / 100.0;
+      float r = t <= 66.0 ? 255.0 : 329.698727446 * pow(t - 60.0, -0.1332047592);
+      float g = t <= 66.0 ? 99.4708025861 * log(t) - 161.1195681661 : 288.1221695283 * pow(t - 60.0, -0.0755148492);
+      float b = t >= 66.0 ? 255.0 : t <= 19.0 ? 0.0 : 138.5177312231 * log(t - 10.0) - 305.0447927307;
+      vec3 c = clamp(vec3(r, g, b) / 255.0, 0.0, 1.0);
+      c = mix(c, vec3(0.62, 0.42, 1.0), smoothstep(25000.0, 60000.0, T));
+      return pow(c, vec3(2.2)) * smoothstep(700.0, 1700.0, T);
+    }`;
+
+  function glPainter(gl, u) {
+    function program(vs, fs) {
+      const p = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, '#version 300 es\nprecision highp float;\n' + src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        gl.attachShader(p, s);
+      }
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const loc = {};
+      const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, ''); loc[name] = gl.getUniformLocation(p, name); }
+      return { p, loc };
+    }
+    const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+    const half = !!gl.getExtension('EXT_color_buffer_float') || !!gl.getExtension('EXT_color_buffer_half_float');
+    const MAXH = 24, MAXW = 12;
+
+    // the trails: lines drawn into a buffer that fades
+    const trail = [0, 1].map(() => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, half ? gl.RGBA16F : gl.RGBA8, W, H, 0, gl.RGBA, half ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+      const f = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+      return { t, f };
+    });
+    let cur = 0;
+
+    // the potential's long range: a texture of α − 1 on the grid
+    const phiTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, phiTex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.REPEAT], [gl.TEXTURE_WRAP_T, gl.REPEAT]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    const phiData = new Float32Array(u.NX * u.NY);
+
+    const quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const QUAD_VS = `in vec2 p; out vec2 uv; void main() { uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0, 1); }`;
+
+    const fade = program(QUAD_VS, `in vec2 uv; uniform sampler2D T; uniform float k; out vec4 o;
+      void main() { vec4 c = texture(T, uv) * k; o = max(c - vec4(${half ? '0.0' : '1.0 / 255.0'}), 0.0); }`);
+
+    const lines = program(`in vec4 v; uniform vec2 L; out vec3 col;
+      ${BODY}
+      void main() {
+        float beta = min(v.z, 0.995), alpha = v.w;
+        col = body(${T_REST.toFixed(1)} * alpha * pow((1.0 + beta) / (1.0 - beta), ${(KAPPA / 2).toFixed(3)}));
+        gl_Position = vec4(v.x / L.x * 2.0 - 1.0, 1.0 - v.y / L.y * 2.0, 0, 1);
+      }`, `in vec3 col; uniform float gain; out vec4 o; void main() { o = vec4(col * gain, 1.0); }`);
+    const lineBuf = gl.createBuffer();
+    let lineData = new Float32Array(0);
+
+    // the picture: the curved ground, the trails, the holes' shadows
+    const show = program(QUAD_VS, `in vec2 uv; out vec4 o;
+      uniform sampler2D T, P; uniform vec2 L; uniform float c2, A;
+      uniform int nh, nw;
+      uniform vec4 holes[${MAXH}]; // x, y, its weight Hg/c², its shadow's radius
+      uniform vec4 waves[${MAXW}]; // x, y, how far it has run, how strong
+      uniform float px; // a device px, in its units
+      float erfc_(float x) {
+        float t = 1.0 / (1.0 + 0.3275911 * x);
+        return t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * exp(-x * x);
+      }
+      vec2 near(vec2 d) { return d - L * floor(d / L + 0.5); }
+      void main() {
+        vec2 x = vec2(uv.x, 1.0 - uv.y) * L;
+        float phi = texture(P, x / L).r; // the grid's, over c²
+        float shadow = 1.0;
+        for (int k = 0; k < ${MAXH}; k++) {
+          if (k >= nh) break;
+          vec2 d = near(holes[k].xy - x);
+          float r = length(d);
+          phi -= holes[k].z * erfc_(r / (2.0 * A)) / sqrt(r * r + 2.25e-6) / c2;
+          shadow = min(shadow, smoothstep(holes[k].w - px, holes[k].w + px, r));
+        }
+        float ripple = 0.0;
+        for (int k = 0; k < ${MAXW}; k++) {
+          if (k >= nw) break;
+          float r = length(near(waves[k].xy - x)), s = (r - waves[k].z) / 0.012;
+          ripple += waves[k].w * exp(-s * s) * cos(s * 2.6);
+        }
+        float alpha = 1.0 + phi;
+        // curvature, as the redshift of the ground's light: grey where space is flat, red where it isn't
+        float z = clamp(1.0 - alpha + ripple, 0.0, 1.0);
+        vec3 grey = vec3(0.0144), red = vec3(0.30, 0.012, 0.004);
+        vec3 ground = mix(grey, red, smoothstep(0.0, 0.6, z)) * (1.0 - 0.6 * smoothstep(0.55, 1.0, z));
+        vec3 dust = texture(T, uv).rgb;
+        vec3 col = ground + (1.0 - exp(-dust * 1.6)) * 1.1;
+        col *= shadow;
+        o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+      }`);
+
+    function bindQuad(p) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      const a = gl.getAttribLocation(p.p, 'p');
+      gl.enableVertexAttribArray(a);
+      gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+    }
+
+    // Draw: the trails fade by keep, the dust's last moves are drawn into
+    // them, and the whole shown.
+    function draw(keep) {
+      // fade
+      gl.disable(gl.BLEND);
+      gl.useProgram(fade.p); bindQuad(fade);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, trail[1 - cur].f);
+      gl.viewport(0, 0, W, H);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, trail[cur].t);
+      gl.uniform1i(fade.loc.T, 0); gl.uniform1f(fade.loc.k, keep);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      cur = 1 - cur;
+
+      // the dust's moves since the last frame (none across the torus's seam)
+      const n = u.n;
+      if (lineData.length < n * 8) lineData = new Float32Array(Math.ceil(n * 1.3) * 8);
+      let k = 0;
+      for (let i = 0; i < n; i++) {
+        const x0 = u.ox[i], y0 = u.oy[i], x1 = u.px[i], y1 = u.py[i];
+        if (Math.abs(x1 - x0) > u.Lx / 2 || Math.abs(y1 - y0) > u.Ly / 2) continue;
+        const b = u.be[i], a = u.al[i];
+        lineData[k++] = x0; lineData[k++] = y0; lineData[k++] = b; lineData[k++] = a;
+        lineData[k++] = x1; lineData[k++] = y1; lineData[k++] = b; lineData[k++] = a;
+      }
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.useProgram(lines.p);
+      gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, lineData.subarray(0, k), gl.STREAM_DRAW);
+      const av = gl.getAttribLocation(lines.p, 'v');
+      gl.enableVertexAttribArray(av);
+      gl.vertexAttribPointer(av, 4, gl.FLOAT, false, 0, 0);
+      gl.uniform2f(lines.loc.L, u.Lx, u.Ly);
+      gl.uniform1f(lines.loc.gain, 0.05);
+      gl.drawArrays(gl.LINES, 0, k / 4);
+      gl.disable(gl.BLEND);
+
+      // the picture
+      u.potential(phiData);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, phiTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, u.NX, u.NY, 0, gl.RED, gl.FLOAT, phiData);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, W, H);
+      gl.useProgram(show.p); bindQuad(show);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, trail[cur].t);
+      gl.uniform1i(show.loc.T, 0); gl.uniform1i(show.loc.P, 1);
+      gl.uniform2f(show.loc.L, u.Lx, u.Ly);
+      gl.uniform1f(show.loc.c2, u.c * u.c); gl.uniform1f(show.loc.A, u.A);
+      gl.uniform1f(show.loc.px, u.Ly / H);
+      const hs = u.holes.slice(0, MAXH), hv = new Float32Array(MAXH * 4);
+      hs.forEach((h, j) => hv.set([h.x, h.y, h.Hg / (u.c * u.c), u.SWALLOW * h.rh], j * 4));
+      gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv);
+      const ws = u.ripples.slice(0, MAXW), wv = new Float32Array(MAXW * 4);
+      // a wave's strain, as it shows: as the root of its energy over how far it has spread
+      ws.forEach((w, j) => wv.set([w.x, w.y, w.R, Math.min(0.25, 0.9 * Math.sqrt(w.E / (u.c * u.c) / Math.max(w.R, 0.02)))], j * 4));
+      gl.uniform1i(show.loc.nw, ws.length); gl.uniform4fv(show.loc.waves, wv);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    return { draw };
+  }
+
+  // the colours, slow to fast, as a strip over the hint
+  {
+    const stops = [];
+    for (let b = 0; b <= 0.951; b += 0.05) {
+      const c = bodyColour(tempOf(b, 1)).map(v => Math.round(255 * v));
+      stops.push(`rgb(${c}) ${(b / 0.95 * 100).toFixed(0)}%`);
+    }
+    spectrum.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
+  }
+
+  let paused = false, uni = null;
+  function showStats() {
+    if (!uni) return;
+    const E = uni.energy / (uni.c * uni.c);
+    hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n} · mass-energy ${E.toFixed(3)}` +
+      (paused ? ' · paused' : '') +
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
+  }
+
+  // Click / tap pauses and resumes; while paused the hint stays up. The
+  // screen is kept awake while it runs, as for a video.
+  const awake = PD.screenAwake();
+  canvas.addEventListener('click', () => {
+    if (!uni) return;
+    paused = !paused;
+    awake(!paused);
+    showStats();
+    showHint();
+  });
+
+  // One universe per page load: it is never restarted, only reloading the
+  // page begins a new one.
+  function start() {
+    setupCanvas();
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: true });
+    if (!gl) { hintText.textContent = 'This painting needs WebGL2.'; return; }
+    const Ly = 1, Lx = CW / CH;
+    const u = uni = BlackHoles.universe(PD.mulberry32(seed), { Lx, Ly, N: touch ? 9000 : 15000 });
+    window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
+    const painter = glPainter(gl, u);
+    painter.draw(1);
+    showStats();
+    showHint();
+    awake(true);
+    let last, statsAt = 0;
+    // time spent in a hidden tab, or while paused, doesn't pile up into a
+    // burst when it comes back
+    const frame = now => {
+      const dt = Math.min(100, now - (last ?? now)) / 1000;
+      last = now;
+      if (!paused && dt > 0) {
+        const T = dt * TIME, steps = Math.ceil(T / MAX_STEP);
+        for (let s = 0; s < steps; s++) u.step(T / steps);
+        // (the trails from before the last step: the last is drawn from where it began)
+        painter.draw(Math.pow(0.5, dt / TRAIL));
+        if (now - statsAt > 500) { statsAt = now; showStats(); }
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  // the hint (with the totals) comes back while the mouse moves
+  let lastMove = 0;
+  window.addEventListener('mousemove', () => {
+    const now = performance.now();
+    if (now - lastMove > 500) { lastMove = now; showHint(); }
+  });
+  window.addEventListener('keydown', e => {
+    if ((e.key === 's' || e.key === 'S') && uni) {
+      const a = document.createElement('a');
+      a.download = `black-holes-${seed}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+  });
+  let ht;
+  function showHint() {
+    hint.classList.remove('hidden');
+    clearTimeout(ht);
+    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
