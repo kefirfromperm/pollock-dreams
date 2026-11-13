@@ -98,10 +98,10 @@ const BlackHoles = (() => {
     c = 3,
     HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
     WARM = 0.35, // the dust's first speeds, of c
-    K = 1.3, // Hawking power: dE/dt = −K/M²
+    K = 0.26, // Hawking power: dE/dt = −K/M²
     T_MASS = 0.005, // Hawking temperature: mean kinetic energy m·c²·T_MASS/M
     M_END = 0.02, // a hole this light bursts
-    EMIT_RATE = 2000, // Hawking particles from a hole a second, at most
+    EMIT_RATE = 400, // Hawking particles from a hole a second, at most
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
     PETERS = true, // close pairs losing their orbits to gravitational waves
