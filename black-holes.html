@@ -55,8 +55,9 @@
   // Its own time runs TIME times as fast as ours: light crosses the screen's
   // height in some seven seconds, dust in a quarter of a minute or so.
   const TIME = 0.05, MAX_STEP = 0.0012; // (its seconds: a frame's time is cut into steps no longer)
-  // The trails: what a particle drew is half gone in TRAIL seconds (ours).
-  const TRAIL = 0.7;
+  // Each particle a short streak, back along the way it goes: STREAK css px
+  // long when at rest, the full STREAK + STREAK_FAST at the speed of light.
+  const STREAK = 3, STREAK_FAST = 2;
   // Colour: every particle glows as a hot body does, its light, at rest a
   // dull red, shifted towards the blue the faster it goes, as light from a
   // source coming nearer is, and towards the red, and dark, the deeper the
@@ -220,15 +221,18 @@
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       cur = 1 - cur;
 
-      // the dust's moves since the last frame (none across the torus's seam)
-      const n = u.n;
+      // the dust, each a streak back along its last move
+      const n = u.n, pxU = u.Ly / CH; // (a css px, in its units)
       if (lineData.length < n * 8) lineData = new Float32Array(Math.ceil(n * 1.3) * 8);
       let k = 0;
       for (let i = 0; i < n; i++) {
-        const x0 = u.ox[i], y0 = u.oy[i], x1 = u.px[i], y1 = u.py[i];
-        if (Math.abs(x1 - x0) > u.Lx / 2 || Math.abs(y1 - y0) > u.Ly / 2) continue;
-        const b = u.be[i], a = u.al[i];
-        lineData[k++] = x0; lineData[k++] = y0; lineData[k++] = b; lineData[k++] = a;
+        const x1 = u.px[i], y1 = u.py[i];
+        let dx = x1 - u.ox[i], dy = y1 - u.oy[i];
+        dx -= u.Lx * Math.round(dx / u.Lx); dy -= u.Ly * Math.round(dy / u.Ly); // (across the torus's seam)
+        const d = Math.hypot(dx, dy);
+        if (!(d > 0)) continue;
+        const b = u.be[i], a = u.al[i], L = (STREAK + STREAK_FAST * b) * pxU / d;
+        lineData[k++] = x1 - dx * L; lineData[k++] = y1 - dy * L; lineData[k++] = b; lineData[k++] = a;
         lineData[k++] = x1; lineData[k++] = y1; lineData[k++] = b; lineData[k++] = a;
       }
       gl.enable(gl.BLEND);
@@ -240,7 +244,7 @@
       gl.enableVertexAttribArray(av);
       gl.vertexAttribPointer(av, 4, gl.FLOAT, false, 0, 0);
       gl.uniform2f(lines.loc.L, u.Lx, u.Ly);
-      gl.uniform1f(lines.loc.gain, 0.05);
+      gl.uniform1f(lines.loc.gain, 0.7);
       gl.drawArrays(gl.LINES, 0, k / 4);
       gl.disable(gl.BLEND);
 
@@ -321,8 +325,7 @@
       if (!paused && dt > 0) {
         const T = dt * TIME, steps = Math.ceil(T / MAX_STEP);
         for (let s = 0; s < steps; s++) u.step(T / steps);
-        // (the trails from before the last step: the last is drawn from where it began)
-        painter.draw(Math.pow(0.5, dt / TRAIL));
+        painter.draw(0); // (each frame anew)
         if (now - statsAt > 500) { statsAt = now; showStats(); }
       }
       requestAnimationFrame(frame);
