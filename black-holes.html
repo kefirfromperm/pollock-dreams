@@ -31,11 +31,21 @@
   }
   #hint.hidden { opacity: 0; }
   #spectrum { height: 6px; width: 180px; margin-bottom: 5px; border-radius: 2px; }
+  #sound {
+    position: fixed; right: 16px; bottom: 14px;
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
+    transition: opacity 1.2s; opacity: 1;
+  }
+  #sound.dim { opacity: .35; }
+  #sound:hover, #sound:focus-visible { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint"><div id="spectrum"></div><div id="hintText"></div></div>
+<button id="sound" type="button" aria-pressed="false">♪ sound: off</button>
 <script src="pollock.js"></script>
 <script src="black-holes.js"></script>
 <script>
@@ -45,6 +55,7 @@
   const hint = document.getElementById('hint');
   const hintText = document.getElementById('hintText');
   const spectrum = document.getElementById('spectrum');
+  const soundBtn = document.getElementById('sound');
 
   const seed = (Math.random() * 1e9) | 0;
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -315,13 +326,103 @@
     spectrum.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
   }
 
+  // ---- the sound of mergers ----
+  // A merger is heard as its gravitational wave reaches the screen's edges,
+  // as by two detectors there: the left ear when the wave gets to the left
+  // edge, the right when to the right, so one near the left is heard there
+  // first, and louder. The sound is a merger's own: a chirp, the pair going
+  // round faster and faster, rising to the moment they are one, then the
+  // new hole's ringing, dying away; the heavier the hole, the lower.
+  // Off until asked for (browsers only let sound start from a click or a
+  // key press); it waits while the painting is paused.
+  const Sound = (() => {
+    let ac = null, out = null, on = false;
+    const CHIRP = 1.4; // seconds
+    const heard = []; // {t (its time it began), x, M, loud, left, right}
+    function setup() {
+      ac = new AudioContext();
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.ratio.value = 4;
+      out = ac.createGain(); out.gain.value = 0.9;
+      // a long soft room, from decaying noise
+      const len = ac.sampleRate * 3, ir = ac.createBuffer(2, len, ac.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+      }
+      const verb = ac.createConvolver(); verb.buffer = ir;
+      const wet = ac.createGain(); wet.gain.value = 0.35;
+      out.connect(comp); out.connect(verb); verb.connect(wet); wet.connect(comp);
+      comp.connect(ac.destination);
+    }
+    // one ear's chirp, now, panned to it
+    function chirp(M, loud, pan) {
+      const t0 = ac.currentTime + 0.02;
+      const fEnd = Math.max(55, Math.min(660, 150 * Math.pow(0.15 / M, 0.7))); // (its ringing)
+      const IN = CHIRP, RING = 0.9; // seconds of the chirp, and of the ringing
+      const panner = ac.createStereoPanner(); panner.pan.value = pan;
+      panner.connect(out);
+      for (const [mult, level] of [[1, 1], [2, 0.22], [3, 0.07]]) {
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(fEnd * mult / 5, t0);
+        o.frequency.exponentialRampToValueAtTime(fEnd * mult * 0.8, t0 + IN * 0.85);
+        o.frequency.exponentialRampToValueAtTime(fEnd * mult, t0 + IN);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(loud * level * 0.3, t0 + IN * 0.6);
+        g.gain.exponentialRampToValueAtTime(loud * level, t0 + IN);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + IN + RING);
+        o.connect(g); g.connect(panner);
+        o.start(t0); o.stop(t0 + IN + RING + 0.05);
+      }
+    }
+    return {
+      toggle() {
+        on = !on;
+        if (on && !ac) setup();
+        if (ac) on ? ac.resume() : ac.suspend();
+        if (!on) heard.length = 0;
+        return on;
+      },
+      get on() { return on; },
+      // a merger at x, its new hole M, its wave carrying e (of the universe's mass-energy)
+      merged(u, x, M, e) {
+        if (!on) return;
+        const loud = Math.min(1, 0.25 + 3 * Math.sqrt(e / (u.c * u.c)));
+        heard.push({ t: u.time, x, M, loud, left: false, right: false });
+      },
+      // each frame: the wave fronts that have got to an edge are heard there
+      listen(u) {
+        if (!on) return;
+        for (let k = heard.length - 1; k >= 0; k--) {
+          // (its chirp begins as much ahead of the front as it lasts, so that
+          // it peaks, the two one, just as the front is there)
+          const w = heard[k], R = (u.time - w.t) * u.c + CHIRP * u.c * TIME;
+          for (const [side, d, pan] of [['left', w.x, -0.85], ['right', u.Lx - w.x, 0.85]]) {
+            if (w[side] || R < d) continue;
+            w[side] = true;
+            chirp(w.M, w.loud / Math.sqrt(1 + d / 0.4), pan);
+          }
+          if (w.left && w.right) heard.splice(k, 1);
+        }
+      },
+    };
+  })();
+  function toggleSound() {
+    const on = Sound.toggle();
+    soundBtn.textContent = `♪ sound: ${on ? 'on' : 'off'}`;
+    soundBtn.setAttribute('aria-pressed', on);
+    showHint();
+  }
+  soundBtn.addEventListener('click', toggleSound);
+
   let paused = false, uni = null;
   function showStats() {
     if (!uni) return;
     const E = uni.energy / (uni.c * uni.c);
     hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n} · mass-energy ${uni.target === null ? '—' : E.toFixed(3)}` +
       (paused ? ' · paused' : '') +
-      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · M: sound · S: save PNG`);
   }
 
   // Click / tap pauses and resumes; while paused the hint stays up. The
@@ -359,9 +460,10 @@
         const T = dt * TIME, steps = Math.ceil(T / MAX_STEP);
         for (let s = 0; s < steps; s++) {
           u.step(T / steps);
-          for (const e of u.events) if (e.type === 'merge') painter.merged(e);
+          for (const e of u.events) if (e.type === 'merge') { painter.merged(e); Sound.merged(u, e.x, e.M, e.e); }
         }
         painter.draw(0); // (each frame anew)
+        Sound.listen(u);
         if (now - statsAt > 500) { statsAt = now; showStats(); }
       }
       requestAnimationFrame(frame);
@@ -376,6 +478,7 @@
     if (now - lastMove > 500) { lastMove = now; showHint(); }
   });
   window.addEventListener('keydown', e => {
+    if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleSound();
     if ((e.key === 's' || e.key === 'S') && uni) {
       const a = document.createElement('a');
       a.download = `black-holes-${seed}.png`;
@@ -386,8 +489,9 @@
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
+    soundBtn.classList.remove('dim');
     clearTimeout(ht);
-    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); soundBtn.classList.add('dim'); }, 4000);
   }
 
   start();

@@ -40,9 +40,13 @@
 //     particle of the dust, leaving fast, about 0.7c, in pairs back to
 //     back (as evenly every way as a hole radiates), each carrying its share
 //     of the hole's motion, its share of E taken from the hole: a small hole,
-//     hotter, sends them the more often, and its last bit bursts;
+//     hotter, sends them the more often, and its last bit bursts; a moving
+//     hole's, as we see them, are thrown forwards, those ahead the faster,
+//     those behind the slower, and its clock runs slow, so it radiates the
+//     slower;
 //   dust collapses: where its own well is deep enough that a horizon is all
 //     but there, the dust nearly trapped is a hole, with all it came to;
+//     or, spinning faster than one hole can, two, going round one another;
 //   dust rubs: where it crowds, it is pulled to move as the gas about it
 //     does, the motion lost heat, the heat, a photon's worth at a time,
 //     shone off as a fast particle that flies free a while;
@@ -111,6 +115,8 @@ const BlackHoles = (() => {
     PETERS = true, // close pairs losing their orbits to gravitational waves
     ALPHA_COLLAPSE = 0.5, // dust whose own well is this deep collapses
     CLEAR = 0.1, // (no nearer a hole than this: dust heaped about a hole is the hole's to take)
+    SPLIT = 1, // a clump spinning this many times as fast as one hole can splits in two
+    A_PAIR = 0.1, // and the two go round one another no further apart than this
     FRICTION = 3, // how often dust collides, a second, where it is as dense as on the whole (the denser, the more often)
     DENSE_MAX = 40, // (no more often than at this many times as dense)
     E_PHOTON = 1, // what a photon carries off, of a particle's rest energy (it leaves at about 0.87c)
@@ -634,13 +640,15 @@ const BlackHoles = (() => {
       for (let k = holes.length - 1; k >= 0; k--) {
         const h = holes[k];
         if (h.M < M_END || h.dying) { burst(h); holes.splice(k, 1); continue; }
-        h.budget += K / (h.M * h.M) * dt;
+        // (a moving hole's clock runs slow: we see it radiate the slower, by its γ)
+        h.budget += K / (h.M * h.M) * dt * h.M * c2 / Math.max(h.M * c2, h.S);
         // (no more than EMIT_RATE·dt at a time: a hole near its end would put
         // hundreds at once on one spot, and they'd be bound to one another)
-        const most = Math.max(1, Math.round(EMIT_RATE * Math.max(1, h.rh / A) * dt)); // (a wide horizon has room for more)
+        h.allow = Math.min(4, (h.allow || 0) + EMIT_RATE * Math.max(1, h.rh / A) * dt); // (a wide horizon has room for more)
         // (in pairs, back to back: radiating evenly every way, as a hole does,
         // it isn't pushed about by its own quanta, as one at a time it would be)
-        for (let k = 0; k < most && h.budget >= 2 * h.quantum && h.M >= M_END && !h.dying; k += 2) {
+        while (h.allow >= 2 && h.budget >= 2 * h.quantum && h.M >= M_END && !h.dying) {
+          h.allow -= 2;
           h.budget -= 2 * h.quantum;
           const th = TAU * rng(), turn = (rng() - 0.5) * 1.6;
           radiate(h, h.quantum, th, turn);
@@ -729,14 +737,23 @@ const BlackHoles = (() => {
       const r = Math.max(EMIT * h.rh, A); // (never within the grid's blur, where the dust is only soft)
       const ex = Math.cos(th), ey = Math.sin(th);
       const ae = Math.max(0.1, alphaAt(h.x + ex * r, h.y + ey * r)); // α there, as dust feels it, the hole's own well in it
-      const Sp = e / (ae * m); // per unit mass
-      const u = Math.sqrt(Math.max(0, Sp * Sp - c4) / c2) / ae;
+      const Sp = e / (ae * m); // its energy there, per unit mass, in the hole's own frame
+      const p0 = Math.sqrt(Math.max(0, Sp * Sp - c4)) / c; // its momentum there, per unit mass
       // mostly outwards, turned the way it spins the more, the faster it spins
       const spread = turn + 0.9 * Math.max(-1, Math.min(1, chiOf(h))), dxu = Math.cos(th + spread), dyu = Math.sin(th + spread);
-      // and carried along with the hole, as much as its energy is of the hole's
-      // (sent every way from a moving hole, they take its motion with them: else
-      // the hole, lighter, its momentum all kept, would only go the faster)
-      const gq = ae * Sp * h.M / (h.al * h.S), ux = dxu * u + gq * h.qx, uy = dyu * u + gq * h.qy;
+      // As we see it, the hole moving: even every way in its own frame, but
+      // to us thrown forwards, those ahead faster and more of them, those
+      // behind slower and fewer (a Lorentz boost, by the hole's velocity
+      // there). Its energy, and the momentum that goes with it, come off the
+      // hole, so the hole, lighter, goes on as fast as it went.
+      const ph0 = h.al * hyp(h.qx, h.qy), gh = Math.sqrt(1 + ph0 * ph0 / c2); // the hole's momentum there, per unit mass, and its γ
+      const bx = h.al * h.qx / (gh * c), by = h.al * h.qy / (gh * c), b2 = bx * bx + by * by;
+      const pxq = p0 * dxu, pyq = p0 * dyu, bp = bx * pxq + by * pyq;
+      // (its way and speed out turned forwards, by γ along the motion; and, as
+      // much as its energy, boosted, is of the hole's, the hole's momentum:
+      // the pair, all told, its energy's share of it, no more)
+      const kb = b2 > 1e-12 ? (gh - 1) * bp / b2 : 0, gq = ae * gh * (Sp + c * bp) * h.M / (h.al * h.S);
+      const ux = (pxq + kb * bx) / ae + gq * h.qx, uy = (pyq + kb * by) / ae + gq * h.qy; // (canonical: as there, over α)
       if (!addParticle(h.x + ex * r, h.y + ey * r, ux, uy, ae, PHOTON_LIFE)) { h.budget += e; return; }
       const ea = ae * m * S[n - 1]; // (what it took, as seen from afar: e, and its share of the hole's motion)
       // the hole keeps what it came to, less the quantum's αS, and their
@@ -951,19 +968,90 @@ const BlackHoles = (() => {
       for (const o of holes) { const r = hyp(near(o.x - cx, Lx), near(o.y - cy, Ly)); other += o.Hg / c2 * gridK(r); V += Hw / c2 * o.Hg / c2 * pairPot(r); }
       const ac = Math.max(0.3, lapse(phi[kmin] - own - other)); // (were the dust about deeper still, it is near enough to be next)
       // its spin: the dust's angular momentum about where it is
+      let Hs = 0;
+      for (const i of take) Hs += al[i] * m * S[i];
+      const gx0 = wx / Hs, gy0 = wy / Hs;
+      const rel = i => [near(px[i] - cx, Lx) - gx0, near(py[i] - cy, Ly) - gy0];
       let Jc = 0;
-      for (const i of take) {
-        const rx = near(px[i] - cx, Lx) - wx / Ht, ry = near(py[i] - cy, Ly) - wy / Ht;
-        Jc += m * (rx * qy[i] - ry * qx[i]);
+      for (const i of take) { const [rx, ry] = rel(i); Jc += m * (rx * qy[i] - ry * qx[i]); }
+      // Spinning faster than any one hole can (Kerr's bound), it can't
+      // collapse as one: it splits in two along its length, as a cloud
+      // spinning too fast does (so stars are born in pairs), and the two go
+      // round one another with what spin neither can hold: as far apart as
+      // that takes, on a circle (no wider than A_PAIR: what more there is
+      // goes, as from a merger, in the first of their waves).
+      const made = [];
+      if (Math.abs(Jc) > SPLIT * jMax(Ht / c2)) {
+        let sxx = 0, syy = 0, sxy = 0;
+        for (const i of take) { const [rx, ry] = rel(i), Hi = al[i] * m * S[i]; sxx += Hi * rx * rx; syy += Hi * ry * ry; sxy += Hi * rx * ry; }
+        const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(ang), uy = Math.sin(ang);
+        // (cut across that line where half its mass is either side)
+        const along = take.map(i => { const [rx, ry] = rel(i); return [rx * ux + ry * uy, i]; }).sort((p, q) => p[0] - q[0]);
+        let acc = 0, cut = 0;
+        while (cut < along.length && acc < Hs / 2) acc += al[along[cut][1]] * m * S[along[cut][1]], cut++;
+        const a = along.slice(0, cut).map(v => v[1]), b = along.slice(cut).map(v => v[1]);
+        if (a.length >= 10 && b.length >= 10) {
+          for (const g of [a, b]) {
+            let H = 0, Hs = 0, Wg = 0, X = 0, Y = 0;
+            for (const i of g) { const Hi = al[i] * m * S[i]; H += Hi + ht[i]; Hs += Hi; Wg += m * Hg[i]; X += Hi * near(px[i] - cx, Lx); Y += Hi * near(py[i] - cy, Ly); }
+            X /= Hs; Y /= Hs;
+            let J = 0;
+            for (const i of g) { const rx = near(px[i] - cx, Lx) - X, ry = near(py[i] - cy, Ly) - Y; J += m * (rx * qy[i] - ry * qx[i]); }
+            const jm = jMax(H / c2);
+            made.push({ H, Wg, J: Math.max(-jm, Math.min(jm, J)) });
+          }
+          const [p, q] = made, m1 = p.H / c2, m2 = q.H / c2, Mt = m1 + m2, mu = m1 * m2 / Mt;
+          const L = Jc - p.J - q.J, sep = Math.min(A_PAIR, (L / mu) ** 2 / Mt);
+          if (sep > 2.5 * SWALLOW * (m1 + m2) / c2 && Math.min(m1, m2) > 2 * M_END) { // (and each would last a while)
+            // on the line it lay along, about its middle, going round as it spun
+            p.X = gx0 - ux * sep * m2 / Mt; p.Y = gy0 - uy * sep * m2 / Mt;
+            q.X = gx0 + ux * sep * m1 / Mt; q.Y = gy0 + uy * sep * m1 / Mt;
+            p.sign = q.sign = Math.sign(L); p.ux = q.ux = ux; p.uy = q.uy = uy; p.sep = q.sep = sep; p.m = m1; q.m = m2;
+          } else made.length = 0;
+        } 
+      }
+      if (!made.length) made.push({ H: Ht, Wg: Hw, J: Jc, X: gx0, Y: gy0, Px: Pxt, Py: Pyt, ac });
+      let V12 = 0; // (the two's binding, theirs as holes now, as V is with the others)
+      if (made.length === 2) {
+        const [p, q] = made;
+        V12 = p.Wg / c2 * q.Wg / c2 * pairPot(Math.max(hyp(p.X - q.X, p.Y - q.Y), 1e-6));
+        // α at each: the grid's Φ there, less all the clump's long range, and the holes'
+        for (const g of made) {
+          const gx = wrap(cx + g.X, Lx), gy = wrap(cy + g.Y, Ly);
+          let own2 = 0, other2 = 0;
+          for (const i of take) own2 += (m * Hg[i] / c2) * gridK(hyp(near(px[i] - gx, Lx), near(py[i] - gy, Ly)));
+          for (const o of holes) other2 += o.Hg / c2 * gridK(hyp(near(o.x - gx, Lx), near(o.y - gy, Ly)));
+          weights(gx, gy);
+          g.ac = Math.max(0.3, lapse(sample(phi) - own2 - other2));
+        }
+      }
+      const total = Math.max(0.5 * Ht, Ht - bind - V - V12);
+      if (made.length === 2) {
+        // Going round on a circle, as fast as that is where they are: α³
+        // slows a body there as we see it, the pull on it as much, so the
+        // speed (its canonical momentum per unit mass) is √(GM/(α³r)); and
+        // the momentum that is, for the energy each has (its rest mass
+        // follows from both, see refit).
+        const [p, q] = made, Mt = p.m + q.m, a3 = ((p.ac + q.ac) / 2) ** 3;
+        const qc = p.sign * Math.sqrt((p.Wg + q.Wg) / c2 / (a3 * p.sep)), cmx = Pxt / (Ht / c2), cmy = Pyt / (Ht / c2);
+        for (const [g, f] of [[p, -q.m / Mt], [q, p.m / Mt]]) {
+          const vx = cmx - f * p.uy * qc, vy = cmy + f * p.ux * qc, Sg = total * g.H / Ht / g.ac;
+          const k = Sg / Math.sqrt(c4 + c2 * g.ac * g.ac * (vx * vx + vy * vy));
+          g.Px = k * vx; g.Py = k * vy;
+        }
       }
       take.sort((a, b) => b - a);
       for (const i of take) removeParticle(i);
-      const h = makeHole(cx + wx / Ht, cy + wy / Ht, Math.max(0.5 * Ht, Ht - bind - V) / ac, Pxt, Pyt, ac);
-      h.Hg = Hw; // (their weight, as the grid had it)
-      h.J = Jc;
-      capSpin(h);
-      events.push({ type: 'collapse', x: h.x, y: h.y, hole: h.id, M: h.M });
+      const born = made.map(g => {
+        const h = makeHole(cx + g.X, cy + g.Y, total * g.H / Ht / g.ac, g.Px, g.Py, g.ac);
+        h.Hg = g.Wg; // (their weight, as the grid had it)
+        h.J = g.J;
+        capSpin(h);
+        return h;
+      });
+      for (const h of born) events.push({ type: 'collapse', x: h.x, y: h.y, hole: h.id, M: h.M, pair: born.length === 2 });
       stats.collapsed++;
+      if (born.length === 2) stats.pairs = (stats.pairs || 0) + 1;
     }
 
     return {
