@@ -23,7 +23,7 @@
     transform: translate(-50%, -50%); cursor: pointer;
   }
   #hint {
-    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 172px); /* (clear of the sound button) */
     font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #f4efe3; background: rgba(20,17,15,.55);
     padding: 6px 10px; border-radius: 4px;
@@ -48,6 +48,7 @@
 <button id="sound" type="button" aria-pressed="false">♪ sound: off</button>
 <script src="pollock.js"></script>
 <script src="black-holes.js"></script>
+<script src="black-holes-music.js"></script>
 <script>
 (() => {
   const PD = PollockDreams;
@@ -333,10 +334,12 @@
   // first, and louder. The sound is a merger's own: a chirp, the pair going
   // round faster and faster, rising to the moment they are one, then the
   // new hole's ringing, dying away; the heavier the hole, the lower.
+  // Under it all, music (black-holes-music.js): slow clusters of many
+  // voices in canon, after Ligeti's Lux Aeterna.
   // Off until asked for (browsers only let sound start from a click or a
   // key press); it waits while the painting is paused.
   const Sound = (() => {
-    let ac = null, out = null, on = false;
+    let ac = null, out = null, on = false, music = null, held = false;
     const CHIRP = 1.4; // seconds
     const heard = []; // {t (its time it began), x, M, loud, left, right}
     function setup() {
@@ -354,7 +357,9 @@
       const wet = ac.createGain(); wet.gain.value = 0.35;
       out.connect(comp); out.connect(verb); verb.connect(wet); wet.connect(comp);
       comp.connect(ac.destination);
+      music = BlackHolesMusic.player(ac, comp, seed);
     }
+    const sync = () => { if (!music) return; on && !held ? music.play() : music.stop(); };
     // one ear's chirp, now, panned to it
     function chirp(M, loud, pan) {
       const t0 = ac.currentTime + 0.02;
@@ -380,10 +385,13 @@
       toggle() {
         on = !on;
         if (on && !ac) setup();
-        if (ac) on ? ac.resume() : ac.suspend();
-        if (!on) heard.length = 0;
+        if (ac && on) ac.resume();
+        sync();
+        if (!on) { heard.length = 0; setTimeout(() => { if (!on) ac.suspend(); }, 700); }
         return on;
       },
+      // (the music holds while the painting is paused)
+      hold(h) { held = h; sync(); },
       get on() { return on; },
       // a merger at x, its new hole M, its wave carrying e (of the universe's mass-energy)
       merged(u, x, M, e) {
@@ -431,6 +439,7 @@
   canvas.addEventListener('click', () => {
     if (!uni) return;
     paused = !paused;
+    Sound.hold(paused);
     awake(!paused);
     showStats();
     showHint();
@@ -442,8 +451,26 @@
     setupCanvas();
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: true });
     if (!gl) { hintText.textContent = 'This painting needs WebGL2.'; return; }
-    const Ly = 1, Lx = CW / CH;
-    const u = uni = BlackHoles.universe(PD.mulberry32(seed), { Lx, Ly, N: touch ? 9000 : 15000 });
+    // The universe is as big whatever the screen's shape, as a 16:9 one's
+    // (16/9 × 1): only its shape is the screen's, a tall narrow one as tall
+    // and narrow; so it holds the same, and behaves the same, everywhere.
+    const aspect = CW / CH, Ly = Math.sqrt(16 / 9 / aspect), Lx = aspect * Ly;
+    // its grid: the fewest cells (powers of two each way) no coarser than a
+    // 16:9 screen's (256 × 128), so its gravity is as fine whatever the shape
+    // (cells much longer one way than the other soften it, and it calms)
+    const grid = (Lx, Ly) => {
+      let best = null;
+      for (let i = 5; i <= 10; i++) for (let j = 5; j <= 10; j++) {
+        const NX = 2 ** i, NY = 2 ** j, size = Math.max(Lx / NX, Ly / NY);
+        if (size > 1.05 / 128) continue;
+        if (!best || NX * NY < best.NX * best.NY || (NX * NY === best.NX * best.NY && size < best.size)) best = { NX, NY, size };
+      }
+      return { NX: best.NX, NY: best.NY };
+    };
+    const u = uni = BlackHoles.universe(PD.mulberry32(seed), {
+      Lx, Ly, ...grid(Lx, Ly), 
+      N: touch ? 9000 : 15000,
+    });
     window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
     const painter = glPainter(gl, u);
     painter.draw(1);

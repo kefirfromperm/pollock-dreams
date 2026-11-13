@@ -102,8 +102,9 @@ const BlackHoles = (() => {
   // A universe Lx × Ly (Ly = 1 is the unit of length), of rest mass 1 at
   // first, G = 1. Time is in its own seconds.
   function universe(rng, {
-    Lx = 1, Ly = 1, N = 16000, NY = 128,
+    Lx = 1, Ly = 1, N = 16000, NY = 128, NX = 0, // (NX: as square cells as powers of two allow, unless given)
     c = 3,
+    MASS = 1, // its rest mass at first
     HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
     WARM = 0.35, // the dust's first speeds, of c
     K = 0.6, // Hawking power: dE/dt = −K/M²
@@ -126,10 +127,10 @@ const BlackHoles = (() => {
     const c2 = c * c, c4 = c2 * c2;
     const ALPHA_MIN = 0.02;
     // the grid: NX × NY cells, as square as powers of two allow
-    const NX = 2 ** Math.round(Math.log2(NY * Lx / Ly));
+    NX = NX || 2 ** Math.round(Math.log2(NY * Lx / Ly));
     const dx = Lx / NX, dy = Ly / NY, cellA = dx * dy, NC = NX * NY;
     const A = 1.25 * Math.max(dx, dy), RCUT = 6 * A, RCUT2 = RCUT * RCUT; // the split, and how far its short range reaches
-    const m = 1 / N; // a particle's rest mass
+    const m = MASS / N; // a particle's rest mass
 
     // ---- the long range, by FFT ----
     const fftX = fftPlan(NX), fftY = fftPlan(NY);
