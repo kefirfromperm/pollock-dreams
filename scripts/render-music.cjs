@@ -11,7 +11,8 @@
 //          first Math.random() it draws from it
 //   events what the painting did, as render-frames.cjs writes it, for music
 //          that hears it: the paint poured (pour-music.js) gurgles, the
-//          wall's wind blows and its cracks crackle (wall-music.js), in time
+//          wall's wind blows and its cracks crackle (wall-music.js), a black
+//          hole merger is heard as its wave reaches an edge (black-holes-music.js), in time
 //          with the video, a video second v being music second from + v
 //   from   where the video starts in the music (default 0)
 //
@@ -68,6 +69,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       if (from + t >= seconds) continue;
       if (type === 'pour' && music.pour) music.pour(from + t + at, d.dt, d);
       if (type === 'wall' && music.hear) music.hear(from + t + at, d);
+      if (type === 'wave' && music.chirp) music.chirp(from + t + at, d.M, d.loud, d.pan);
     }
     music.schedule(seconds + ahead);
     const buf = await ac.startRendering();

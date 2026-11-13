@@ -15,7 +15,20 @@
 <title>Black Holes</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A small universe on a torus, black holes and dust and nothing but gravity, its mass-energy kept constant forever: dust falls in, holes merge, and evaporate back into dust.">
+<meta name="description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls in, holes dance, merge and evaporate back into dust, forever.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Digital Art Meditation">
+<meta property="og:title" content="Black Holes">
+<meta property="og:description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls in, holes dance, merge and evaporate back into dust, forever.">
+<meta property="og:url" content="https://kefirfromperm.github.io/pollock-dreams/black-holes.html">
+<meta property="og:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og-black-holes.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="“Black Holes” written in poured cursive lines over black holes in dark dust, their wells glowing red">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Black Holes">
+<meta name="twitter:description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls in, holes dance, merge and evaporate back into dust, forever.">
+<meta name="twitter:image" content="https://kefirfromperm.github.io/pollock-dreams/og/og-black-holes.png">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1c; }
   canvas {
@@ -348,7 +361,7 @@
   // key press); it waits while the painting is paused.
   const Sound = (() => {
     let ac = null, out = null, on = false, musicOn = false, music = null, held = false; // (on: the mergers heard)
-    const CHIRP = 1.4; // seconds
+    const CHIRP = 1.4; // seconds (as BlackHolesMusic's)
     const heard = []; // {t (its time it began), x, M, loud, left, right}
     function setup() {
       ac = new AudioContext();
@@ -365,30 +378,9 @@
       const wet = ac.createGain(); wet.gain.value = 0.35;
       out.connect(comp); out.connect(verb); verb.connect(wet); wet.connect(comp);
       comp.connect(ac.destination);
-      music = BlackHolesMusic.player(ac, comp, seed);
+      music = BlackHolesMusic.player(ac, comp, seed, out);
     }
     const sync = () => { if (!music) return; musicOn && !held ? music.play() : music.stop(); };
-    // one ear's chirp, now, panned to it
-    function chirp(M, loud, pan) {
-      const t0 = ac.currentTime + 0.02;
-      const fEnd = Math.max(55, Math.min(660, 150 * Math.pow(0.15 / M, 0.7))); // (its ringing)
-      const IN = CHIRP, RING = 0.9; // seconds of the chirp, and of the ringing
-      const panner = ac.createStereoPanner(); panner.pan.value = pan;
-      panner.connect(out);
-      for (const [mult, level] of [[1, 1], [2, 0.22], [3, 0.07]]) {
-        const o = ac.createOscillator(), g = ac.createGain();
-        o.type = 'sine';
-        o.frequency.setValueAtTime(fEnd * mult / 5, t0);
-        o.frequency.exponentialRampToValueAtTime(fEnd * mult * 0.8, t0 + IN * 0.85);
-        o.frequency.exponentialRampToValueAtTime(fEnd * mult, t0 + IN);
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(loud * level * 0.3, t0 + IN * 0.6);
-        g.gain.exponentialRampToValueAtTime(loud * level, t0 + IN);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + IN + RING);
-        o.connect(g); g.connect(panner);
-        o.start(t0); o.stop(t0 + IN + RING + 0.05);
-      }
-    }
     return {
       // the mergers heard (waves), the music: either, or both, or neither
       set(waves, m) {
@@ -397,21 +389,20 @@
         if (any && !ac) setup();
         if (ac && any) ac.resume();
         sync();
-        if (!on) heard.length = 0;
         if (!any && ac) setTimeout(() => { if (!on && !musicOn) ac.suspend(); }, 700);
       },
       // (the music holds while the painting is paused)
       hold(h) { held = h; sync(); },
       get on() { return on; },
-      // a merger at x, its new hole M, its wave carrying e (of the universe's mass-energy)
+      // a merger at x, its new hole M, its wave carrying e (of the universe's
+      // mass-energy): heard or not, its wave's reaching the edges is told (as
+      // a 'wave' event, for whoever records the painting with its sound)
       merged(u, x, M, e) {
-        if (!on) return;
         const loud = Math.min(1, 0.25 + 3 * Math.sqrt(e / (u.c * u.c)));
         heard.push({ t: u.time, x, M, loud, left: false, right: false });
       },
       // each frame: the wave fronts that have got to an edge are heard there
       listen(u) {
-        if (!on) return;
         for (let k = heard.length - 1; k >= 0; k--) {
           // (its chirp begins as much ahead of the front as it lasts, so that
           // it peaks, the two one, just as the front is there)
@@ -419,7 +410,9 @@
           for (const [side, d, pan] of [['left', w.x, -0.85], ['right', u.Lx - w.x, 0.85]]) {
             if (w[side] || R < d) continue;
             w[side] = true;
-            chirp(w.M, w.loud / Math.sqrt(1 + d / 0.4), pan);
+            const loud = w.loud / Math.sqrt(1 + d / 0.4);
+            dispatchEvent(new CustomEvent('wave', { detail: { M: w.M, loud, pan } }));
+            if (on) music.chirp(w.M, loud, pan);
           }
           if (w.left && w.right) heard.splice(k, 1);
         }

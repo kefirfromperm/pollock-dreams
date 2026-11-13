@@ -15,10 +15,12 @@ const BlackHolesMusic = (() => {
   const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const AHEAD = 3; // seconds scheduled ahead
+  const LEVEL = 0.7; // master gain (as loud, about, as the other paintings' music)
 
   // The music on context ac, into dest; nothing sounds until
-  // schedule(until) has scheduled it up to context time until.
-  function graph(ac, seed, dest) {
+  // schedule(until) has scheduled it up to context time until. A merger is
+  // heard (chirp) into fx, by itself, whether the music plays or not.
+  function graph(ac, seed, dest, fx = dest) {
     const rng = PollockDreams.mulberry32(seed);
     const t0 = ac.currentTime + 0.2;
 
@@ -157,16 +159,40 @@ const BlackHolesMusic = (() => {
         }
       }
     }
-    return { schedule };
+    // A merger heard, at music time t, in one ear (pan): a chirp, the pair
+    // going round faster and faster, rising to the moment they are one, then
+    // the new hole's ringing, dying away; the heavier the hole, the lower.
+    const CHIRP = 1.4, RING = 0.9; // seconds of the chirp, and of the ringing
+    function chirp(t, M, loud, pan) {
+      if (t < 0) return;
+      const t1 = t0 + t, fEnd = clamp(150 * Math.pow(0.15 / M, 0.7), 55, 660); // (its ringing)
+      const p = ac.createStereoPanner(); p.pan.value = pan;
+      p.connect(fx);
+      for (const [mult, lv] of [[1, 1], [2, 0.22], [3, 0.07]]) {
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(fEnd * mult / 5, t1);
+        o.frequency.exponentialRampToValueAtTime(fEnd * mult * 0.8, t1 + CHIRP * 0.85);
+        o.frequency.exponentialRampToValueAtTime(fEnd * mult, t1 + CHIRP);
+        g.gain.setValueAtTime(0.0001, t1);
+        g.gain.exponentialRampToValueAtTime(loud * lv * 0.3, t1 + CHIRP * 0.6);
+        g.gain.exponentialRampToValueAtTime(loud * lv, t1 + CHIRP);
+        g.gain.exponentialRampToValueAtTime(0.0001, t1 + CHIRP + RING);
+        o.connect(g); g.connect(p);
+        o.start(t1); o.stop(t1 + CHIRP + RING + 0.05);
+      }
+    }
+    const time = () => ac.currentTime - t0;
+    return { schedule, chirp, time, CHIRP };
   }
 
   // The player, on a context and into a node it is given (the page's, the
   // mergers' sound going to the same place), faded in and out.
-  function player(ac, dest, seed, level = 0.55) {
+  function player(ac, dest, seed, fx = dest, level = LEVEL) {
     const master = ac.createGain();
     master.gain.value = 0;
     master.connect(dest);
-    const music = graph(ac, seed, master);
+    const music = graph(ac, seed, master, fx);
     let timer = null;
     function play() {
       if (timer) return;
@@ -184,7 +210,9 @@ const BlackHolesMusic = (() => {
       g.cancelScheduledValues(now); g.setValueAtTime(g.value, now);
       g.linearRampToValueAtTime(0, now + 0.5);
     }
-    return { play, stop, on: () => !!timer };
+    // a merger heard now (see chirp)
+    const chirp = (M, loud, pan) => music.chirp(music.time() + 0.02, M, loud, pan);
+    return { play, stop, on: () => !!timer, chirp, CHIRP: music.CHIRP };
   }
 
   return { graph, player };

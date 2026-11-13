@@ -6,7 +6,7 @@
 #
 #   seconds  length of each reel (default 45)
 #   outdir   where the MP4s go (default reels)
-#   page     which paintings (default all four)
+#   page     which paintings (default all five)
 #
 # Each painting uses the seed of its preview in the gallery. Pour Dreams fills
 # its canvas slowly, so its reel starts once it has been painting for a while,
@@ -14,7 +14,9 @@
 # deep; the music starts past its quiet opening, so a short reel isn't all
 # intro. Pour Dreams' paint gurgles in the music as it is poured, where it is
 # poured; The Wall's wind blows as it blows the bits off, and its cracks
-# crackle where they crack.
+# crackle where they crack. Black Holes starts a minute in, as its preview,
+# and its mergers chirp in one ear, then the other, as their waves reach the
+# edges.
 # Needs node, ffmpeg (libx264) and chromium; playwright-core is installed into
 # a temporary directory if it can't be found.
 set -euo pipefail
@@ -29,7 +31,8 @@ fps=30 music_from=30
 REELS="pollock-dreams 7 0
 rectangle-dreams 23 0
 pour-dreams 5 90
-the-wall 5 720"
+the-wall 5 720
+black-holes 5 60"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
