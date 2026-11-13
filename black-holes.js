@@ -36,10 +36,10 @@
 //   two holes merge, as one, the same way, a twentieth of it going off in a
 //     gravitational wave; before they merge, a pair circling close loses its
 //     orbit's energy to gravitational waves as two masses would (Peters);
-//   a hole evaporates: Hawking radiation, at a power K/M², its temperature
-//     T ∝ 1/M, each quantum a particle of the dust, its share of E taken
-//     from the hole and the hole recoiling from it, so a small hole runs hot
-//     and sprays fast particles, and its last bit bursts;
+//   a hole evaporates: Hawking radiation, at a power K/M², each quantum a
+//     particle of the dust, leaving fast, near c, its share of E taken from
+//     the hole and the hole recoiling from it: a small hole, hotter, sprays
+//     them the more often, and its last bit bursts;
 //   dust collapses: where its own well is deep enough that a horizon is all
 //     but there, the dust nearly trapped is a hole, with all it came to;
 //   a gravitational wave runs out at c from where it began, and gives its
@@ -98,10 +98,10 @@ const BlackHoles = (() => {
     c = 3,
     HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
     WARM = 0.35, // the dust's first speeds, of c
-    K = 0.26, // Hawking power: dE/dt = −K/M²
-    T_MASS = 0.005, // Hawking temperature: mean kinetic energy m·c²·T_MASS/M
+    K = 0.6, // Hawking power: dE/dt = −K/M²
+    GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
     M_END = 0.02, // a hole this light bursts
-    EMIT_RATE = 400, // Hawking particles from a hole a second, at most
+    EMIT_RATE = 900, // Hawking particles from a hole a second, at most
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
     PETERS = true, // close pairs losing their orbits to gravitational waves
@@ -324,9 +324,13 @@ const BlackHoles = (() => {
       const z = (1 - t) / 0.4, taper = z * z * (3 - 2 * z), dtaper = (6 * z - 6 * z * z) * (-1 / (0.4 * R));
       omg = base * taper; domg = dbase * taper + base * dtaper;
     }
-    function quantum(M) { // the next Hawking particle's energy at infinity (never more than a fiftieth of the hole)
-      const T = m * c2 * T_MASS / M;
-      return Math.min(m * c2 + T * -Math.log((1 - rng()) * (1 - rng())), Math.max(1.05 * m * c2, 0.02 * M * c2));
+    // The next Hawking particle's energy at infinity: always fast, far past
+    // the speed it needs to get away, about GAMMA_Q (never more than a
+    // fiftieth of the hole). A big hole, cooler, radiates less power, so
+    // fewer of them; a small one, hotter, more: the same quanta, more often.
+    function quantum(M) {
+      const g = Math.max(1.3, GAMMA_Q * (1 + 0.12 * gauss()));
+      return Math.min(m * c2 * g, Math.max(1.05 * m * c2, 0.02 * M * c2));
     }
     // a hole of energy S there and momentum P (totals)
     function makeHole(x, y, Stot, Px, Py, alpha) {
