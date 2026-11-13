@@ -31,21 +31,27 @@
   }
   #hint.hidden { opacity: 0; }
   #spectrum { height: 6px; width: 180px; margin-bottom: 5px; border-radius: 2px; }
-  #sound {
+  #sounds {
     position: fixed; right: 16px; bottom: 14px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  }
+  #sounds button {
     font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #f4efe3; background: rgba(20,17,15,.55);
     padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
     transition: opacity 1.2s; opacity: 1;
   }
-  #sound.dim { opacity: .35; }
-  #sound:hover, #sound:focus-visible { opacity: 1; }
+  #sounds.dim button { opacity: .35; }
+  #sounds button:hover, #sounds button:focus-visible { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint"><div id="spectrum"></div><div id="hintText"></div></div>
-<button id="sound" type="button" aria-pressed="false">♪ sound: off</button>
+<div id="sounds">
+  <button id="waves" type="button" aria-pressed="false">∘ waves: off</button>
+  <button id="sound" type="button" aria-pressed="false">♪ music: off</button>
+</div>
 <script src="pollock.js"></script>
 <script src="black-holes.js"></script>
 <script src="black-holes-music.js"></script>
@@ -56,7 +62,9 @@
   const hint = document.getElementById('hint');
   const hintText = document.getElementById('hintText');
   const spectrum = document.getElementById('spectrum');
-  const soundBtn = document.getElementById('sound');
+  const sounds = document.getElementById('sounds');
+  const musicButton = document.getElementById('sound');
+  const wavesButton = document.getElementById('waves');
 
   const seed = (Math.random() * 1e9) | 0;
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -335,11 +343,11 @@
   // round faster and faster, rising to the moment they are one, then the
   // new hole's ringing, dying away; the heavier the hole, the lower.
   // Under it all, music (black-holes-music.js): slow clusters of many
-  // voices in canon, after Ligeti's Lux Aeterna.
+  // voices in canon, inspired by Ligeti's Lux Aeterna; its own switch.
   // Off until asked for (browsers only let sound start from a click or a
   // key press); it waits while the painting is paused.
   const Sound = (() => {
-    let ac = null, out = null, on = false, music = null, held = false;
+    let ac = null, out = null, on = false, musicOn = false, music = null, held = false; // (on: the mergers heard)
     const CHIRP = 1.4; // seconds
     const heard = []; // {t (its time it began), x, M, loud, left, right}
     function setup() {
@@ -359,7 +367,7 @@
       comp.connect(ac.destination);
       music = BlackHolesMusic.player(ac, comp, seed);
     }
-    const sync = () => { if (!music) return; on && !held ? music.play() : music.stop(); };
+    const sync = () => { if (!music) return; musicOn && !held ? music.play() : music.stop(); };
     // one ear's chirp, now, panned to it
     function chirp(M, loud, pan) {
       const t0 = ac.currentTime + 0.02;
@@ -382,13 +390,15 @@
       }
     }
     return {
-      toggle() {
-        on = !on;
-        if (on && !ac) setup();
-        if (ac && on) ac.resume();
+      // the mergers heard (waves), the music: either, or both, or neither
+      set(waves, m) {
+        on = waves; musicOn = m;
+        const any = on || musicOn;
+        if (any && !ac) setup();
+        if (ac && any) ac.resume();
         sync();
-        if (!on) { heard.length = 0; setTimeout(() => { if (!on) ac.suspend(); }, 700); }
-        return on;
+        if (!on) heard.length = 0;
+        if (!any && ac) setTimeout(() => { if (!on && !musicOn) ac.suspend(); }, 700);
       },
       // (the music holds while the painting is paused)
       hold(h) { held = h; sync(); },
@@ -416,13 +426,23 @@
       },
     };
   })();
-  function toggleSound() {
-    const on = Sound.toggle();
-    soundBtn.textContent = `♪ sound: ${on ? 'on' : 'off'}`;
-    soundBtn.setAttribute('aria-pressed', on);
+  // Two switches, as in the other paintings: the waves (mergers heard) and
+  // the music, which comes with them: music on, the waves too; waves off,
+  // the music too.
+  let musicOn = false, wavesOn = false;
+  function setSound(m, w) {
+    musicOn = m; wavesOn = w || m;
+    Sound.set(wavesOn, musicOn);
+    musicButton.textContent = `♪ music: ${musicOn ? 'on' : 'off'}`;
+    musicButton.setAttribute('aria-pressed', musicOn);
+    wavesButton.textContent = `∘ waves: ${wavesOn ? 'on' : 'off'}`;
+    wavesButton.setAttribute('aria-pressed', wavesOn);
     showHint();
   }
-  soundBtn.addEventListener('click', toggleSound);
+  const toggleMusic = () => setSound(!musicOn, wavesOn);
+  const toggleWaves = () => setSound(musicOn && !wavesOn, !wavesOn);
+  musicButton.addEventListener('click', toggleMusic);
+  wavesButton.addEventListener('click', toggleWaves);
 
   let paused = false, uni = null;
   function showStats() {
@@ -430,7 +450,7 @@
     const E = uni.energy / (uni.c * uni.c);
     hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n} · mass-energy ${uni.target === null ? '—' : E.toFixed(3)}` +
       (paused ? ' · paused' : '') +
-      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · M: sound · S: save PNG`);
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · M: music · W: waves · S: save PNG`);
   }
 
   // Click / tap pauses and resumes; while paused the hint stays up. The
@@ -505,7 +525,8 @@
     if (now - lastMove > 500) { lastMove = now; showHint(); }
   });
   window.addEventListener('keydown', e => {
-    if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleSound();
+    if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleMusic();
+    if ((e.key === 'w' || e.key === 'W') && !e.repeat) toggleWaves();
     if ((e.key === 's' || e.key === 'S') && uni) {
       const a = document.createElement('a');
       a.download = `black-holes-${seed}.png`;
@@ -516,9 +537,9 @@
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
-    soundBtn.classList.remove('dim');
+    sounds.classList.remove('dim');
     clearTimeout(ht);
-    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); soundBtn.classList.add('dim'); }, 4000);
+    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); sounds.classList.add('dim'); }, 4000);
   }
 
   start();
