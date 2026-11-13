@@ -263,7 +263,7 @@
       gl.uniform1f(show.loc.c2, u.c * u.c); gl.uniform1f(show.loc.A, u.A);
       gl.uniform1f(show.loc.px, u.Ly / H);
       const hs = u.holes.slice(0, MAXH), hv = new Float32Array(MAXH * 4);
-      hs.forEach((h, j) => hv.set([h.x, h.y, h.Hg / (u.c * u.c), u.SWALLOW * h.rh], j * 4));
+      hs.forEach((h, j) => hv.set([h.x, h.y, h.Hg / (u.c * u.c), u.shadowOf(h)], j * 4));
       gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv);
       const ws = u.ripples.slice(0, MAXW), wv = new Float32Array(MAXW * 4);
       // a wave's strain, as it shows: as the root of its energy over how far it has spread
@@ -288,7 +288,7 @@
   function showStats() {
     if (!uni) return;
     const E = uni.energy / (uni.c * uni.c);
-    hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n} · mass-energy ${E.toFixed(3)}` +
+    hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n} · mass-energy ${uni.target === null ? '—' : E.toFixed(3)}` +
       (paused ? ' · paused' : '') +
       (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
   }

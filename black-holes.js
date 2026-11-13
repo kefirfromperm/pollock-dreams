@@ -296,6 +296,34 @@ const BlackHoles = (() => {
     const holes = [];
     let nextId = 1;
     const rhOf = M => M / c2;
+    // ---- spin ----
+    // A hole spins, J (about the axis out of the plane; its sign, which
+    // way), never past Kerr's bound, |J| ≤ χ_max·GM²/c. Near it space itself
+    // is dragged round, at ω = 2GJ/(c²r³) (Lense and Thirring's, its far
+    // field; softened within r_h, and let go of by DRAG_OUT r_h): a body there
+    // moves by H = αS + ω·L, L its angular momentum about the hole, so it is
+    // swept round, and every bit of that is in E. Its shadow shrinks as it
+    // spins faster (Kerr's horizon, (1 + √(1 − χ²))/2 of Schwarzschild's),
+    // and what goes round with it comes nearer before it is taken, what
+    // goes against it is taken further off.
+    const CHI_MAX = 0.998, DRAG_OUT = 10;
+    const jMax = M => CHI_MAX * M * M / c;
+    const chiOf = h => h.M > 0 ? h.J * c / (h.M * h.M) : 0;
+    const capSpin = h => { const jm = jMax(h.M); h.J = Math.max(-jm, Math.min(jm, h.J)); };
+    const shadowOf = h => { const x = Math.min(1, Math.abs(chiOf(h))); return SWALLOW * h.rh * (0.85 + 0.15 * Math.sqrt(1 - x * x)); };
+    // how near a body is taken: its shadow, less as it goes round with the
+    // spin (s, the sine of its way from the radial: +1 with, −1 against)
+    const takenAt = (shadow, chi, s) => shadow * (1 - 0.3 * chi * s);
+    let omg = 0, domg = 0; // ω there, and dω/dr
+    function drag(J, rh, r) {
+      const R = Math.max(DRAG_OUT * rh, 0.05);
+      if (!J || r >= R) { omg = domg = 0; return; }
+      const d2 = r * r + rh * rh, d = Math.sqrt(d2), base = 2 * J / (c2 * d2 * d), dbase = -3 * base * r / d2;
+      const t = r / R;
+      if (t < 0.6) { omg = base; domg = dbase; return; }
+      const z = (1 - t) / 0.4, taper = z * z * (3 - 2 * z), dtaper = (6 * z - 6 * z * z) * (-1 / (0.4 * R));
+      omg = base * taper; domg = dbase * taper + base * dtaper;
+    }
     function quantum(M) { // the next Hawking particle's energy at infinity (never more than a fiftieth of the hole)
       const T = m * c2 * T_MASS / M;
       return Math.min(m * c2 + T * -Math.log((1 - rng()) * (1 - rng())), Math.max(1.05 * m * c2, 0.02 * M * c2));
@@ -303,7 +331,7 @@ const BlackHoles = (() => {
     // a hole of energy S there and momentum P (totals)
     function makeHole(x, y, Stot, Px, Py, alpha) {
       const h = { id: nextId++, x: wrap(x, Lx), y: wrap(y, Ly), M: 0, qx: 0, qy: 0, al: alpha, S: 0, Hg: 0, rh: 0,
-        lx: 0, ly: 0, jx: 0, jy: 0, selfP: 0, longP: (alpha - 1) * c2, phiShort: 0, hp: 0, budget: 0, quantum: 0, age: 0, dying: false };
+        J: 0, lx: 0, ly: 0, jx: 0, jy: 0, selfP: 0, longP: (alpha - 1) * c2, phiShort: 0, hp: 0, budget: 0, quantum: 0, age: 0, dying: false };
       refit(h, Stot, Px, Py);
       h.Hg = alpha * h.S;
       h.quantum = quantum(h.M);
@@ -335,7 +363,8 @@ const BlackHoles = (() => {
       for (let k = 0; k < N; k++) addParticle(rng() * Lx, rng() * Ly, gauss() * s, gauss() * s);
       for (let k = 0; k < HOLES; k++) {
         const M = HOLE_MASS[0] + rng() * (HOLE_MASS[1] - HOLE_MASS[0]);
-        makeHole(rng() * Lx, rng() * Ly, M * c2, 0, 0, 1);
+        const h0 = makeHole(rng() * Lx, rng() * Ly, M * c2, 0, 0, 1);
+        h0.J = (rng() * 2 - 1) * 0.6 * jMax(h0.M);
       }
       // the holes are made of dust: as much rest mass taken from it
       const taken = holes.reduce((s, h) => s + h.M, 0);
@@ -400,6 +429,7 @@ const BlackHoles = (() => {
         VH += wa * wb * pp;
       }
       const hx = holes.map(h => h.x), hy = holes.map(h => h.y), hw = holes.map(h => h.Hg / c2), hr = holes.map(h => h.rh);
+      const hJ = holes.map(h => h.J), hChi = holes.map(h => Math.max(-1, Math.min(1, chiOf(h)))), hSh = holes.map(shadowOf);
       const hp = new Float64Array(H); // the dust's short range at each hole
       for (let i = 0; i < n; i++) {
         const w = m * Hg[i] / c2;
@@ -414,9 +444,12 @@ const BlackHoles = (() => {
         tPl[i] = Pl;
         W += 0.5 * w * Pl;
         let P0 = Pl, gap = Infinity, into = -1;
+        const qi = hyp(qx[i], qy[i]);
         for (let k = 0; k < H; k++) {
           const ddx = near(hx[k] - px[i], Lx), ddy = near(hy[k] - py[i], Ly), r = hyp(ddx, ddy);
-          if (r < SWALLOW * hr[k]) into = k;
+          const L = -ddx * qy[i] + ddy * qx[i]; // its angular momentum about the hole, per unit mass
+          if (r < takenAt(hSh[k], hChi[k], qi > 0 && r > 0 ? L / (r * qi) : 0)) into = k;
+          if (hJ[k]) { drag(hJ[k], hr[k], r); E += m * omg * L; }
           if (r < RCUT) {
             short(Math.max(r, 1e-6));
             P0 += hw[k] * shPhi;
@@ -455,12 +488,24 @@ const BlackHoles = (() => {
         let x = px[i], y = py[i], ux = qx[i], uy = qy[i], swallowed = -1, alpha = al[i], u2 = 0;
         for (let s = 0; s < sub; s++) {
           // the pull and Φ here: the grid's (as at the step's start) and the holes' short range
-          let fx = -Gx, fy = -Gy, P = Pl;
+          let fx = -Gx, fy = -Gy, P = Pl, vx = 0, vy = 0;
           for (let k = 0; k < H; k++) {
             const ddx = near(hx[k] - x, Lx), ddy = near(hy[k] - y, Ly), r2 = ddx * ddx + ddy * ddy;
-            if (r2 < RCUT2) {
+            if (hJ[k]) {
+              // dragged round: dx/dt += ω ẑ×r, dp/dt −= ∇(ωL), the hole taking the push back
               const r = Math.sqrt(r2);
-              if (r < SWALLOW * hr[k]) { swallowed = k; break; }
+              drag(hJ[k], hr[k], r);
+              if (omg) {
+                const L = -ddx * uy + ddy * ux, gxk = domg * L * -ddx / (r || 1) + omg * uy, gyk = domg * L * -ddy / (r || 1) - omg * ux;
+                ux -= gxk * h; uy -= gyk * h;
+                jx[k] += m * gxk * h; jy[k] += m * gyk * h;
+                vx += omg * ddy; vy -= omg * ddx; // (ω·(−r_y, r_x), r from the hole)
+              }
+            }
+            if (r2 < RCUT2 || hSh[k] * 1.3 > RCUT) {
+              const r = Math.sqrt(r2), qq = hyp(ux, uy), L = -ddx * uy + ddy * ux;
+              if (r < takenAt(hSh[k], hChi[k], qq > 0 && r > 0 ? L / (r * qq) : 0)) { swallowed = k; break; }
+              if (r2 >= RCUT2) { hfx[k] = hfy[k] = 0; continue; }
               short(r);
               P += hw[k] * shPhi;
               const f = hw[k] * shPull;
@@ -479,7 +524,7 @@ const BlackHoles = (() => {
           for (let k = 0; k < H; k++) if (hfx[k] || hfy[k]) { jx[k] -= m * k1 * hfx[k] * h; jy[k] -= m * k1 * hfy[k] * h; }
           u2 = ux * ux + uy * uy;
           const k2 = a2 * alpha * c2 / Math.sqrt(c4 + c2 * a2 * u2);
-          x += k2 * ux * h; y += k2 * uy * h;
+          x += (k2 * ux + vx) * h; y += (k2 * uy + vy) * h;
         }
         px[i] = wrap(x, Lx); py[i] = wrap(y, Ly); qx[i] = ux; qy[i] = uy;
         if (born[i]) { ox[i] = px[i]; oy[i] = py[i]; born[i] = 0; }
@@ -567,11 +612,15 @@ const BlackHoles = (() => {
     function swallow(h, i) {
       const r = hyp(near(px[i] - h.x, Lx), near(py[i] - h.y, Ly)), pp = pairPot(r), w = m * Hg[i] / c2;
       const a1 = Math.max(ALPHA_MIN, h.al - w * pp / c2);
-      const before = al[i] * m * S[i] + h.al * h.S - h.Hg / c2 * w * pp;
+      const rx = near(px[i] - h.x, Lx), ry = near(py[i] - h.y, Ly), L = rx * qy[i] - ry * qx[i];
+      drag(h.J, h.rh, r);
+      const before = al[i] * m * S[i] + h.al * h.S - h.Hg / c2 * w * pp + m * omg * L; // (and its being dragged round, gone into it)
       // (its momentum as it is there: near the hole its own grows past what the hole felt pull it back)
       refit(h, before / a1, h.M * h.qx + al[i] * m * qx[i], h.M * h.qy + al[i] * m * qy[i]);
       h.al = a1;
       h.Hg += m * Hg[i]; // (its weight, from now on the hole's: the grid sees no jump)
+      h.J += al[i] * m * L; // its angular momentum about the hole (as its momentum, as it is there), the hole's spin now
+      capSpin(h);
       events.push({ type: 'swallow', x: h.x, y: h.y, hole: h.id, e: m * S[i] });
       stats.swallowed++;
       removeParticle(i);
@@ -587,12 +636,17 @@ const BlackHoles = (() => {
       const ae = Math.max(0.1, alphaAt(h.x + ex * r, h.y + ey * r)); // α there, as dust feels it, the hole's own well in it
       const Sp = e / (ae * m); // per unit mass
       const u = Math.sqrt(Math.max(0, Sp * Sp - c4) / c2) / ae;
-      const spread = (rng() - 0.5) * 1.6, dxu = Math.cos(th + spread), dyu = Math.sin(th + spread);
+      // mostly outwards, turned the way it spins the more, the faster it spins
+      const spread = (rng() - 0.5) * 1.6 + 0.9 * Math.max(-1, Math.min(1, chiOf(h))), dxu = Math.cos(th + spread), dyu = Math.sin(th + spread);
       if (!addParticle(h.x + ex * r, h.y + ey * r, dxu * u, dyu * u, ae)) { h.budget += e; return; }
       // the hole keeps what it came to, less the quantum's αS, and their
       // binding, now counted in both and in W; its α deeper by the quantum's well
       const pp = pairPot(r), w = e / c2, a1 = Math.max(ALPHA_MIN, h.al + w * pp / c2);
-      refit(h, (h.al * h.S - e + h.Hg / c2 * w * pp) / a1, h.M * h.qx - m * u * dxu, h.M * h.qy - m * u * dyu);
+      const L = r * (ex * dyu - ey * dxu) * u; // its angular momentum about the hole, per unit mass, from the hole's spin
+      drag(h.J, h.rh, r);
+      refit(h, (h.al * h.S - e + h.Hg / c2 * w * pp - m * omg * L) / a1, h.M * h.qx - m * u * dxu, h.M * h.qy - m * u * dyu);
+      h.J -= m * L;
+      capSpin(h);
       h.al = a1;
       h.Hg -= e; // (as much weight gone as the quantum has)
       events.push({ type: 'hawking', x: px[n - 1], y: py[n - 1], hole: h.id, e, beta: be[n - 1] });
@@ -632,12 +686,16 @@ const BlackHoles = (() => {
         const r = hyp(at[a][0] - h.x, at[a][1] - h.y);
         ai[a] = lapse((alphaAt(at[a][0], at[a][1]) - 1) * c2 - h.Hg / c2 * pairPot(r) + ai[a]);
       }
+      // its spin, as all of them going round: Σ m·d·u_t = J
+      let sd = 0;
+      for (const [x, y] of at) sd += hyp(x - h.x, y - h.y);
+      const ut = sd > 0 ? h.J / (m * sd) : 0;
       const total = U => { // (each with its share of the momentum too)
         const sx = P[0] / (k * m), sy = P[1] / (k * m);
         let e = -Wint;
         for (let j = 0; j < k; j++) {
           const dxj = at[j][0] - h.x, dyj = at[j][1] - h.y, d = hyp(dxj, dyj) || 1;
-          const ux = dxj / d * U + sx, uy = dyj / d * U + sy;
+          const ux = dxj / d * U - dyj / d * ut + sx, uy = dyj / d * U + dxj / d * ut + sy;
           e += ai[j] * m * Math.sqrt(c4 + c2 * ai[j] * ai[j] * (ux * ux + uy * uy));
         }
         return e;
@@ -649,7 +707,7 @@ const BlackHoles = (() => {
       for (let j = 0; j < k; j++) {
         // each flies straight out from where it starts, so they part at once
         const dxj = at[j][0] - h.x, dyj = at[j][1] - h.y, d = hyp(dxj, dyj) || 1;
-        if (addParticle(at[j][0], at[j][1], dxj / d * lo + sx, dyj / d * lo + sy, ai[j])) Hg[n - 1] = h.Hg / (k * m); // (the hole's weight, shared)
+        if (addParticle(at[j][0], at[j][1], dxj / d * lo - dyj / d * ut + sx, dyj / d * lo + dxj / d * ut + sy, ai[j])) Hg[n - 1] = h.Hg / (k * m); // (the hole's weight, shared)
       }
       events.push({ type: 'burst', x: h.x, y: h.y, hole: h.id, e: H });
       stats.burst++;
@@ -733,6 +791,10 @@ const BlackHoles = (() => {
       holes.splice(holes.indexOf(ha), 1); holes.splice(holes.indexOf(hb), 1);
       const h = makeHole(x, y, (Hnew - gw) / anew, Pxt, Pyt, anew);
       h.Hg = ha.Hg + hb.Hg - gw; // (their weight, as the grid had it, but the wave's)
+      // its spin: theirs, and their orbit's, about where they meet
+      const rax = -ddx * w, ray = -ddy * w, rbx = ddx * (1 - w), rby = ddy * (1 - w);
+      h.J = ha.J + hb.J + rax * ha.M * ha.qy - ray * ha.M * ha.qx + rbx * hb.M * hb.qy - rby * hb.M * hb.qx;
+      capSpin(h);
       h.budget = ha.budget + hb.budget;
       h.lx = (ha.lx * ha.S + hb.lx * hb.S) / (ha.S + hb.S); h.ly = (ha.ly * ha.S + hb.ly * hb.S) / (ha.S + hb.S);
       h.jx = (ha.jx || 0) + (hb.jx || 0); h.jy = (ha.jy || 0) + (hb.jy || 0);
@@ -786,16 +848,24 @@ const BlackHoles = (() => {
       let other = 0, V = 0; // (the holes' wells there: no part of a hole's α; their binding, V's now)
       for (const o of holes) { const r = hyp(near(o.x - cx, Lx), near(o.y - cy, Ly)); other += o.Hg / c2 * gridK(r); V += Hw / c2 * o.Hg / c2 * pairPot(r); }
       const ac = Math.max(0.3, lapse(phi[kmin] - own - other)); // (were the dust about deeper still, it is near enough to be next)
+      // its spin: the dust's angular momentum about where it is
+      let Jc = 0;
+      for (const i of take) {
+        const rx = near(px[i] - cx, Lx) - wx / Ht, ry = near(py[i] - cy, Ly) - wy / Ht;
+        Jc += m * (rx * qy[i] - ry * qx[i]);
+      }
       take.sort((a, b) => b - a);
       for (const i of take) removeParticle(i);
       const h = makeHole(cx + wx / Ht, cy + wy / Ht, Math.max(0.5 * Ht, Ht - bind - V) / ac, Pxt, Pyt, ac);
       h.Hg = Hw; // (their weight, as the grid had it)
+      h.J = Jc;
+      capSpin(h);
       events.push({ type: 'collapse', x: h.x, y: h.y, hole: h.id, M: h.M });
       stats.collapsed++;
     }
 
     return {
-      step, Lx, RCUT, SWALLOW, shortTable: Float32Array.from(TP), Ly, c, NX, NY, A,
+      step, Lx, RCUT, SWALLOW, shadowOf, chiOf, shortTable: Float32Array.from(TP), Ly, c, NX, NY, A,
       get n() { return n; }, px, py, ox, oy, al, be, qx, qy, Hg,
       holes, ripples, events, stats, Sarr: S,
       // the grid's Φ, over c²
