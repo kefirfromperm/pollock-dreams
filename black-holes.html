@@ -191,10 +191,12 @@
           ripple += waves[k].w * exp(-s * s) * cos(s * 2.6);
         }
         float alpha = 1.0 + phi;
-        // curvature, as the redshift of the ground's light: grey where space is flat, red where it isn't
+        // curvature, as the redshift of the ground's light: grey where space
+        // is flat, red where it isn't, the same light all over (the red as
+        // bright as the grey: luminance, being linear, keeps between them)
         float z = clamp(1.0 - alpha + ripple, 0.0, 1.0);
-        vec3 grey = vec3(0.0144), red = vec3(0.30, 0.012, 0.004);
-        vec3 ground = mix(grey, red, smoothstep(0.0, 0.6, z)) * (1.0 - 0.6 * smoothstep(0.55, 1.0, z));
+        vec3 grey = vec3(0.0144), red = vec3(0.0144 / 0.2126, 0.0, 0.0);
+        vec3 ground = mix(grey, red, smoothstep(0.0, 0.6, z));
         vec3 dust = texture(T, uv).rgb;
         vec3 col = ground + (1.0 - exp(-dust * 1.6)) * 1.1;
         col *= shadow;
