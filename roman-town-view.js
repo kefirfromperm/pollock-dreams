@@ -15,10 +15,11 @@
 //     (from the heights about, the whole world's, found once), lamps at night.
 //
 //   const view = RomanTownView.create(canvas, town, { seed })
-//   view.draw([x0, y0, w, h], sky)   the canvas filled with that rectangle of
+//   view.draw([x0, y0, w, h], sky, t)   the canvas filled with that rectangle of
 //     the world, lit as the sky is: { sun: { az, el }, moon: { az, el, lit } },
 //     azimuths from north (up) clockwise, elevations, radians; lit, the
-//     moon's lit part
+//     moon's lit part; t, seconds, for what moves: the wind in the grass,
+//     the crops and the trees, the torches' flames
 const RomanTownView = (() => {
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -90,7 +91,12 @@ const RomanTownView = (() => {
       }
       return (sqrt(f2) - sqrt(f1) < 0.09 ? 0.62 : 1.0) * (0.84 + 0.3 * id);
     }
+    // fractal: three octaves, each half the last
+    float fbm3(vec3 p, int s) { return 0.55 * vnoise3(p, s) + 0.3 * vnoise3(p * 2.03, s + 1) + 0.15 * vnoise3(p * 4.1, s + 2); }
     vec3 rgb(float r, float g, float b) { return vec3(r, g, b) / 255.0; }
+    // the wind: gusts going over, downwind at 4 m/s, about 25 m across
+    uniform vec2 uWind; uniform float uTime;
+    float gust(vec2 p) { return fnoise((p - uWind * uTime * 4.0) / 25.0, 41); }
   `;
   const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
 
@@ -125,7 +131,7 @@ const RomanTownView = (() => {
       vec2 g = uRelief * t.yz; // (its slopes shaded as if steeper, as relief maps do, so the hills show)
       vec3 n = normalize(vec3(-g, 1.0));
       int m = int(vMat + 0.5);
-      float tint = 0.9 + 0.2 * vTint, nz = fnoise(p / 3.0, uSeed + 3), f = 1.0;
+      float tint = 0.9 + 0.2 * vTint, nz = fnoise(p / 3.0, uSeed + 3), f = 1.0, grass = 0.0;
       vec3 c = rgb(156.0, 134.0, 104.0);
       float pu = along(p, uTA), pv = across(p, uTA);
       if (m == 0) {
@@ -133,7 +139,9 @@ const RomanTownView = (() => {
         float sl = length(t.yz), up = (z - uZmin) / (uZmax - uZmin + 1e-6);
         float mm = fnoise(p / 40.0, uSeed), ff = fnoise(p / 6.0, uSeed + 7);
         c = mix(rgb(118.0, 124.0, 68.0), rgb(160.0, 146.0, 96.0), clamp(0.25 + 0.6 * up + 0.5 * (mm - 0.5), 0.0, 1.0));
-        c = mix(c, rgb(104.0, 100.0, 70.0), clamp((sl - 0.12) * 5.0 + (ff - 0.5), 0.0, 1.0) * 0.8);
+        float scrub = clamp((sl - 0.12) * 5.0 + (ff - 0.5), 0.0, 1.0);
+        c = mix(c, rgb(104.0, 100.0, 70.0), scrub * 0.8);
+        grass = 1.0 - scrub;
         c = mix(c, rgb(150.0, 140.0, 120.0), clamp((sl - 0.3) * 4.0, 0.0, 0.7));
         f = 0.88 + 0.24 * ff;
       } else if (m == 1) { c = rgb(112.0, 108.0, 102.0); f = 1.08 * stones(p, 0.75, uSeed + 11) * (0.92 + 0.16 * nz); }
@@ -178,6 +186,18 @@ const RomanTownView = (() => {
         c = rgb(52.0, 82.0, 80.0); f = 0.92 + 0.12 * fnoise(p / 9.0, uSeed + 17);
       }
       else if (m == 22) { f = 0.75; }
+      if (m == 13 || m == 15) grass = 1.0;
+      if (m == 10) grass = 1.4; // (wheat, taller, waves more)
+      if (m == 5) grass = 0.4;
+      if (grass > 0.0) {
+        // grass in the wind: bent over where a gust goes, its paler blades
+        // showing, rippling; its blades, fine, fractal
+        float gu = gust(p), rip = fnoise((p - uWind * uTime * 4.0) / 3.0, 43);
+        float bend = grass * (gu - 0.4 + 0.3 * (rip - 0.5));
+        n = normalize(n + vec3(uWind * bend * 0.7, 0.0));
+        f *= 1.0 + 0.16 * bend;
+        f *= 1.0 + min(grass, 1.0) * 0.14 * (fnoise(p / 0.35, uSeed + 47) - 0.5 + 0.5 * (fnoise(p / 0.12, uSeed + 49) - 0.5));
+      }
       oAlb = vec4(clamp(c * f, 0.0, 1.0), flag);
       oNrm = vec4(n, 0.0);
       oH = z;
@@ -237,12 +257,22 @@ const RomanTownView = (() => {
     out vec3 vW, vD; flat out vec4 vCol;
     void main() {
       vec3 d = aDir;
-      if (aCol.w > 0.0) d.xy *= 0.86 + 0.24 * vnoise3(aDir * 2.2 + aRot.y * 13.7, 47);
+      // a crown: its outline fractal, clumps on clumps
+      float fr = 0.0;
+      if (aCol.w > 0.0) { fr = fbm3(aDir * 2.2 + aRot.y * 13.7, 47); d.xy *= 0.78 + 0.44 * fr; d.z *= 0.92 + 0.16 * fr; }
       // a rock: craggy all over
       else if (aCol.w < 0.0) d *= 0.72 + 0.5 * vnoise3(aDir * 1.8 + aRot.y * 7.3, 71);
       vec3 q = d * aR;
       float c = cos(aRot.x), s = sin(aRot.x);
       vW = aC + vec3(c * q.x - s * q.y, s * q.x + c * q.y, q.z);
+      if (aCol.w > 0.0) {
+        // the wind: the crown leaning with the gusts, the higher the more,
+        // swaying, its leaves fluttering
+        float up = clamp((q.z + aR.z) / (2.0 * aR.z), 0.0, 1.0), ph = aRot.y * 1.7;
+        float sway = (gust(aC.xy) - 0.35) * 0.9 + 0.25 * sin(uTime * (1.1 + 0.4 * fract(aRot.y * 0.37)) + ph);
+        vW.xy += uWind * sway * up * up * min(aR.z, 7.0) * 0.07;
+        vW.xy += 0.035 * min(aR.x, 3.0) * fr * vec2(sin(uTime * 7.0 + dot(aDir, vec3(13.0, 7.0, 5.0)) + ph), cos(uTime * 6.1 + dot(aDir, vec3(5.0, 11.0, 3.0)) + ph));
+      }
       vec3 e = aDir / aR;
       vD = vec3(c * e.x - s * e.y, s * e.x + c * e.y, e.z);
       vCol = aCol;
@@ -254,10 +284,11 @@ const RomanTownView = (() => {
       vec3 n = normalize(vD);
       float tone = 1.0;
       if (vCol.w > 0.0) {
-        vec3 q = vW / vCol.w;
-        float nn = vnoise3(q, 53) - 0.5;
-        n = normalize(n + 0.8 * vec3(vnoise3(q + 9.1, 59) - 0.5, vnoise3(q + 4.7, 61) - 0.5, 0.0));
-        tone = 0.8 + 0.4 * (nn + 0.5);
+        // leaves in clumps on clumps, catching the light as they stir
+        vec3 q = vW / vCol.w + vec3(uWind * uTime * 0.35, uTime * 0.25);
+        float nn = fbm3(q, 53) - 0.5;
+        n = normalize(n + 0.9 * vec3(fbm3(q + 9.1, 59) - 0.5, fbm3(q + 4.7, 61) - 0.5, 0.0));
+        tone = 0.78 + 0.44 * (nn + 0.5);
       } else if (vCol.w < 0.0) {
         // weathered stone, cracked, lichen in patches
         vec3 q = vW / 0.45;
@@ -291,8 +322,22 @@ const RomanTownView = (() => {
     uniform vec4 uView; uniform vec2 uSize, uWorld;
     uniform mat4 uLight; uniform float uBias, uTexel, uShTexel;
     uniform vec3 uL, uSun, uSky; uniform float uGrey, uZbase;
-    uniform vec4 uLamps[128]; uniform int uNL;
+    uniform vec4 uLamps[128]; uniform int uNL; uniform float uTime; uniform vec2 uWind;
     out vec4 o;
+    uint hsh(int x, int y, int s) {
+      uint h = uint(x) * 374761393u + uint(y) * 668265263u + uint(s) * 2147483647u;
+      h = (h ^ (h >> 13)) * 1274126177u;
+      return h ^ (h >> 16);
+    }
+    float hf(ivec3 c, int s) { return float(hsh(c.x, c.y + c.z * 7919, s)) / 4294967296.0; }
+    float vn3(vec3 p, int s) {
+      vec3 i = floor(p), f = p - i;
+      ivec3 c = ivec3(i);
+      vec3 u = f * f * (3.0 - 2.0 * f);
+      return mix(mix(mix(hf(c, s), hf(c + ivec3(1, 0, 0), s), u.x), mix(hf(c + ivec3(0, 1, 0), s), hf(c + ivec3(1, 1, 0), s), u.x), u.y),
+                 mix(mix(hf(c + ivec3(0, 0, 1), s), hf(c + ivec3(1, 0, 1), s), u.x), mix(hf(c + ivec3(0, 1, 1), s), hf(c + ivec3(1, 1, 1), s), u.x), u.y), u.z);
+    }
+    float fbm(vec3 p, int s) { return 0.5 * vn3(p, s) + 0.27 * vn3(p * 2.07, s + 1) + 0.15 * vn3(p * 4.3, s + 2) + 0.08 * vn3(p * 8.9, s + 3); }
     float tone(float v) {
       float x = max(0.0, v * 0.9), y = x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14);
       return y <= 0.0031308 ? 12.92 * y : 1.055 * pow(min(1.0, y), 1.0 / 2.4) - 0.055;
@@ -325,18 +370,36 @@ const RomanTownView = (() => {
       if (water) ao = max(ao, 0.85);
       float amb = ao * (0.55 + 0.45 * n.z);
       // lamps
-      float glow = 0.0, flame = 0.0;
+      float glow = 0.0;
+      vec3 fire = vec3(0.0);
       for (int i = 0; i < uNL; i++) {
         vec4 l = uLamps[i];
         vec3 d = P - l.xyz;
         float d2 = dot(d, d);
         if (d2 > 256.0) continue;
+        float fi = float(i) * 7.31;
+        // its light flickering as the flame does
+        float flick = 0.78 + 0.22 * vn3(vec3(uTime * 7.0, fi, 0.0), 5) + 0.1 * vn3(vec3(uTime * 19.0, fi, 1.0), 6);
         float dd = sqrt(d2), f = 1.0 - dd / 16.0;
-        glow += l.w * 6.0 / (1.0 + d2 * 0.35) * f * f * max(0.2, dot(-d, n) / max(dd, 1e-3) * 0.8 + 0.2);
-        if (dot(d.xy, d.xy) < 0.09) flame += l.w * 3.0;
+        glow += l.w * flick * 1.2 / (1.0 + d2 * 0.3) * f * f * max(0.2, dot(-d, n) / max(dd, 1e-3) * 0.8 + 0.2);
+        // the flame, seen from above: tongues of fire, fractal, licking
+        // out and back, blown a little downwind
+        vec2 r = (P.xy - l.xy) / (1.1 * sqrt(max(l.w, 0.2))) - uWind * 0.12;
+        float rr = length(r);
+        if (rr < 1.6) {
+          float a = atan(r.y, r.x);
+          vec3 nq = vec3(cos(a) * 2.2, sin(a) * 2.2, uTime * 2.4 + fi);
+          float edge = 0.3 + 0.75 * fbm(nq, 7);
+          float body = smoothstep(edge, edge * 0.15, rr);
+          float turb = 0.5 + 0.5 * fbm(vec3(r * 5.0 - uWind * uTime * 1.2, uTime * 4.5 + fi), 11);
+          float heat = body * turb;
+          // a tongue of fire, white at its root, through yellow and orange to red; a halo about it
+          vec3 c = mix(mix(vec3(0.75, 0.12, 0.02), vec3(1.0, 0.5, 0.1), smoothstep(0.0, 0.5, heat)), vec3(1.0, 0.92, 0.7), smoothstep(0.55, 1.0, heat));
+          fire += (c * heat * 2.2 + vec3(1.0, 0.45, 0.12) * 0.2 * exp(-rr * rr * 1.5)) * flick * min(l.w, 1.5);
+        }
       }
       const vec3 LAMP = vec3(1.0, 0.56, 0.22);
-      vec3 v = lin(A.rgb) * (uSky * amb + uSun * ndl + LAMP * glow) + LAMP * flame;
+      vec3 v = lin(A.rgb) * (uSky * amb + uSun * ndl + LAMP * glow) + fire;
       if (water) v += 0.05 * uSky * ao;
       // at night colours fade, as they do to eyes in the dark, but lamplight's
       float lum = dot(v, vec3(0.2126, 0.7152, 0.0722)), warm = v.r - v.b;
@@ -384,6 +447,10 @@ const RomanTownView = (() => {
     if (!gl) throw new Error('This painting needs WebGL2.');
     if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('This painting needs float render targets (EXT_color_buffer_float).');
     const W = town.W, H = town.H, T = town.terrain, TA = town.town.angle, iseed = seed % 100000;
+    // the wind's way, the same all over, and its strength
+    const wa = hash(seed, 1, 99) * Math.PI * 2, ws = 0.6 + 0.6 * hash(seed, 2, 99), wind = [Math.cos(wa) * ws, Math.sin(wa) * ws];
+    let time = 0;
+    const setWind = (pr) => { gl.uniform2f(pr.loc.uWind, wind[0], wind[1]); gl.uniform1f(pr.loc.uTime, time); };
     let zmin = Infinity, zmax = -Infinity;
     for (const v of T.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
     const zlo = zmin - 20, zhi = zmax + 80;
@@ -841,6 +908,7 @@ const RomanTownView = (() => {
       gl.uniform3f(L.uTerDim, T.nx, T.ny, T.cell);
       gl.uniform1i(L.uSeed, iseed);
       gl.uniform1f(L.uTA, TA); gl.uniform1f(L.uZmin, zmin); gl.uniform1f(L.uZmax, zmax); gl.uniform1f(L.uRelief, 3);
+      setWind(P.ground);
       gl.bindVertexArray(groundVAO);
       gl.drawArrays(gl.TRIANGLES, 0, groundN);
       // what stands on it, the highest seen
@@ -851,12 +919,14 @@ const RomanTownView = (() => {
       gl.uniformMatrix4fv(P.solid.loc.uMVP, false, mvp);
       gl.uniform1i(P.solid.loc.uSeed, iseed);
       gl.uniform1f(P.solid.loc.uTA, TA);
+      setWind(P.solid);
       gl.bindVertexArray(solidVAO);
       gl.drawArrays(gl.TRIANGLES, 0, solidN);
       const nb = bodiesIn(rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]);
       if (nb) {
         gl.useProgram(P.body.p);
         gl.uniformMatrix4fv(P.body.loc.uMVP, false, mvp);
+        setWind(P.body);
         const k = scale > 15 ? 1 : 0; // (rounder close up)
         gl.bindVertexArray(bodyVAOs[k]);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[k].n, nb);
@@ -885,6 +955,7 @@ const RomanTownView = (() => {
       if (nb) {
         gl.useProgram(P.bodyDepth.p);
         gl.uniformMatrix4fv(P.bodyDepth.loc.uMVP, false, lv.m);
+        setWind(P.bodyDepth);
         gl.bindVertexArray(bodyVAOs[0]);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[0].n, nb);
       }
@@ -928,10 +999,14 @@ const RomanTownView = (() => {
     const litTex = ss > 1 ? tex(G.w, G.h, gl.RGBA8, gl.LINEAR) : null, litFBO = litTex ? target(litTex) : null;
     const lampData = new Float32Array(128 * 4);
 
-    function draw(rect, sky) {
+    // the shadows drawn again only when the view or the light has moved (the
+    // trees' swaying left out of them)
+    let shadowKey = '', lv = null;
+    function draw(rect, sky, t = 0) {
+      time = t % 3600;
       const lt = lightOf(sky), scale = canvas.width / rect[2];
-      const lv = lightView(lt.L, ...rect);
-      drawShadows(lv, rect);
+      const key = rect.join() + lt.L.join();
+      if (key !== shadowKey) { lv = lightView(lt.L, ...rect); drawShadows(lv, rect); shadowKey = key; }
       drawScene(G, topDown(...rect), rect, scale);
       // the light
       gl.disable(gl.DEPTH_TEST);
@@ -951,6 +1026,7 @@ const RomanTownView = (() => {
       gl.uniform1f(L.uBias, (0.04 + lv.texel * 0.5) / lv.depth);
       gl.uniform3f(L.uL, ...lt.L); gl.uniform3f(L.uSun, ...lt.col); gl.uniform3f(L.uSky, ...lt.sky);
       gl.uniform1f(L.uGrey, lt.grey); gl.uniform1f(L.uZbase, zbase);
+      setWind(P.light);
       // the lamps near enough to light it
       let nl = 0;
       if (lt.lamps > 0.01) for (const l of town.lamps || []) {

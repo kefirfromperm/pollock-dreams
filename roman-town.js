@@ -1115,8 +1115,8 @@ const RomanTown = (() => {
     for (let y = 0; y < H + 6; y += 6) for (let x = 0; x < W + 6; x += 6) {
       const px = x + range(rng, 0, 6), py = y + range(rng, 0, 6);
       if (occ.get(px, py) !== 0 || tsd(px, py) < 18) continue;
-      const stony = smooth(0.16, 0.4, slopeAt(px, py)) + 0.6 * smooth(0.25, 0.6, fbm(nRock, px / 180, py / 180, 3));
-      if (riverD(px, py) > 4 && rng() < 0.22 * stony) {
+      const sl = slopeAt(px, py), stony = smooth(0.22, 0.45, sl) + 0.6 * smooth(0.4, 0.7, fbm(nRock, px / 180, py / 180, 3));
+      if (riverD(px, py) > 4 && rng() < 0.045 * stony) {
         // an outcrop: a few boulders together, big and small
         for (let k = 0, n = 1 + (rng() * 6 | 0); k < n; k++) {
           const a = rng() * Math.PI * 2, d = k ? range(rng, 1, 4.5) : 0, bx = px + d * Math.cos(a), by = py + d * Math.sin(a);
@@ -1125,6 +1125,12 @@ const RomanTown = (() => {
           out.rocks.push({ x: bx, y: by, z0: hAt(bx, by), r, h: r * range(rng, 0.45, 0.9), angle: rng() * Math.PI * 2 });
         }
         occ.disc(px, py, 4, 3);
+        continue;
+      }
+      // bushes: broom, myrtle, juniper, on dry slopes and among the rocks
+      if (rng() < 0.03 + 0.12 * smooth(0.1, 0.3, sl) + 0.08 * stony) {
+        const r = range(rng, 0.8, 2), h = r * range(rng, 0.9, 1.4);
+        if (occ.free(px, py, r * 0.5)) out.trees.push({ x: px, y: py, z0: hAt(px, py), r, h, kind: 'shrub' });
         continue;
       }
       const rd = riverD(px, py), wood = smooth(0.12, 0.5, fbm(nWood, px / 240, py / 240, 3));

@@ -70,7 +70,7 @@
     const next = RomanTownSky.local(clock()), deg = Math.PI / 180;
     const moved = Math.abs(next.sun.el - sky.sun.el) > 0.05 * deg || Math.abs(next.sun.az - sky.sun.az) > 0.05 * deg
       || Math.abs(next.moon.el - sky.moon.el) > 0.05 * deg;
-    if (moved) { sky = next; dirty = true; }
+    if (moved) sky = next;
   }, 10000);
 
   // ---- the view: the whole world at zoom 1, up to 32 times closer ----
@@ -105,14 +105,20 @@
   try { view = RomanTownView.create(canvas, town, opts); }
   catch (e) { hint.textContent = e.message; }
   function changed() { dirty = true; }
-  function loop() {
-    if (dirty && view) {
+  // drawn again and again, for the wind and the flames, up to 30 times a
+  // second; still while paused (P, or ?still)
+  let last = 0, paused = new URLSearchParams(location.search).has('still'), clockT = 0, before = performance.now();
+  function loop(now) {
+    if (!paused) clockT += (now - before) / 1000;
+    before = now;
+    if (view && (dirty || (!paused && now - last > 32))) {
       dirty = false;
-      view.draw(viewRect(), sky);
+      last = now;
+      view.draw(viewRect(), sky, clockT);
       if (!started) {
         started = true;
         const t = clock(), hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
-        hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom' : 'drag or arrows: move · wheel or + −: zoom · 0: all · S: save PNG');
+        hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom' : 'drag or arrows: move · wheel or + −: zoom · 0: all · P: pause · S: save PNG');
         showHint();
       }
     }
@@ -172,6 +178,7 @@
       case '+': case '=': zoomAt(DW / 2, DH / 2, 1.5); break;
       case '-': case '_': zoomAt(DW / 2, DH / 2, 1 / 1.5); break;
       case '0': zoom = 1; cx = W / 2; cy = H / 2; changed(); break;
+      case 'p': case 'P': paused = !paused; break;
       case 's': case 'S': {
         const a = document.createElement('a');
         a.download = `roman-town-${seed}.png`;
