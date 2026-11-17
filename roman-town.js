@@ -37,6 +37,7 @@
 //                        a0 × b0, the seats rising h between
 //   trees                [{ x, y, z0, r, h, kind }] kind: cypress, pine, oak, olive, poplar, fruit, shrub, plane
 //   animals              [{ x, y, z0, angle, kind }] grazing, kind: sheep, goat, cow, horse
+//   rocks                [{ x, y, z0, r, h, angle }] boulders, r across, h high, sunk a little
 //   lamps                [{ x, y, z, power }] where a lamp or a fire burns at night, z its height
 const RomanTown = (() => {
   const TAU = Math.PI * 2;
@@ -298,15 +299,15 @@ const RomanTown = (() => {
     const z = new Float32Array(nx * ny);
     const n1 = perlin(rng), n2 = perlin(rng), n3 = perlin(rng), n4 = perlin(rng);
     const tilt = [range(rng, -0.02, 0.02), range(rng, -0.02, 0.02)];
-    const R = Math.hypot(hu, hv), hills = range(rng, 40, 85), rise = range(rng, 4, 12);
+    const R = Math.hypot(hu, hv), hills = range(rng, 70, 140), rise = range(rng, 6, 16);
     const slope = [range(rng, -0.03, 0.03), range(rng, -0.03, 0.03)];
     // ridges: the hills' crests sharpened, folded noise
     const ridge = (x, y) => { let s = 0, a = 1, f = 1; for (let k = 0; k < 3; k++) { s += a * (1 - Math.abs(n4(x * f + k * 5.3, y * f - k * 3.7))); a *= 0.45; f *= 2.1; } return s / 1.65; };
     const raw = (x, y) => {
       const d = Math.hypot(x - T.cx, y - T.cy);
-      return 16 * fbm(n1, x / 600, y / 600, 2) + 3.5 * fbm(n2, x / 150, y / 150, 3) + 0.6 * n3(x / 22, y / 22)
+      return 28 * fbm(n1, x / 700, y / 700, 2) + 10 * fbm(n2, x / 170, y / 170, 3) + 0.6 * n3(x / 22, y / 22)
         + tilt[0] * (x - T.cx) + tilt[1] * (y - T.cy)
-        + hills * smooth(R * 1.1, R * 3, d) * (0.25 + 0.9 * ridge(x / 300, y / 300))
+        + hills * smooth(R * 0.7, R * 1.9, d) * (0.25 + 0.9 * ridge(x / 300, y / 300))
         + rise * Math.exp(-((d / (R * 1.25)) ** 2));
     };
     const zc = raw(T.cx, T.cy);
@@ -316,7 +317,7 @@ const RomanTown = (() => {
       // the town levelled to a gentle slope, a little of the ground's lie kept
       const sd = tsd(x, y), m = 1 - smooth(10, 75, sd);
       const flat = zc + slope[0] * (x - T.cx) + slope[1] * (y - T.cy);
-      h = lerp(h, flat + 0.18 * (h - flat), m);
+      h = lerp(h, flat + 0.3 * (h - flat), m);
       // the ditch before the wall
       if (ditch) { const q = (sd - 15) / 8; if (q > -1 && q < 1) h -= 2 * (1 - q * q) ** 2; }
       z[j * nx + i] = h;
@@ -356,7 +357,7 @@ const RomanTown = (() => {
   }
 
   function town(rng, { W, H }) {
-    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], lamps: [], gates: [] };
+    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], rocks: [], lamps: [], gates: [] };
 
     // ---- the site, as big as the world allows, turned by the augur ----
     const th = range(rng, -0.35, 0.35), ar = range(rng, 1.05, 1.45);
@@ -1108,11 +1109,24 @@ const RomanTown = (() => {
       }
     }
 
-    // and the wild: woods on the hills, poplars by the water, pines and oaks about
-    const nWood = perlin(rng);
+    // and the wild: rocks where the hills are steep or the ground is stony,
+    // woods on the hills, poplars by the water, pines and oaks about
+    const nWood = perlin(rng), nRock = perlin(rng);
     for (let y = 0; y < H + 6; y += 6) for (let x = 0; x < W + 6; x += 6) {
       const px = x + range(rng, 0, 6), py = y + range(rng, 0, 6);
       if (occ.get(px, py) !== 0 || tsd(px, py) < 18) continue;
+      const stony = smooth(0.16, 0.4, slopeAt(px, py)) + 0.6 * smooth(0.25, 0.6, fbm(nRock, px / 180, py / 180, 3));
+      if (riverD(px, py) > 4 && rng() < 0.22 * stony) {
+        // an outcrop: a few boulders together, big and small
+        for (let k = 0, n = 1 + (rng() * 6 | 0); k < n; k++) {
+          const a = rng() * Math.PI * 2, d = k ? range(rng, 1, 4.5) : 0, bx = px + d * Math.cos(a), by = py + d * Math.sin(a);
+          const r = k ? range(rng, 0.5, 1.8) : range(rng, 1.2, 3.2);
+          if (occ.get(bx, by) !== 0) continue;
+          out.rocks.push({ x: bx, y: by, z0: hAt(bx, by), r, h: r * range(rng, 0.45, 0.9), angle: rng() * Math.PI * 2 });
+        }
+        occ.disc(px, py, 4, 3);
+        continue;
+      }
       const rd = riverD(px, py), wood = smooth(0.12, 0.5, fbm(nWood, px / 240, py / 240, 3));
       const steep = smooth(0.08, 0.24, slopeAt(px, py)), wet = rd > 1.5 && rd < 16 ? 0.55 : 0;
       const dens = 0.02 + 0.8 * wood + 0.12 * steep + wet;

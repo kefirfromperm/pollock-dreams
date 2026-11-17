@@ -5,7 +5,7 @@
 // there. Once, it turns the model into geometry: the ground and every patch
 // laid on it (fields, roads, streets, the river) as flat shapes coloured
 // by what they are; every building as boxes with their roofs, walls and
-// steps; trees and beasts as lumpy round bodies. Then for each frame, any
+// steps; trees, rocks and beasts as lumpy round bodies. Then for each frame, any
 // rectangle of the world at any scale:
 //   - the sun's (or the moon's) view of everything, for the shadows;
 //   - from above, for each pixel, its height, which way it faces and its
@@ -238,6 +238,8 @@ const RomanTownView = (() => {
     void main() {
       vec3 d = aDir;
       if (aCol.w > 0.0) d.xy *= 0.86 + 0.24 * vnoise3(aDir * 2.2 + aRot.y * 13.7, 47);
+      // a rock: craggy all over
+      else if (aCol.w < 0.0) d *= 0.72 + 0.5 * vnoise3(aDir * 1.8 + aRot.y * 7.3, 71);
       vec3 q = d * aR;
       float c = cos(aRot.x), s = sin(aRot.x);
       vW = aC + vec3(c * q.x - s * q.y, s * q.x + c * q.y, q.z);
@@ -256,6 +258,16 @@ const RomanTownView = (() => {
         float nn = vnoise3(q, 53) - 0.5;
         n = normalize(n + 0.8 * vec3(vnoise3(q + 9.1, 59) - 0.5, vnoise3(q + 4.7, 61) - 0.5, 0.0));
         tone = 0.8 + 0.4 * (nn + 0.5);
+      } else if (vCol.w < 0.0) {
+        // weathered stone, cracked, lichen in patches
+        vec3 q = vW / 0.45;
+        n = normalize(n + 0.5 * vec3(vnoise3(q, 73) - 0.5, vnoise3(q + 3.3, 79) - 0.5, 0.0));
+        tone = 0.82 + 0.3 * vnoise3(vW * 1.3, 83);
+        float lichen = smoothstep(0.62, 0.75, vnoise3(vW * 0.9, 89));
+        oAlb = vec4(clamp(mix(vCol.rgb * tone, vec3(0.55, 0.56, 0.38), lichen * 0.5), 0.0, 1.0), 0.0);
+        oNrm = vec4(n.z < 0.0 ? vec3(n.xy, -n.z) : n, 0.0);
+        oH = vW.z;
+        return;
       }
       if (n.z < 0.0) n.z = -n.z;
       oAlb = vec4(clamp(vCol.rgb * tone, 0.0, 1.0), 0.0);
@@ -690,6 +702,10 @@ const RomanTownView = (() => {
       const tone = 0.88 + 0.24 * hash(i, 3, seed), lump = t.kind === 'cypress' || t.kind === 'poplar' ? 0.6 : 1.1;
       bodies.push([t.x, t.y, t.z0 + t.h - cdep, t.r, t.r, cdep, col[0] / 255 * tone, col[1] / 255 * tone, col[2] / 255 * tone, lump, 0, i]);
     });
+    (town.rocks || []).forEach((r, i) => {
+      const g = 0.5 + 0.12 * hash(i, 7, seed), warm = 0.03 * hash(i, 8, seed);
+      bodies.push([r.x, r.y, r.z0 + r.h * 0.25, r.r, r.r * (0.65 + 0.35 * hash(i, 9, seed)), r.h, g + warm, g, g - warm, -0.6, r.angle, i + 50000]);
+    });
     (town.animals || []).forEach((an, i) => {
       const [Ln, Wd, Ht, cols] = BEASTS[an.kind] || BEASTS.sheep;
       const col = cols[Math.floor(hash(i, 5, seed) ** 2 * cols.length)].map(v => v / 255);
@@ -824,7 +840,7 @@ const RomanTownView = (() => {
       gl.uniform1i(L.uTer, 0);
       gl.uniform3f(L.uTerDim, T.nx, T.ny, T.cell);
       gl.uniform1i(L.uSeed, iseed);
-      gl.uniform1f(L.uTA, TA); gl.uniform1f(L.uZmin, zmin); gl.uniform1f(L.uZmax, zmax); gl.uniform1f(L.uRelief, 2);
+      gl.uniform1f(L.uTA, TA); gl.uniform1f(L.uZmin, zmin); gl.uniform1f(L.uZmax, zmax); gl.uniform1f(L.uRelief, 3);
       gl.bindVertexArray(groundVAO);
       gl.drawArrays(gl.TRIANGLES, 0, groundN);
       // what stands on it, the highest seen
