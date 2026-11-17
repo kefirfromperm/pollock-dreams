@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8J2V3WVJ2Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-8J2V3WVJ2Z');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soap Bubble</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="description" content="A soap film stretched flat and clear over the dark, set trembling once and trembling forever: wherever its waves tilt it, it catches the light in the colours of thin films, and glares.">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  canvas {
+    display: block; position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); cursor: pointer;
+  }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border-radius: 4px;
+    transition: opacity 1.2s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+  #spectrum { height: 6px; width: 180px; margin-bottom: 5px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"><div id="spectrum"></div><div id="hintText"></div></div>
+<script src="pollock.js"></script>
+<script src="soap-bubble.js"></script>
+<script>
+(() => {
+  const PD = PollockDreams;
+  const canvas = document.getElementById('c');
+  const hint = document.getElementById('hint');
+  const hintText = document.getElementById('hintText');
+  const spectrum = document.getElementById('spectrum');
+
+  const seed = (Math.random() * 1e9) | 0;
+  const touch = matchMedia('(pointer: coarse)').matches;
+  let CW, CH;
+
+  // the film's colours: its optical thickness up to U_MAX nm, a table of
+  // NU × NC (thickness × the cosine of the light's incidence)
+  const U_MAX = 2400, NU = 512, NC = 32, N_FILM = 1.33;
+  const colours = SoapBubble.filmColours(NU, NC, U_MAX, N_FILM);
+
+  function setupCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    [CW, CH] = PD.canvasSize();
+    canvas.style.width = CW + 'px';
+    canvas.style.height = CH + 'px';
+    canvas.width = Math.round(CW * dpr);
+    canvas.height = Math.round(CH * dpr);
+  }
+
+  // The light about the film, as it is seen reflected in it: in front, where
+  // the viewer is, dark, so a flat film shows nothing; further round, a
+  // soft light, brighter on one side; a few lamps, small and bright, the
+  // glares; behind the film, the dark it hangs in. Directions are (x right,
+  // y down, z towards the viewer).
+  function lights(rng) {
+    const lamps = [];
+    const n = 3 + (rng() * 2 | 0);
+    for (let k = 0; k < n; k++) {
+      const th = (32 + rng() * 34) * Math.PI / 180, ph = rng() * PD.TAU;
+      lamps.push([Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), Math.cos(th), 60 + rng() * 80]);
+    }
+    return { lamps, side: rng() * PD.TAU };
+  }
+
+  // ---- drawing: WebGL2 ----
+  function glPainter(gl, f, env) {
+    function program(vs, fs) {
+      const p = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, '#version 300 es\nprecision highp float;\n' + src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        gl.attachShader(p, s);
+      }
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const loc = {};
+      const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, ''); loc[name] = gl.getUniformLocation(p, name); }
+      return { p, loc };
+    }
+    function texture(unit, wrap, internal, format, w, h, data) {
+      const t = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, wrap], [gl.TEXTURE_WRAP_T, wrap]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+      gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, gl.FLOAT, data);
+      return t;
+    }
+    const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+    const slopes = new Float32Array(f.NX * f.NY * 2);
+    f.slope(slopes);
+    const slopeTex = texture(0, gl.REPEAT, gl.RG16F, gl.RG, f.NX, f.NY, slopes);
+    texture(1, gl.REPEAT, gl.R16F, gl.RED, f.NX, f.NY, f.thickness);
+    texture(2, gl.CLAMP_TO_EDGE, gl.RGBA16F, gl.RGBA, NU, NC, colours);
+
+    const quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const NL = env.lamps.length;
+    const show = program(`in vec2 p; out vec2 uv; void main() { uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0, 1); }`,
+      `in vec2 uv; out vec4 o;
+      uniform sampler2D G, D, F; // the slope, the thickness at rest, the film's colours
+      uniform vec2 N; // the grid
+      uniform vec4 lamps[${NL}]; // which way, how bright
+      uniform float side; // the way the soft light is brighter
+      // the slope, smooth between the grid's points (a cubic B-spline, from
+      // four bilinear lookups)
+      vec2 slope(vec2 t) {
+        vec2 p = t * N, i = floor(p), f = p - i, f2 = f * f, f3 = f2 * f;
+        vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0, w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+        vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, w3 = f3 / 6.0;
+        vec2 g0 = w0 + w1, g1 = w2 + w3;
+        vec2 h0 = (i - 0.5 + w1 / g0) / N, h1 = (i + 1.5 + w3 / g1) / N;
+        return g0.y * (g0.x * texture(G, h0).rg + g1.x * texture(G, vec2(h1.x, h0.y)).rg)
+             + g1.y * (g0.x * texture(G, vec2(h0.x, h1.y)).rg + g1.x * texture(G, h1).rg);
+      }
+      vec3 light(vec3 r) {
+        if (r.z <= 0.0) return vec3(0.0); // (the dark behind the film)
+        float soft = smoothstep(0.97, 0.45, r.z) * (0.6 + 0.4 * cos(atan(r.y, r.x) - side)) * 3.0;
+        float glare = 0.0;
+        for (int k = 0; k < ${NL}; k++) glare += lamps[k].w * exp((dot(r, lamps[k].xyz) - 1.0) / 0.0005);
+        return vec3(soft + glare) * smoothstep(0.0, 0.12, r.z);
+      }
+      void main() {
+        vec2 t = vec2(uv.x, 1.0 - uv.y);
+        vec2 g = slope(t);
+        float c = inversesqrt(1.0 + dot(g, g)); // the cosine of its tilt, and of the light's incidence
+        vec3 n = vec3(-g, 1.0) * c, r = vec3(0.0, 0.0, -1.0) + 2.0 * c * n;
+        float d = texture(D, t + 0.5 / N).r * c; // (thinned as it is stretched)
+        float ct = sqrt(1.0 - (1.0 - c * c) / ${(N_FILM * N_FILM).toFixed(4)});
+        float u = ${N_FILM.toFixed(3)} * d * ct / ${U_MAX.toFixed(1)};
+        vec3 R = max(texture(F, vec2((u * ${(NU - 1).toFixed(1)} + 0.5) / ${NU.toFixed(1)}, (c * ${(NC - 1).toFixed(1)} + 0.5) / ${NC.toFixed(1)})).rgb, 0.0);
+        vec3 col = 1.0 - exp(-R * light(r));
+        o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+      }`);
+    const a = gl.getAttribLocation(show.p, 'p');
+
+    function draw() {
+      f.slope(slopes);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, slopeTex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, f.NX, f.NY, gl.RG, gl.FLOAT, slopes);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, W, H);
+      gl.useProgram(show.p);
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      gl.enableVertexAttribArray(a);
+      gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+      gl.uniform1i(show.loc.G, 0); gl.uniform1i(show.loc.D, 1); gl.uniform1i(show.loc.F, 2);
+      gl.uniform2f(show.loc.N, f.NX, f.NY);
+      gl.uniform4fv(show.loc.lamps, env.lamps.flat());
+      gl.uniform1f(show.loc.side, env.side);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    return { draw };
+  }
+
+  // the film's colours, thin to thick, seen straight on, as a strip over the hint
+  {
+    const stops = [];
+    for (let k = 0; k <= 60; k++) {
+      const iu = Math.round(k / 60 * (NU - 1) * 1600 / U_MAX), o = ((NC - 1) * NU + iu) * 4;
+      const c = [0, 1, 2].map(q => Math.round(255 * Math.pow(1 - Math.exp(-Math.max(0, colours[o + q]) * 8), 1 / 2.2)));
+      stops.push(`rgb(${c}) ${(k / 60 * 100).toFixed(1)}%`);
+    }
+    spectrum.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
+  }
+
+  let paused = false, film = null;
+  function showStats() {
+    if (!film) return;
+    hintText.textContent = `waves ${film.modes}` + (paused ? ' · paused' : '') +
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · thin ← colour → thick · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
+  }
+
+  const awake = PD.screenAwake();
+  canvas.addEventListener('click', () => {
+    if (!film) return;
+    paused = !paused;
+    awake(!paused);
+    showStats();
+    showHint();
+  });
+
+  // One film per page load, trembling forever: only reloading the page
+  // blows a new one.
+  function start() {
+    setupCanvas();
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: true });
+    if (!gl) { hintText.textContent = 'This painting needs WebGL2.'; return; }
+    const rng = PD.mulberry32(seed);
+    // the film as big whatever the screen's shape, as a 16:9 one's (16/9 × 1),
+    // only its shape the screen's, so its waves look the same everywhere;
+    // its grid the fewest cells (powers of two each way) no coarser than 1/128
+    const aspect = CW / CH, Ly = Math.sqrt(16 / 9 / aspect), Lx = aspect * Ly;
+    let NX = 32, NY = 32;
+    while (Lx / NX > 1 / 128) NX *= 2;
+    while (Ly / NY > 1 / 128) NY *= 2;
+    const f = film = SoapBubble.film(rng, { Lx, Ly, NX, NY });
+    window.film = f; // (for whoever wants to look inside)
+    const painter = glPainter(gl, f, lights(rng));
+    painter.draw();
+    showStats();
+    showHint();
+    awake(true);
+    let last;
+    const frame = now => {
+      const dt = Math.min(100, now - (last ?? now)) / 1000;
+      last = now;
+      if (!paused && dt > 0) {
+        f.step(dt);
+        painter.draw();
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  let lastMove = 0;
+  window.addEventListener('mousemove', () => {
+    const now = performance.now();
+    if (now - lastMove > 500) { lastMove = now; showHint(); }
+  });
+  window.addEventListener('keydown', e => {
+    if ((e.key === 's' || e.key === 'S') && film) {
+      const a = document.createElement('a');
+      a.download = `soap-bubble-${seed}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+  });
+  let ht;
+  function showHint() {
+    hint.classList.remove('hidden');
+    clearTimeout(ht);
+    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
