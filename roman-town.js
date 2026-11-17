@@ -1090,7 +1090,8 @@ const RomanTown = (() => {
       if (rng() < 0.5) tree(range(rng, u1 + 4, u2 - 4), range(rng, v1 + 4, v2 - 4), rng() < 0.6 ? 'oak' : 'pine', range(rng, 4, 6.5), range(rng, 9, 14));
       if (rng() < 0.35) well(range(rng, u1 + 3, u2 - 3), range(rng, v1 + 3, v2 - 3));
       if (rng() < 0.25) return;
-      const kind = pick(rng, { sheep: 4, goat: 1.5, cow: 2, horse: 0.7 });
+      // (no sheep for now)
+      const kind = pick(rng, { sheep: 0, goat: 1.5, cow: 2, horse: 0.7 });
       const herds = kind === 'sheep' || kind === 'goat' ? 1 + (rng() * 2 | 0) : 1;
       for (let hh = 0; hh < herds; hh++) {
         const n = kind === 'sheep' ? 8 + (rng() * 26 | 0) : kind === 'goat' ? 5 + (rng() * 12 | 0) : kind === 'cow' ? 3 + (rng() * 8 | 0) : 2 + (rng() * 5 | 0);
