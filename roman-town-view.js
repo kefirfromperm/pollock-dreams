@@ -102,21 +102,6 @@ const RomanTownView = (() => {
       vec2 q = vec2(dot(p, w) - uTime * 5.0, dot(p, vec2(-w.y, w.x)));
       return fnoise(q / vec2(18.0, 42.0), 41);
     }
-    // leaves in clusters: cells about random points; the way to the
-    // nearest's middle, how near its edge, its own number
-    vec4 leafcells(vec2 p, int s) {
-      vec2 i = floor(p);
-      float f1 = 9.0, f2 = 9.0, id = 0.0;
-      vec2 off = vec2(0.0);
-      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-        ivec2 c = ivec2(i) + ivec2(x, y);
-        float h = hf(c, s);
-        vec2 d = p - vec2(c) - 0.1 - 0.8 * vec2(h, hf(c, s + 1));
-        float q = dot(d, d);
-        if (q < f1) { f2 = f1; f1 = q; id = h; off = d; } else if (q < f2) f2 = q;
-      }
-      return vec4(off, sqrt(f2) - sqrt(f1), id);
-    }
   `;
   const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
 
@@ -307,27 +292,27 @@ const RomanTownView = (() => {
     }`;
   const BODY_FS = NOISE + OUT + `
     in vec3 vW, vD; flat in vec4 vCol;
+    uniform float uPx; // metres a pixel
     void main() {
       vec3 n = normalize(vD);
       float tone = 1.0;
       vec3 col = vCol.rgb;
       if (vCol.w > 0.0) {
-        // foliage, fractal: the clump's lumps, the clusters of leaves on
-        // them, each a little dome, dark between, the leaves on those;
-        // stirring as the wind does
+        // foliage, as it looks from above: billows of leaves on billows,
+        // fractal, shaded by their own slopes; dark in the hollows between,
+        // pale and yellow at the sunlit tips; stirring in the wind
         float sz = vCol.w, g = gust(vW.xy);
-        vec2 stir = uWind * (0.06 + 0.1 * g) * vec2(sin(uTime * 3.1 + vW.z), cos(uTime * 2.7 + vW.x));
-        // (the clusters' lattice warped by fractal noise, so it is not seen)
-        vec2 warp = 0.9 * vec2(fbm3(vW / (sz * 2.0), 91) - 0.5, fbm3(vW / (sz * 2.0) + 5.0, 93) - 0.5);
-        vec4 lc = leafcells(vW.xy / sz + stir + warp, 53);
-        vec4 lc2 = leafcells(vW.xy / (sz * 0.45) + stir * 2.0 + warp * 1.7, 57);
-        float lump = fbm3(vW / (sz * 3.5), 59);
-        n = normalize(n + vec3(lc.xy * 2.0 + lc2.xy * 0.7, 0.0)
-          + 0.6 * vec3(fbm3(vW / (sz * 2.2) + 3.1, 61) - 0.5, fbm3(vW / (sz * 2.2) + 7.7, 67) - 0.5, 0.0));
-        float gap = smoothstep(0.0, 0.35, lc.z) * (0.85 + 0.15 * smoothstep(0.0, 0.3, lc2.z));
-        tone = (0.72 + 0.28 * gap) * (0.85 + 0.25 * lc.w) * (0.68 + 0.64 * lump);
-        // the tips paler and yellower, the hollows bluer
-        col = mix(col * vec3(0.8, 0.9, 1.0), col * vec3(1.25, 1.2, 0.9), clamp(0.3 * lc.w + 0.7 * lump * gap, 0.0, 1.0));
+        vec3 stir = vec3(uWind * (0.08 + 0.12 * g) * sin(uTime * 2.3 + vW.z * 0.7), 0.0);
+        vec3 q = (vW + stir) / sz;
+        float b1 = fbm3(q * 0.35, 53), b2 = fbm3(q * 0.9 + 4.1, 57), b3 = vnoise3(q * 2.3 + 9.7, 59);
+        float hgt = 0.5 * b1 + 0.32 * b2 + 0.18 * b3;
+        // its slopes, from the pixels beside (north up, so y turned)
+        float hm = hgt * sz * 2.2;
+        vec2 gr = vec2(dFdx(hm), -dFdy(hm)) / uPx;
+        n = normalize(n + vec3(-gr * 0.9, 0.0));
+        float holl = smoothstep(0.32, 0.62, hgt);
+        tone = (0.5 + 0.62 * holl) * (0.92 + 0.16 * vnoise3(q * 5.0, 61));
+        col = mix(col * vec3(0.8, 0.88, 1.0), col * vec3(1.12, 1.1, 0.9), holl * 0.8);
       } else if (vCol.w < 0.0) {
         // weathered stone, cracked, lichen in patches
         vec3 q = vW / 0.45;
@@ -421,27 +406,28 @@ const RomanTownView = (() => {
         float flick = 0.78 + 0.22 * vn3(vec3(uTime * 7.0, fi, 0.0), 5) + 0.1 * vn3(vec3(uTime * 19.0, fi, 1.0), 6);
         float dd = sqrt(d2), f = 1.0 - dd / 16.0;
         glow += l.w * flick * 1.2 / (1.0 + d2 * 0.3) * f * f * max(0.2, dot(-d, n) / max(dd, 1e-3) * 0.8 + 0.2);
-        // the flame, seen from above: a tongue of fire, now and then two,
-        // swinging this way and that as the draught takes it, lengthening
-        // and shrinking as it flickers; white at its root, red at its tip,
-        // its edges licking
+        // the flame, seen from above as it rises towards us: its tip over its
+        // root, rings of heat about it, white within, red without, its rim
+        // ragged and licking; leaning only a little, the way the draught
+        // takes it, drawn out a little when it does; now and then a second
         vec2 r = (P.xy - l.xy) / (0.5 * sqrt(max(l.w, 0.2)));
         if (dot(r, r) < 9.0) {
           float wa0 = atan(uWind.y, uWind.x);
           for (int k = 0; k < 2; k++) {
             float fk = fi + float(k) * 3.3;
-            float on = k == 0 ? 1.0 : smoothstep(0.5, 0.7, vn3(vec3(uTime * 0.6, fk, 2.0), 13));
+            float on = k == 0 ? 1.0 : smoothstep(0.55, 0.75, vn3(vec3(uTime * 0.6, fk, 2.0), 13));
             if (on <= 0.0) continue;
-            float wa = wa0 + (vn3(vec3(uTime * 1.4, fk, 3.0), 14) - 0.5) * 2.4 + float(k) * (vn3(vec3(uTime * 0.9, fk, 8.0), 18) - 0.5) * 3.0;
+            float wa = wa0 + (vn3(vec3(uTime * 1.2, fk, 3.0), 14) - 0.5) * 1.8;
             vec2 dir = vec2(cos(wa), sin(wa));
-            float len = (k == 0 ? 1.7 : 1.1) * (0.55 + 0.75 * vn3(vec3(uTime * 6.5, fk, 4.0), 15));
-            float u = dot(r, dir), v = dot(r, vec2(-dir.y, dir.x));
-            float t = clamp(u / len, 0.0, 1.0);
-            v += (vn3(vec3(u * 3.0 - uTime * 9.0, fk, 5.0), 16) - 0.5) * 0.35 * t;
-            float w = u < 0.0 ? sqrt(max(0.0, 0.16 - u * u)) : 0.4 * pow(1.0 - t, 0.8);
-            float heat = clamp(1.0 - abs(v) / max(w, 1e-3), 0.0, 1.0) * (1.0 - 0.75 * t) * on;
-            heat *= 0.8 + 0.4 * vn3(vec3(r * 4.0, uTime * 7.0 + fk), 17);
-            vec3 c = mix(mix(vec3(0.7, 0.1, 0.02), vec3(1.0, 0.48, 0.08), smoothstep(0.0, 0.45, heat)), vec3(1.0, 0.93, 0.72), smoothstep(0.55, 1.0, heat));
+            float lean = 0.1 + 0.5 * pow(vn3(vec3(uTime * 0.9, fk, 9.0), 19), 2.0) * (0.7 + 0.6 * vn3(vec3(uTime * 6.0, fk, 4.0), 15));
+            float size = k == 0 ? 0.55 : 0.34;
+            vec2 q = r - dir * (lean * 0.6 + (k == 0 ? 0.0 : 0.35));
+            float u = dot(q, dir) / (size * (1.0 + lean * 1.4)), v = dot(q, vec2(-dir.y, dir.x)) / size;
+            float a = atan(v, u);
+            float rim = 0.78 + 0.4 * (vn3(vec3(cos(a) * 2.0, sin(a) * 2.0, uTime * 5.0 + fk), 16) - 0.5) + 0.18 * (vn3(vec3(cos(a) * 5.0, sin(a) * 5.0, uTime * 9.0 + fk), 12) - 0.5);
+            float heat = clamp(1.0 - length(vec2(u, v)) / rim, 0.0, 1.0);
+            heat = pow(heat, 0.75) * (0.8 + 0.4 * vn3(vec3(r * 5.0, uTime * 8.0 + fk), 17)) * on;
+            vec3 c = mix(mix(vec3(0.7, 0.1, 0.02), vec3(1.0, 0.48, 0.08), smoothstep(0.0, 0.4, heat)), vec3(1.0, 0.93, 0.72), smoothstep(0.5, 0.95, heat));
             fire += c * heat * 2.4 * flick * min(l.w, 1.5);
           }
           fire += vec3(1.0, 0.45, 0.12) * 0.18 * exp(-dot(r, r) * 1.2) * flick * min(l.w, 1.5);
@@ -1012,6 +998,7 @@ const RomanTownView = (() => {
       if (nb) {
         gl.useProgram(P.body.p);
         gl.uniformMatrix4fv(P.body.loc.uMVP, false, mvp);
+        gl.uniform1f(P.body.loc.uPx, rect[2] / g.w);
         setWind(P.body);
         const k = scale > 30 ? 2 : scale > 6 ? 1 : 0; // (rounder close up)
         gl.bindVertexArray(bodyVAOs[k]);
