@@ -94,9 +94,29 @@ const RomanTownView = (() => {
     // fractal: three octaves, each half the last
     float fbm3(vec3 p, int s) { return 0.55 * vnoise3(p, s) + 0.3 * vnoise3(p * 2.03, s + 1) + 0.15 * vnoise3(p * 4.1, s + 2); }
     vec3 rgb(float r, float g, float b) { return vec3(r, g, b) / 255.0; }
-    // the wind: gusts going over, downwind at 4 m/s, about 25 m across
+    // the wind: gusts going over, downwind at 5 m/s, streaks longer across
+    // the wind than along it
     uniform vec2 uWind; uniform float uTime;
-    float gust(vec2 p) { return fnoise((p - uWind * uTime * 4.0) / 25.0, 41); }
+    float gust(vec2 p) {
+      vec2 w = normalize(uWind);
+      vec2 q = vec2(dot(p, w) - uTime * 5.0, dot(p, vec2(-w.y, w.x)));
+      return fnoise(q / vec2(18.0, 42.0), 41);
+    }
+    // leaves in clusters: cells about random points; the way to the
+    // nearest's middle, how near its edge, its own number
+    vec4 leafcells(vec2 p, int s) {
+      vec2 i = floor(p);
+      float f1 = 9.0, f2 = 9.0, id = 0.0;
+      vec2 off = vec2(0.0);
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        ivec2 c = ivec2(i) + ivec2(x, y);
+        float h = hf(c, s);
+        vec2 d = p - vec2(c) - 0.1 - 0.8 * vec2(h, hf(c, s + 1));
+        float q = dot(d, d);
+        if (q < f1) { f2 = f1; f1 = q; id = h; off = d; } else if (q < f2) f2 = q;
+      }
+      return vec4(off, sqrt(f2) - sqrt(f1), id);
+    }
   `;
   const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
 
@@ -192,10 +212,10 @@ const RomanTownView = (() => {
       if (grass > 0.0) {
         // grass in the wind: bent over where a gust goes, its paler blades
         // showing, rippling; its blades, fine, fractal
-        float gu = gust(p), rip = fnoise((p - uWind * uTime * 4.0) / 3.0, 43);
-        float bend = grass * (gu - 0.4 + 0.3 * (rip - 0.5));
-        n = normalize(n + vec3(uWind * bend * 0.7, 0.0));
-        f *= 1.0 + 0.16 * bend;
+        float gu = gust(p), rip = fnoise((p - uWind * uTime * 5.0) / 2.5, 43);
+        float bend = grass * (1.6 * (gu - 0.42) + 0.5 * (rip - 0.5));
+        n = normalize(n + vec3(uWind * bend * 1.1, 0.0));
+        f *= 1.0 + 0.32 * bend;
         f *= 1.0 + min(grass, 1.0) * 0.14 * (fnoise(p / 0.35, uSeed + 47) - 0.5 + 0.5 * (fnoise(p / 0.12, uSeed + 49) - 0.5));
       }
       oAlb = vec4(clamp(c * f, 0.0, 1.0), flag);
@@ -252,26 +272,33 @@ const RomanTownView = (() => {
     layout(location = 1) in vec3 aC;   // the middle
     layout(location = 2) in vec3 aR;   // the radii
     layout(location = 3) in vec4 aCol; // colour, and how lumpy
-    layout(location = 4) in vec2 aRot; // turned, and its own number
+    layout(location = 4) in vec2 aRot; // turned, and its own number (a tree's, and which of its clumps)
+    layout(location = 5) in vec2 aAnchor; // a tree's foot, and its height
     uniform mat4 uMVP;
     out vec3 vW, vD; flat out vec4 vCol;
     void main() {
       vec3 d = aDir;
-      // a crown: its outline fractal, clumps on clumps
+      // a clump of a crown: its outline fractal, lumps on lumps
       float fr = 0.0;
-      if (aCol.w > 0.0) { fr = fbm3(aDir * 2.2 + aRot.y * 13.7, 47); d.xy *= 0.78 + 0.44 * fr; d.z *= 0.92 + 0.16 * fr; }
+      if (aCol.w > 0.0) {
+        fr = fbm3(aDir * 2.0 + aRot.y * 13.7, 47);
+        float fine = vnoise3(aDir * 6.5 + aRot.y * 5.1, 49);
+        d *= 0.8 + 0.34 * fr + 0.12 * fine;
+      }
       // a rock: craggy all over
       else if (aCol.w < 0.0) d *= 0.72 + 0.5 * vnoise3(aDir * 1.8 + aRot.y * 7.3, 71);
       vec3 q = d * aR;
       float c = cos(aRot.x), s = sin(aRot.x);
       vW = aC + vec3(c * q.x - s * q.y, s * q.x + c * q.y, q.z);
       if (aCol.w > 0.0) {
-        // the wind: the crown leaning with the gusts, the higher the more,
-        // swaying, its leaves fluttering
-        float up = clamp((q.z + aR.z) / (2.0 * aR.z), 0.0, 1.0), ph = aRot.y * 1.7;
-        float sway = (gust(aC.xy) - 0.35) * 0.9 + 0.25 * sin(uTime * (1.1 + 0.4 * fract(aRot.y * 0.37)) + ph);
-        vW.xy += uWind * sway * up * up * min(aR.z, 7.0) * 0.07;
-        vW.xy += 0.035 * min(aR.x, 3.0) * fr * vec2(sin(uTime * 7.0 + dot(aDir, vec3(13.0, 7.0, 5.0)) + ph), cos(uTime * 6.1 + dot(aDir, vec3(5.0, 11.0, 3.0)) + ph));
+        // the wind: the tree leaning with the gusts, the higher the more,
+        // swaying back and to, its leaves fluttering
+        float tid = floor(aRot.y), ph = tid * 1.7, H = max(aAnchor.y, 1.0);
+        float up = clamp((vW.z - aAnchor.x) / H, 0.0, 1.2);
+        float sway = (gust(aC.xy) - 0.3) * 1.6 + 0.45 * sin(uTime * (0.8 + 0.5 * fract(tid * 0.37)) + ph) + 0.15 * sin(uTime * 2.1 + ph * 1.3);
+        vW.xy += uWind * sway * up * up * min(H, 16.0) * 0.08;
+        float fl = 0.06 * min(aR.x, 2.5) * (0.5 + gust(aC.xy));
+        vW.xy += fl * vec2(sin(uTime * 8.0 + dot(aDir, vec3(13.0, 7.0, 5.0)) + ph), cos(uTime * 6.7 + dot(aDir, vec3(5.0, 11.0, 3.0)) + ph));
       }
       vec3 e = aDir / aR;
       vD = vec3(c * e.x - s * e.y, s * e.x + c * e.y, e.z);
@@ -283,12 +310,24 @@ const RomanTownView = (() => {
     void main() {
       vec3 n = normalize(vD);
       float tone = 1.0;
+      vec3 col = vCol.rgb;
       if (vCol.w > 0.0) {
-        // leaves in clumps on clumps, catching the light as they stir
-        vec3 q = vW / vCol.w + vec3(uWind * uTime * 0.35, uTime * 0.25);
-        float nn = fbm3(q, 53) - 0.5;
-        n = normalize(n + 0.9 * vec3(fbm3(q + 9.1, 59) - 0.5, fbm3(q + 4.7, 61) - 0.5, 0.0));
-        tone = 0.78 + 0.44 * (nn + 0.5);
+        // foliage, fractal: the clump's lumps, the clusters of leaves on
+        // them, each a little dome, dark between, the leaves on those;
+        // stirring as the wind does
+        float sz = vCol.w, g = gust(vW.xy);
+        vec2 stir = uWind * (0.06 + 0.1 * g) * vec2(sin(uTime * 3.1 + vW.z), cos(uTime * 2.7 + vW.x));
+        // (the clusters' lattice warped by fractal noise, so it is not seen)
+        vec2 warp = 0.9 * vec2(fbm3(vW / (sz * 2.0), 91) - 0.5, fbm3(vW / (sz * 2.0) + 5.0, 93) - 0.5);
+        vec4 lc = leafcells(vW.xy / sz + stir + warp, 53);
+        vec4 lc2 = leafcells(vW.xy / (sz * 0.45) + stir * 2.0 + warp * 1.7, 57);
+        float lump = fbm3(vW / (sz * 3.5), 59);
+        n = normalize(n + vec3(lc.xy * 2.0 + lc2.xy * 0.7, 0.0)
+          + 0.6 * vec3(fbm3(vW / (sz * 2.2) + 3.1, 61) - 0.5, fbm3(vW / (sz * 2.2) + 7.7, 67) - 0.5, 0.0));
+        float gap = smoothstep(0.0, 0.35, lc.z) * (0.85 + 0.15 * smoothstep(0.0, 0.3, lc2.z));
+        tone = (0.72 + 0.28 * gap) * (0.85 + 0.25 * lc.w) * (0.68 + 0.64 * lump);
+        // the tips paler and yellower, the hollows bluer
+        col = mix(col * vec3(0.8, 0.9, 1.0), col * vec3(1.25, 1.2, 0.9), clamp(0.3 * lc.w + 0.7 * lump * gap, 0.0, 1.0));
       } else if (vCol.w < 0.0) {
         // weathered stone, cracked, lichen in patches
         vec3 q = vW / 0.45;
@@ -301,7 +340,7 @@ const RomanTownView = (() => {
         return;
       }
       if (n.z < 0.0) n.z = -n.z;
-      oAlb = vec4(clamp(vCol.rgb * tone, 0.0, 1.0), 0.0);
+      oAlb = vec4(clamp(col * tone, 0.0, 1.0), 0.0);
       oNrm = vec4(n, 0.0);
       oH = vW.z;
     }`;
@@ -382,20 +421,30 @@ const RomanTownView = (() => {
         float flick = 0.78 + 0.22 * vn3(vec3(uTime * 7.0, fi, 0.0), 5) + 0.1 * vn3(vec3(uTime * 19.0, fi, 1.0), 6);
         float dd = sqrt(d2), f = 1.0 - dd / 16.0;
         glow += l.w * flick * 1.2 / (1.0 + d2 * 0.3) * f * f * max(0.2, dot(-d, n) / max(dd, 1e-3) * 0.8 + 0.2);
-        // the flame, seen from above: tongues of fire, fractal, licking
-        // out and back, blown a little downwind
-        vec2 r = (P.xy - l.xy) / (1.1 * sqrt(max(l.w, 0.2))) - uWind * 0.12;
-        float rr = length(r);
-        if (rr < 1.6) {
-          float a = atan(r.y, r.x);
-          vec3 nq = vec3(cos(a) * 2.2, sin(a) * 2.2, uTime * 2.4 + fi);
-          float edge = 0.3 + 0.75 * fbm(nq, 7);
-          float body = smoothstep(edge, edge * 0.15, rr);
-          float turb = 0.5 + 0.5 * fbm(vec3(r * 5.0 - uWind * uTime * 1.2, uTime * 4.5 + fi), 11);
-          float heat = body * turb;
-          // a tongue of fire, white at its root, through yellow and orange to red; a halo about it
-          vec3 c = mix(mix(vec3(0.75, 0.12, 0.02), vec3(1.0, 0.5, 0.1), smoothstep(0.0, 0.5, heat)), vec3(1.0, 0.92, 0.7), smoothstep(0.55, 1.0, heat));
-          fire += (c * heat * 2.2 + vec3(1.0, 0.45, 0.12) * 0.2 * exp(-rr * rr * 1.5)) * flick * min(l.w, 1.5);
+        // the flame, seen from above: a tongue of fire, now and then two,
+        // swinging this way and that as the draught takes it, lengthening
+        // and shrinking as it flickers; white at its root, red at its tip,
+        // its edges licking
+        vec2 r = (P.xy - l.xy) / (0.5 * sqrt(max(l.w, 0.2)));
+        if (dot(r, r) < 9.0) {
+          float wa0 = atan(uWind.y, uWind.x);
+          for (int k = 0; k < 2; k++) {
+            float fk = fi + float(k) * 3.3;
+            float on = k == 0 ? 1.0 : smoothstep(0.5, 0.7, vn3(vec3(uTime * 0.6, fk, 2.0), 13));
+            if (on <= 0.0) continue;
+            float wa = wa0 + (vn3(vec3(uTime * 1.4, fk, 3.0), 14) - 0.5) * 2.4 + float(k) * (vn3(vec3(uTime * 0.9, fk, 8.0), 18) - 0.5) * 3.0;
+            vec2 dir = vec2(cos(wa), sin(wa));
+            float len = (k == 0 ? 1.7 : 1.1) * (0.55 + 0.75 * vn3(vec3(uTime * 6.5, fk, 4.0), 15));
+            float u = dot(r, dir), v = dot(r, vec2(-dir.y, dir.x));
+            float t = clamp(u / len, 0.0, 1.0);
+            v += (vn3(vec3(u * 3.0 - uTime * 9.0, fk, 5.0), 16) - 0.5) * 0.35 * t;
+            float w = u < 0.0 ? sqrt(max(0.0, 0.16 - u * u)) : 0.4 * pow(1.0 - t, 0.8);
+            float heat = clamp(1.0 - abs(v) / max(w, 1e-3), 0.0, 1.0) * (1.0 - 0.75 * t) * on;
+            heat *= 0.8 + 0.4 * vn3(vec3(r * 4.0, uTime * 7.0 + fk), 17);
+            vec3 c = mix(mix(vec3(0.7, 0.1, 0.02), vec3(1.0, 0.48, 0.08), smoothstep(0.0, 0.45, heat)), vec3(1.0, 0.93, 0.72), smoothstep(0.55, 1.0, heat));
+            fire += c * heat * 2.4 * flick * min(l.w, 1.5);
+          }
+          fire += vec3(1.0, 0.45, 0.12) * 0.18 * exp(-dot(r, r) * 1.2) * flick * min(l.w, 1.5);
         }
       }
       const vec3 LAMP = vec3(1.0, 0.56, 0.22);
@@ -763,24 +812,61 @@ const RomanTownView = (() => {
       }
       return new Float32Array(fs.flat().flatMap(i => vs[i]));
     }
+    // a tree as clumps, as its kind grows: a cypress's or a poplar's stacked
+    // up, narrowing; a pine's spread flat as a parasol; the rest heaped
+    // round, a few on top; each clump its leaves' size
+    const LEAF = { cypress: 0.22, poplar: 0.26, pine: 0.34, oak: 0.3, olive: 0.2, fruit: 0.27, shrub: 0.18, plane: 0.38 };
     const bodies = [];
     town.trees.forEach((t, i) => {
       const [col, depth] = TREES[t.kind] || TREES.oak, cdep = depth > 1 ? Math.min(depth, t.h * 0.5) : depth * t.h;
-      const tone = 0.88 + 0.24 * hash(i, 3, seed), lump = t.kind === 'cypress' || t.kind === 'poplar' ? 0.6 : 1.1;
-      bodies.push([t.x, t.y, t.z0 + t.h - cdep, t.r, t.r, cdep, col[0] / 255 * tone, col[1] / 255 * tone, col[2] / 255 * tone, lump, 0, i]);
+      const tone = 0.88 + 0.24 * hash(i, 3, seed), R = t.r, zb = t.z0 + t.h - cdep, leaf = LEAF[t.kind] || 0.3;
+      let k = 0;
+      const rnd = () => hash(i, 100 + k * 7 + (rnd.n = (rnd.n || 0) + 1), seed + 77);
+      const clump = (dx, dy, z, rx, rz) => {
+        const v = 0.88 + 0.24 * rnd();
+        bodies.push([t.x + dx, t.y + dy, z, rx, rx * (0.85 + 0.3 * rnd()), rz, col[0] / 255 * tone * v, col[1] / 255 * tone * v, col[2] / 255 * tone * v, leaf, rnd() * 6.28, i + (k++) / 64, t.z0, t.h]);
+      };
+      if (t.kind === 'cypress' || t.kind === 'poplar') {
+        const n = 4 + (rnd() * 3 | 0);
+        for (let j = 0; j < n; j++) {
+          const f = j / (n - 1), r = R * (1.05 - 0.6 * f);
+          clump((rnd() - 0.5) * 0.3 * R, (rnd() - 0.5) * 0.3 * R, t.z0 + t.h * (0.18 + 0.72 * f), r, t.h / n * 0.85);
+        }
+      } else if (t.kind === 'pine') {
+        clump(0, 0, zb, R * 0.6, cdep * 0.55);
+        for (let j = 0, n = 5 + (rnd() * 3 | 0); j < n; j++) {
+          const a = (j + rnd() * 0.6) / n * Math.PI * 2, d = R * (0.45 + 0.15 * rnd());
+          clump(Math.cos(a) * d, Math.sin(a) * d, zb + (rnd() - 0.6) * cdep * 0.6, R * (0.38 + 0.15 * rnd()), cdep * (0.4 + 0.2 * rnd()));
+        }
+      } else if (t.kind === 'shrub') {
+        for (let j = 0, n = 2 + (rnd() * 3 | 0); j < n; j++) {
+          const a = rnd() * Math.PI * 2, d = R * 0.35 * rnd();
+          clump(Math.cos(a) * d, Math.sin(a) * d, t.z0 + t.h * (0.35 + 0.2 * rnd()), R * (0.5 + 0.25 * rnd()), t.h * 0.45);
+        }
+      } else {
+        clump(0, 0, zb, R * 0.62, cdep * 0.75);
+        for (let j = 0, n = 5 + (rnd() * 4 | 0); j < n; j++) {
+          const a = (j + rnd() * 0.7) / n * Math.PI * 2, d = R * (0.42 + 0.18 * rnd());
+          clump(Math.cos(a) * d, Math.sin(a) * d, zb - cdep * (0.05 + 0.25 * rnd()), R * (0.4 + 0.15 * rnd()), cdep * (0.5 + 0.15 * rnd()));
+        }
+        for (let j = 0, n = 1 + (rnd() * 2 | 0); j < n; j++) {
+          const a = rnd() * Math.PI * 2, d = R * 0.25 * rnd();
+          clump(Math.cos(a) * d, Math.sin(a) * d, zb + cdep * (0.3 + 0.15 * rnd()), R * (0.35 + 0.12 * rnd()), cdep * 0.45);
+        }
+      }
     });
     (town.rocks || []).forEach((r, i) => {
       const g = 0.5 + 0.12 * hash(i, 7, seed), warm = 0.03 * hash(i, 8, seed);
-      bodies.push([r.x, r.y, r.z0 + r.h * 0.25, r.r, r.r * (0.65 + 0.35 * hash(i, 9, seed)), r.h, g + warm, g, g - warm, -0.6, r.angle, i + 50000]);
+      bodies.push([r.x, r.y, r.z0 + r.h * 0.25, r.r, r.r * (0.65 + 0.35 * hash(i, 9, seed)), r.h, g + warm, g, g - warm, -0.6, r.angle, i + 50000, r.z0, r.h]);
     });
     (town.animals || []).forEach((an, i) => {
       const [Ln, Wd, Ht, cols] = BEASTS[an.kind] || BEASTS.sheep;
       const col = cols[Math.floor(hash(i, 5, seed) ** 2 * cols.length)].map(v => v / 255);
       const c = Math.cos(an.angle), s = Math.sin(an.angle);
-      bodies.push([an.x, an.y, an.z0 + Ht * 0.7, Ln / 2, Wd / 2, Ht * 0.3, ...col, 0, an.angle, 0]);
-      bodies.push([an.x + c * Ln * 0.55, an.y + s * Ln * 0.55, an.z0 + Ht * 0.8, Ln * 0.17, Wd * 0.28, Ht * 0.15, ...col.map(v => v * 0.85), 0, an.angle, 0]);
+      bodies.push([an.x, an.y, an.z0 + Ht * 0.7, Ln / 2, Wd / 2, Ht * 0.3, ...col, 0, an.angle, 0, an.z0, Ht]);
+      bodies.push([an.x + c * Ln * 0.55, an.y + s * Ln * 0.55, an.z0 + Ht * 0.8, Ln * 0.17, Wd * 0.28, Ht * 0.15, ...col.map(v => v * 0.85), 0, an.angle, 0, an.z0, Ht]);
     });
-    const spheres = [2, 3].map(sub => {
+    const spheres = [1, 2, 3].map(sub => {
       const data = sphere(sub), vbo = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
@@ -793,24 +879,24 @@ const RomanTownView = (() => {
       gl.bindBuffer(gl.ARRAY_BUFFER, sp.vbo);
       gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-      for (const [loc, size, off] of [[1, 3, 0], [2, 3, 12], [3, 4, 24], [4, 2, 40]]) {
+      for (const [loc, size, off] of [[1, 3, 0], [2, 3, 12], [3, 4, 24], [4, 2, 40], [5, 2, 48]]) {
         gl.enableVertexAttribArray(loc);
-        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 48, off);
+        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 56, off);
         gl.vertexAttribDivisor(loc, 1);
       }
       return vao;
     });
-    const instData = new Float32Array(Math.max(1, bodies.length) * 12);
+    const BS = 14, instData = new Float32Array(Math.max(1, bodies.length) * BS);
     // the bodies within a rectangle, into the instance buffer
     function bodiesIn(x0, y0, x1, y1) {
       let n = 0;
       for (const b of bodies) {
         const r = Math.max(b[3], b[4]);
         if (b[0] + r < x0 || b[0] - r > x1 || b[1] + r < y0 || b[1] - r > y1) continue;
-        instData.set(b, 12 * n++);
+        instData.set(b, BS * n++);
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, instData.subarray(0, 12 * Math.max(n, 1)), gl.DYNAMIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, instData.subarray(0, BS * Math.max(n, 1)), gl.DYNAMIC_DRAW);
       return n;
     }
 
@@ -927,7 +1013,7 @@ const RomanTownView = (() => {
         gl.useProgram(P.body.p);
         gl.uniformMatrix4fv(P.body.loc.uMVP, false, mvp);
         setWind(P.body);
-        const k = scale > 15 ? 1 : 0; // (rounder close up)
+        const k = scale > 30 ? 2 : scale > 6 ? 1 : 0; // (rounder close up)
         gl.bindVertexArray(bodyVAOs[k]);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[k].n, nb);
       }

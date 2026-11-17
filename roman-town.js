@@ -1116,7 +1116,7 @@ const RomanTown = (() => {
       const px = x + range(rng, 0, 6), py = y + range(rng, 0, 6);
       if (occ.get(px, py) !== 0 || tsd(px, py) < 18) continue;
       const sl = slopeAt(px, py), stony = smooth(0.22, 0.45, sl) + 0.6 * smooth(0.4, 0.7, fbm(nRock, px / 180, py / 180, 3));
-      if (riverD(px, py) > 4 && rng() < 0.045 * stony) {
+      if (riverD(px, py) > 4 && rng() < 0.012 * stony) {
         // an outcrop: a few boulders together, big and small
         for (let k = 0, n = 1 + (rng() * 6 | 0); k < n; k++) {
           const a = rng() * Math.PI * 2, d = k ? range(rng, 1, 4.5) : 0, bx = px + d * Math.cos(a), by = py + d * Math.sin(a);
