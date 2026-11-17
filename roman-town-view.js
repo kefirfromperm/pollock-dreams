@@ -280,10 +280,10 @@ const RomanTownView = (() => {
         // swaying back and to, its leaves fluttering
         float tid = floor(aRot.y), ph = tid * 1.7, H = max(aAnchor.y, 1.0);
         float up = clamp((vW.z - aAnchor.x) / H, 0.0, 1.2);
-        float sway = (gust(aC.xy) - 0.3) * 1.6 + 0.45 * sin(uTime * (0.8 + 0.5 * fract(tid * 0.37)) + ph) + 0.15 * sin(uTime * 2.1 + ph * 1.3);
+        float sway = (gust(aC.xy) - 0.3) * 1.4 + 0.4 * sin(uTime * (0.35 + 0.2 * fract(tid * 0.37)) + ph) + 0.12 * sin(uTime * 0.9 + ph * 1.3);
         vW.xy += uWind * sway * up * up * min(H, 16.0) * 0.08;
-        float fl = 0.06 * min(aR.x, 2.5) * (0.5 + gust(aC.xy));
-        vW.xy += fl * vec2(sin(uTime * 8.0 + dot(aDir, vec3(13.0, 7.0, 5.0)) + ph), cos(uTime * 6.7 + dot(aDir, vec3(5.0, 11.0, 3.0)) + ph));
+        float fl = 0.03 * min(aR.x, 2.5) * (0.5 + gust(aC.xy));
+        vW.xy += fl * vec2(sin(uTime * 2.2 + dot(aDir, vec3(13.0, 7.0, 5.0)) + ph), cos(uTime * 1.9 + dot(aDir, vec3(5.0, 11.0, 3.0)) + ph));
       }
       vec3 e = aDir / aR;
       vD = vec3(c * e.x - s * e.y, s * e.x + c * e.y, e.z);
@@ -296,23 +296,31 @@ const RomanTownView = (() => {
     void main() {
       vec3 n = normalize(vD);
       float tone = 1.0;
+      if (vCol.w > 0.0) {
+        // the crown's edge ragged: leaves and twigs against the gaps between,
+        // fractal, the more the nearer its rim
+        float rim = 1.0 - abs(n.z);
+        float leafy = fbm3(vW / (vCol.w * 0.9) + 2.3, 97) * 0.7 + 0.3 * vnoise3(vW / (vCol.w * 0.35), 98);
+        if (leafy < smoothstep(0.25, 0.95, rim) * 0.72) discard;
+      }
       vec3 col = vCol.rgb;
       if (vCol.w > 0.0) {
         // foliage, as it looks from above: billows of leaves on billows,
         // fractal, shaded by their own slopes; dark in the hollows between,
         // pale and yellow at the sunlit tips; stirring in the wind
         float sz = vCol.w, g = gust(vW.xy);
-        vec3 stir = vec3(uWind * (0.08 + 0.12 * g) * sin(uTime * 2.3 + vW.z * 0.7), 0.0);
+        vec3 stir = vec3(uWind * (0.05 + 0.07 * g) * sin(uTime * 0.9 + vW.z * 0.7), 0.0);
         vec3 q = (vW + stir) / sz;
         float b1 = fbm3(q * 0.35, 53), b2 = fbm3(q * 0.9 + 4.1, 57), b3 = vnoise3(q * 2.3 + 9.7, 59);
         float hgt = 0.5 * b1 + 0.32 * b2 + 0.18 * b3;
         // its slopes, from the pixels beside (north up, so y turned)
         float hm = hgt * sz * 2.2;
         vec2 gr = vec2(dFdx(hm), -dFdy(hm)) / uPx;
-        n = normalize(n + vec3(-gr * 0.9, 0.0));
+        n = normalize(n + vec3(-gr * 0.6, 0.0));
         float holl = smoothstep(0.32, 0.62, hgt);
-        tone = (0.5 + 0.62 * holl) * (0.92 + 0.16 * vnoise3(q * 5.0, 61));
+        tone = (0.66 + 0.42 * holl) * (0.94 + 0.12 * vnoise3(q * 5.0, 61));
         col = mix(col * vec3(0.8, 0.88, 1.0), col * vec3(1.12, 1.1, 0.9), holl * 0.8);
+        col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 0.72) * 0.92; // (duller, as Mediterranean leaves are)
       } else if (vCol.w < 0.0) {
         // weathered stone, cracked, lichen in patches
         vec3 q = vW / 0.45;
