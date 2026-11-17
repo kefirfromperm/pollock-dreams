@@ -1,482 +1,355 @@
 // Roman Town — a view of the model (roman-town.js) straight down from above,
-// in the sun of a clear afternoon.
+// north up, drawn by the graphics card (WebGL2).
 //
 // It knows nothing of how the town was made, only what the model says is
-// there, and draws it as a relief map does, but as it would be seen: every
-// pixel given a height, which way it faces and what colour it is (a 2.5D
-// buffer, the ground and then everything on it, the highest seen), then
-// lit: the sun or the moon on whatever faces it, the sky's light, less in the hollows
-// and narrow streets, and shadows found by walking from each pixel towards
-// the sun until something stands in the way or nothing could.
+// there. Once, it turns the model into geometry: the ground and every patch
+// laid on it (fields, roads, streets, the river) as flat shapes coloured
+// by what they are; every building as boxes with their roofs, walls and
+// steps; trees and beasts as lumpy round bodies. Then for each frame, any
+// rectangle of the world at any scale:
+//   - the sun's (or the moon's) view of everything, for the shadows;
+//   - from above, for each pixel, its height, which way it faces and its
+//     colour, the patterns of tiles, stones and furrows worked out there;
+//   - lit: the sun or the moon on whatever faces it unless something stands
+//     in the way, the sky's light, less of it in hollows and narrow streets
+//     (from the heights about, the whole world's, found once), lamps at night.
 //
-// It is drawn a piece at a time, any rectangle of the world at any scale,
-// so it can be looked over closely, as map tiles are:
-//   scene(town, { seed })   what holds for every piece, whatever the hour:
-//     the whole world drawn coarsely once, 2 px a metre, for what lies beyond
-//     a piece: the shadows cast into it and the sky hidden from it
-//   tile(scene, { x0, y0, s, w, h }, sky)   the w × h pixels from (x0, y0) at s px a
-//     metre, as RGBA bytes, lit as the sky is: { sun: { az, el }, moon: { az, el, lit } },
-//     azimuths from north (up) clockwise, elevations, radians; lit, the moon's lit part
+//   const view = RomanTownView.create(canvas, town, { seed })
+//   view.draw([x0, y0, w, h], sky)   the canvas filled with that rectangle of
+//     the world, lit as the sky is: { sun: { az, el }, moon: { az, el, lit } },
+//     azimuths from north (up) clockwise, elevations, radians; lit, the
+//     moon's lit part
 const RomanTownView = (() => {
-  const TAU = Math.PI * 2;
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const lerp = (a, b, t) => a + (b - a) * t;
-  const fract = x => x - Math.floor(x);
-  const RELIEF = 2;
-
-  // value noise, hashed, smooth, about 0…1
   function hash(i, j, s) {
     let h = Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(s, 2147483647) | 0;
     h = Math.imul(h ^ h >>> 13, 1274126177);
     return ((h ^ h >>> 16) >>> 0) / 4294967296;
   }
-  function vnoise(x, y, s) {
-    const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j;
-    const sx = fx * fx * fx * (fx * (fx * 6 - 15) + 10), sy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
-    const a = hash(i, j, s), b = hash(i + 1, j, s), c = hash(i, j + 1, s), d = hash(i + 1, j + 1, s);
-    return a + (b - a) * sx + (c - a + (a - b + d - c) * sx) * sy;
-  }
-  // (each octave turned, so the lattice does not show)
-  const fnoise = (x, y, s) => 0.5 * vnoise(x, y, s) + 0.3 * vnoise(1.62 * x - 1.18 * y, 1.18 * x + 1.62 * y, s + 1)
-    + 0.2 * vnoise(-1.4 * x + 3.85 * y, -3.85 * x - 1.4 * y, s + 2);
-  // cells about random points a unit apart: the nearest's distance, the
-  // next's, and the nearest's own number (stones of a pavement)
-  function cells(x, y, s) {
-    const ix = Math.floor(x), iy = Math.floor(y);
-    let f1 = 9, f2 = 9, id = 0;
-    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
-      const cx = ix + i, cy = iy + j, h = hash(cx, cy, s);
-      const dx = x - cx - 0.15 - 0.7 * h, dy = y - cy - 0.15 - 0.7 * hash(cx, cy, s + 1), d = dx * dx + dy * dy;
-      if (d < f1) { f2 = f1; f1 = d; id = h; } else if (d < f2) f2 = d;
-    }
-    return [Math.sqrt(f1), Math.sqrt(f2), id];
-  }
-  // basalt stones, polygonal, of about a size, their joints dark
-  const stones = (x, y, size, s) => {
-    const [a, b, id] = cells(x / size, y / size, s);
-    return (b - a < 0.09 ? 0.62 : 1) * (0.84 + 0.3 * id);
+
+  // ---- what the ground is, and the solids, by number ----
+  const GROUND = {
+    natural: 0, street: 1, 'main-street': 2, paving: 3, yard: 4, garden: 5, sand: 6, floor: 7, pool: 8, well: 9,
+    wheat: 10, stubble: 11, fallow: 12, meadow: 13, hay: 14, pasture: 15, vines: 16, olives: 17, orchard: 18,
+    via: 19, track: 20, river: 21, bank: 22,
+  };
+  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9 };
+  const TREES = {
+    // colour; the crown's depth as a part of the height (or metres, if over 1)
+    cypress: [[44, 62, 38], 1], poplar: [[92, 118, 56], 0.95], pine: [[62, 84, 46], 2.4], oak: [[58, 76, 42], 0.6],
+    olive: [[116, 126, 92], 0.6], fruit: [[82, 112, 50], 0.55], shrub: [[70, 96, 48], 1], plane: [[86, 112, 56], 0.55],
+  };
+  const BEASTS = {
+    sheep: [1.3, 0.75, 0.85, [[230, 224, 208], [226, 220, 204], [70, 62, 56]]],
+    goat: [1.2, 0.55, 0.8, [[150, 126, 100], [232, 226, 214], [64, 56, 50]]],
+    cow: [2.3, 0.95, 1.4, [[128, 86, 58], [96, 66, 46], [40, 36, 34], [216, 206, 186]]],
+    horse: [2.2, 0.7, 1.55, [[112, 74, 48], [70, 50, 38], [176, 160, 140]]],
   };
 
-  // colours, as sRGB 0…255
-  const C = {
-    grass: [118, 124, 68], dry: [160, 146, 96], scrub: [104, 100, 70], rock: [150, 140, 120],
-    street: [148, 138, 122], main: [112, 108, 102], paving: [208, 200, 182], yard: [156, 134, 104],
-    garden: [92, 112, 58], pasture: [112, 126, 60], hay: [168, 160, 92], well: [22, 34, 36], sand: [214, 194, 152], floor: [196, 180, 156], pool: [72, 140, 148],
-    via: [116, 110, 102], track: [168, 146, 112], river: [52, 82, 80],
-    wheat: [212, 186, 110], stubble: [196, 176, 128], fallow: [128, 98, 72], meadow: [122, 142, 66],
-    vines: [128, 108, 80], olives: [150, 136, 100], orchard: [112, 124, 70],
-    tile: [176, 92, 60], stone: [182, 172, 152], marble: [228, 224, 214], timber: [130, 96, 64], turf: [104, 122, 62],
-    trees: {
-      cypress: [44, 62, 38], pine: [62, 84, 46], oak: [58, 76, 42], olive: [116, 126, 92],
-      poplar: [92, 118, 56], fruit: [82, 112, 50], shrub: [70, 96, 48], plane: [86, 112, 56],
-    },
-  };
-  const LIN = new Float32Array(256);
-  for (let i = 0; i < 256; i++) { const c = i / 255; LIN[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }
-
-  // the 2.5D buffer of a rectangle of the world: w × h pixels from (x0, y0),
-  // s a metre; its colours only if asked
-  function raster(sc, { x0, y0, s, w, h }, colour) {
-    const { town, seed } = sc, N = w * h, X1 = x0 + w / s, Y1 = y0 + h / s;
-    const vis = bb => bb[2] >= x0 - 1 && bb[0] <= X1 + 1 && bb[3] >= y0 - 1 && bb[1] <= Y1 + 1;
-    const Z = new Float32Array(N), BOT = new Float32Array(N).fill(-1e9);
-    const NX = new Float32Array(N), NY = new Float32Array(N); // the normal's x and y; z follows
-    const ALB = new Uint8Array(colour ? N * 3 : 0), WET = new Uint8Array(N), SOLID = new Uint8Array(N);
-
-    // ---- rasterising, in world coordinates ----
-    function fillPoly(pts, fn) {
-      const P = pts.map(([x, y]) => [(x - x0) * s, (y - y0) * s]);
-      let ya = Infinity, yb = -Infinity;
-      for (const p of P) { if (p[1] < ya) ya = p[1]; if (p[1] > yb) yb = p[1]; }
-      const j0 = Math.max(0, Math.ceil(ya - 0.5)), j1 = Math.min(h - 1, Math.floor(yb - 0.5));
-      for (let j = j0; j <= j1; j++) {
-        const yc = j + 0.5;
-        let xl = Infinity, xr = -Infinity;
-        for (let q = 0; q < P.length; q++) {
-          const a = P[q], b = P[(q + 1) % P.length];
-          if ((a[1] <= yc) !== (b[1] <= yc)) {
-            const x = a[0] + (yc - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-            if (x < xl) xl = x;
-            if (x > xr) xr = x;
-          }
-        }
-        const i0 = Math.max(0, Math.ceil(xl - 0.5 - 1e-7)), i1 = Math.min(w - 1, Math.floor(xr - 0.5 + 1e-7));
-        for (let i = i0; i <= i1; i++) fn(j * w + i, (i + 0.5) / s + x0, yc / s + y0);
-      }
+  // ---- shaders ----
+  const HEAD = '#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2DShadow;\n';
+  const NOISE = `
+    const float TAU = 6.2831853;
+    uint hsh(int x, int y, int s) {
+      uint h = uint(x) * 374761393u + uint(y) * 668265263u + uint(s) * 2147483647u;
+      h = (h ^ (h >> 13)) * 1274126177u;
+      return h ^ (h >> 16);
     }
-    function fillDisc(cx, cy, r, fn) {
-      const i0 = Math.max(0, Math.floor((cx - r - x0) * s)), i1 = Math.min(w - 1, Math.ceil((cx + r - x0) * s));
-      const j0 = Math.max(0, Math.floor((cy - r - y0) * s)), j1 = Math.min(h - 1, Math.ceil((cy + r - y0) * s));
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-        const x = (i + 0.5) / s + x0, y = (j + 0.5) / s + y0, dx = x - cx, dy = y - cy;
-        if (dx * dx + dy * dy <= r * r) fn(j * w + i, x, y, dx, dy);
-      }
+    float hf(ivec2 c, int s) { return float(hsh(c.x, c.y, s)) / 4294967296.0; }
+    float vnoise(vec2 p, int s) {
+      vec2 i = floor(p), f = p - i;
+      ivec2 c = ivec2(i);
+      vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+      return mix(mix(hf(c, s), hf(c + ivec2(1, 0), s), u.x), mix(hf(c + ivec2(0, 1), s), hf(c + ivec2(1, 1), s), u.x), u.y);
     }
-    const setAlb = !colour ? () => {} : (p, c, f = 1) => {
-      ALB[3 * p] = clamp(c[0] * f, 0, 255); ALB[3 * p + 1] = clamp(c[1] * f, 0, 255); ALB[3 * p + 2] = clamp(c[2] * f, 0, 255);
-    };
-    const mix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+    float vnoise3(vec3 p, int s) {
+      vec3 i = floor(p), f = p - i;
+      ivec3 c = ivec3(i);
+      vec3 u = f * f * (3.0 - 2.0 * f);
+      int z0 = s + c.z * 7919, z1 = s + (c.z + 1) * 7919;
+      float a = mix(mix(hf(c.xy, z0), hf(c.xy + ivec2(1, 0), z0), u.x), mix(hf(c.xy + ivec2(0, 1), z0), hf(c.xy + ivec2(1, 1), z0), u.x), u.y);
+      float b = mix(mix(hf(c.xy, z1), hf(c.xy + ivec2(1, 0), z1), u.x), mix(hf(c.xy + ivec2(0, 1), z1), hf(c.xy + ivec2(1, 1), z1), u.x), u.y);
+      return mix(a, b, u.z);
+    }
+    // (each octave turned, so the lattice does not show)
+    float fnoise(vec2 p, int s) {
+      return 0.5 * vnoise(p, s) + 0.3 * vnoise(mat2(1.62, 1.18, -1.18, 1.62) * p, s + 1) + 0.2 * vnoise(mat2(-1.4, -3.85, 3.85, -1.4) * p, s + 2);
+    }
+    // stones of a pavement: cells about random points, their joints dark
+    float stones(vec2 p, float size, int s) {
+      p /= size;
+      vec2 i = floor(p);
+      float f1 = 9.0, f2 = 9.0, id = 0.0;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        ivec2 c = ivec2(i) + ivec2(x, y);
+        float h = hf(c, s);
+        vec2 d = p - vec2(c) - 0.15 - 0.7 * vec2(h, hf(c, s + 1));
+        float q = dot(d, d);
+        if (q < f1) { f2 = f1; f1 = q; id = h; } else if (q < f2) f2 = q;
+      }
+      return (sqrt(f2) - sqrt(f1) < 0.09 ? 0.62 : 1.0) * (0.84 + 0.3 * id);
+    }
+    vec3 rgb(float r, float g, float b) { return vec3(r, g, b) / 255.0; }
+  `;
+  const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
 
-    // ---- the ground ----
-    const T = town.terrain;
-    {
-      const { TN, zmin, zmax } = sc;
-      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-        const x = (i + 0.5) / s + x0, y = (j + 0.5) / s + y0, p = j * w + i;
-        const fx = clamp(x / T.cell, 0, T.nx - 1.001), fy = clamp(y / T.cell, 0, T.ny - 1.001);
-        const a = Math.floor(fx), b = Math.floor(fy), ax = fx - a, ay = fy - b, q = b * T.nx + a;
-        Z[p] = lerp(lerp(T.z[q], T.z[q + 1], ax), lerp(T.z[q + T.nx], T.z[q + T.nx + 1], ax), ay);
-        // (its slopes shaded as if twice as steep, as relief maps do, so the hills show)
-        const gx = RELIEF * lerp(lerp(TN[2 * q], TN[2 * q + 2], ax), lerp(TN[2 * (q + T.nx)], TN[2 * (q + T.nx) + 2], ax), ay);
-        const gy = RELIEF * lerp(lerp(TN[2 * q + 1], TN[2 * q + 3], ax), lerp(TN[2 * (q + T.nx) + 1], TN[2 * (q + T.nx) + 3], ax), ay);
-        const n = 1 / Math.sqrt(1 + gx * gx + gy * gy);
-        NX[p] = -gx * n; NY[p] = -gy * n;
-        if (!colour) continue;
+  // the ground and what is laid on it
+  const GROUND_VS = `
+    layout(location = 0) in vec2 aPos;
+    layout(location = 1) in vec4 aA; // what it is, an angle, across a road (-1…1), the water's level
+    layout(location = 2) in float aTint;
+    uniform mat4 uMVP; uniform float uZmid;
+    out vec2 vP; out float vT, vLevel; flat out float vMat, vAngle, vTint;
+    void main() {
+      vP = aPos; vMat = aA.x; vAngle = aA.y; vT = aA.z; vLevel = aA.w; vTint = aTint;
+      gl_Position = uMVP * vec4(aPos, uZmid, 1.0);
+    }`;
+  const GROUND_FS = NOISE + OUT + `
+    in vec2 vP; in float vT, vLevel; flat in float vMat, vAngle, vTint;
+    uniform sampler2D uTer; uniform vec3 uTerDim; // the ground's heights and slopes; nx, ny, its cell
+    uniform int uSeed; uniform float uTA, uZmin, uZmax, uRelief;
+    vec3 terrain(vec2 p) {
+      vec2 f = clamp(p / uTerDim.z, vec2(0.0), uTerDim.xy - 1.001);
+      ivec2 i = ivec2(floor(f));
+      vec2 a = f - vec2(i);
+      return mix(mix(texelFetch(uTer, i, 0).xyz, texelFetch(uTer, i + ivec2(1, 0), 0).xyz, a.x),
+                 mix(texelFetch(uTer, i + ivec2(0, 1), 0).xyz, texelFetch(uTer, i + ivec2(1, 1), 0).xyz, a.x), a.y);
+    }
+    float across(vec2 p, float a) { return -p.x * sin(a) + p.y * cos(a); }
+    float along(vec2 p, float a) { return p.x * cos(a) + p.y * sin(a); }
+    void main() {
+      vec2 p = vP;
+      vec3 t = terrain(p);
+      float z = t.x, flag = 0.0;
+      vec2 g = uRelief * t.yz; // (its slopes shaded as if steeper, as relief maps do, so the hills show)
+      vec3 n = normalize(vec3(-g, 1.0));
+      int m = int(vMat + 0.5);
+      float tint = 0.9 + 0.2 * vTint, nz = fnoise(p / 3.0, uSeed + 3), f = 1.0;
+      vec3 c = rgb(156.0, 134.0, 104.0);
+      float pu = along(p, uTA), pv = across(p, uTA);
+      if (m == 0) {
         // grass, drier up the hills, scrub and rock where it is steep
-        const sl = Math.hypot(gx, gy) / RELIEF, up = (Z[p] - zmin) / (zmax - zmin + 1e-6);
-        const m = fnoise(x / 40, y / 40, seed), f = fnoise(x / 6, y / 6, seed + 7);
-        let c = mix(C.grass, C.dry, clamp(0.25 + 0.6 * up + 0.5 * (m - 0.5), 0, 1));
-        c = mix(c, C.scrub, clamp((sl - 0.12) * 5 + (f - 0.5), 0, 1) * 0.8);
-        c = mix(c, C.rock, clamp((sl - 0.3) * 4, 0, 0.7));
-        setAlb(p, c, 0.88 + 0.24 * f);
+        float sl = length(t.yz), up = (z - uZmin) / (uZmax - uZmin + 1e-6);
+        float mm = fnoise(p / 40.0, uSeed), ff = fnoise(p / 6.0, uSeed + 7);
+        c = mix(rgb(118.0, 124.0, 68.0), rgb(160.0, 146.0, 96.0), clamp(0.25 + 0.6 * up + 0.5 * (mm - 0.5), 0.0, 1.0));
+        c = mix(c, rgb(104.0, 100.0, 70.0), clamp((sl - 0.12) * 5.0 + (ff - 0.5), 0.0, 1.0) * 0.8);
+        c = mix(c, rgb(150.0, 140.0, 120.0), clamp((sl - 0.3) * 4.0, 0.0, 0.7));
+        f = 0.88 + 0.24 * ff;
+      } else if (m == 1) { c = rgb(112.0, 108.0, 102.0); f = 1.08 * stones(p, 0.75, uSeed + 11) * (0.92 + 0.16 * nz); }
+      else if (m == 2) { c = rgb(112.0, 108.0, 102.0); f = stones(p, 0.85, uSeed + 11) * (0.92 + 0.16 * nz); }
+      else if (m == 3) {
+        vec2 q = vec2(pu / 1.8, pv / 1.2);
+        f = (fract(q.x) < 0.05 || fract(q.y) < 0.07 ? 0.86 : 1.0) * (0.94 + 0.12 * hf(ivec2(floor(q)), uSeed));
+        c = rgb(208.0, 200.0, 182.0);
       }
-    }
+      else if (m == 4) { f = 0.88 + 0.24 * nz; }
+      else if (m == 5) { c = rgb(92.0, 112.0, 58.0); f = (fract(pv / 1.6) < 0.35 ? 0.86 : 1.04) * (0.85 + 0.3 * nz); }
+      else if (m == 6) { c = rgb(214.0, 194.0, 152.0); f = 0.94 + 0.12 * nz; }
+      else if (m == 7) { c = rgb(196.0, 180.0, 156.0); f = 0.95 + 0.1 * nz; }
+      else if (m == 8) { c = rgb(72.0, 140.0, 148.0); f = 0.95 + 0.1 * nz; }
+      else if (m == 9) { c = rgb(22.0, 34.0, 36.0); }
+      else if (m == 10) { c = rgb(212.0, 186.0, 110.0); f = tint * (0.93 + 0.1 * sin(fract(across(p, vAngle) / 0.7) * TAU)) * (0.9 + 0.2 * fnoise(p / 15.0, uSeed + 5)); }
+      else if (m == 11) { c = rgb(196.0, 176.0, 128.0); f = tint * (0.95 + 0.07 * sin(across(p, vAngle) / 0.5 * TAU)); }
+      else if (m == 12) { c = rgb(128.0, 98.0, 72.0); f = tint * (0.86 + 0.18 * (0.5 + 0.5 * sin(across(p, vAngle) / 0.9 * TAU)) + 0.1 * nz); }
+      else if (m == 13) { c = rgb(122.0, 142.0, 66.0); f = tint * (0.85 + 0.3 * fnoise(p / 8.0, uSeed + 9)); }
+      else if (m == 14) {
+        // cut, and raked into windrows
+        c = fract(across(p, vAngle) / 4.5) < 0.22 ? rgb(196.0, 176.0, 104.0) : rgb(150.0, 152.0, 84.0);
+        f = tint * (0.88 + 0.22 * fnoise(p / 1.2, uSeed + 29));
+      }
+      else if (m == 15) { c = rgb(112.0, 126.0, 60.0); f = tint * (0.78 + 0.3 * fnoise(p / 1.3, uSeed + 19)) * (0.9 + 0.2 * fnoise(p / 14.0, uSeed + 23)); }
+      else if (m == 16) {
+        float r = fract(across(p, vAngle) / 2.2);
+        c = r < 0.38 ? mix(rgb(82.0, 112.0, 50.0), rgb(128.0, 108.0, 80.0), 0.25 + 0.3 * vnoise(vec2(along(p, vAngle) / 0.8, r), uSeed)) : rgb(128.0, 108.0, 80.0);
+        f = 0.9 + 0.15 * nz;
+      }
+      else if (m == 17) { c = rgb(150.0, 136.0, 100.0); f = tint * (0.9 + 0.2 * nz); }
+      else if (m == 18) { c = rgb(112.0, 124.0, 70.0); f = tint * (0.9 + 0.2 * nz); }
+      else if (m == 19) { c = rgb(116.0, 110.0, 102.0); f = abs(vT) > 0.8 ? 1.25 : stones(p, 0.8, uSeed + 11); }
+      else if (m == 20) {
+        float a = abs(vT);
+        c = rgb(168.0, 146.0, 112.0);
+        f = (abs(a - 0.5) < 0.12 ? 0.86 : 1.0) * (0.9 + 0.2 * fnoise(p / 2.0, uSeed + 13)) * (a > 0.85 ? 0.97 : 1.0);
+      }
+      else if (m == 21) {
+        // the river: water at its level, flat
+        z = vLevel; n = vec3(0.0, 0.0, 1.0); flag = 1.0;
+        c = rgb(52.0, 82.0, 80.0); f = 0.92 + 0.12 * fnoise(p / 9.0, uSeed + 17);
+      }
+      else if (m == 22) { f = 0.75; }
+      oAlb = vec4(clamp(c * f, 0.0, 1.0), flag);
+      oNrm = vec4(n, 0.0);
+      oH = z;
+    }`;
 
-    // patches of ground: colour only, on the ground as it lies
-    const ta = town.town.angle, tc = Math.cos(ta), tsn = Math.sin(ta);
-    const across = (x, y, a) => -x * Math.sin(a) + y * Math.cos(a), alongA = (x, y, a) => x * Math.cos(a) + y * Math.sin(a);
-    const pu = (x, y) => x * tc + y * tsn, pv = (x, y) => -x * tsn + y * tc;
-    function paint(poly, kind, angle) {
-      const base = C[kind] || C.yard, sd = hash(Math.round(poly[0][0] * 7), Math.round(poly[0][1] * 7), seed);
-      const tint = 0.9 + 0.2 * sd;
-      fillPoly(poly, (p, x, y) => {
-        let c = base, f = 1;
-        const n = fnoise(x / 3, y / 3, seed + 3);
-        switch (kind) {
-          case 'street': c = C.main; f = 1.08 * stones(x, y, 0.75, seed + 11) * (0.92 + 0.16 * n); break;
-          case 'main-street': f = stones(x, y, 0.85, seed + 11) * (0.92 + 0.16 * n); break;
-          case 'paving': {
-            const a = fract(pu(x, y) / 1.8), b = fract(pv(x, y) / 1.2);
-            f = (a < 0.05 || b < 0.07 ? 0.86 : 1) * (0.94 + 0.12 * vnoise(Math.floor(pu(x, y) / 1.8), Math.floor(pv(x, y) / 1.2), seed));
-            break;
-          }
-          case 'yard': f = 0.88 + 0.24 * n; break;
-          case 'garden': {
-            const b = fract(pv(x, y) / 1.6);
-            f = (b < 0.35 ? 0.86 : 1.04) * (0.85 + 0.3 * n); break;
-          }
-          case 'floor': f = 0.95 + 0.1 * n; break;
-          case 'sand': f = 0.94 + 0.12 * n; break;
-          case 'pool': c = C.pool; f = 0.95 + 0.1 * n; WET[p] = 2; break;
-          case 'wheat': {
-            const r = fract(across(x, y, angle) / 0.7);
-            f = tint * (0.93 + 0.1 * Math.sin(r * TAU)) * (0.9 + 0.2 * fnoise(x / 15, y / 15, seed + 5)); break;
-          }
-          case 'stubble': f = tint * (0.95 + 0.07 * Math.sin(across(x, y, angle) / 0.5 * TAU)); break;
-          case 'fallow': f = tint * (0.86 + 0.18 * (0.5 + 0.5 * Math.sin(across(x, y, angle) / 0.9 * TAU)) + 0.1 * n); break;
-          case 'meadow': f = tint * (0.85 + 0.3 * fnoise(x / 8, y / 8, seed + 9)); break;
-          case 'vines': {
-            const r = fract(across(x, y, angle) / 2.2);
-            c = r < 0.38 ? mix(C.trees.fruit, C.vines, 0.25 + 0.3 * vnoise(alongA(x, y, angle) / 0.8, r, seed)) : C.vines;
-            f = 0.9 + 0.15 * n; break;
-          }
-          case 'olives': case 'orchard': f = tint * (0.9 + 0.2 * n); break;
-          case 'pasture': f = tint * (0.78 + 0.3 * fnoise(x / 1.3, y / 1.3, seed + 19)) * (0.9 + 0.2 * fnoise(x / 14, y / 14, seed + 23)); break;
-          case 'hay': {
-            // cut, and raked into windrows
-            const r = fract(across(x, y, angle) / 4.5);
-            c = r < 0.22 ? [196, 176, 104] : [150, 152, 84];
-            f = tint * (0.88 + 0.22 * fnoise(x / 1.2, y / 1.2, seed + 29)); break;
-          }
-          case 'well': WET[p] = 2; break;
+  // buildings: boxes and their roofs, round ones, seats
+  const SOLID_VS = `
+    layout(location = 0) in vec3 aPos;
+    layout(location = 1) in vec3 aNrm;
+    layout(location = 2) in vec4 aMat; // what it is made of, two tints
+    uniform mat4 uMVP;
+    out vec3 vW, vN; flat out vec4 vMat;
+    void main() { vW = aPos; vN = aNrm; vMat = aMat; gl_Position = uMVP * vec4(aPos, 1.0); }`;
+  const SOLID_FS = NOISE + OUT + `
+    in vec3 vW, vN; flat in vec4 vMat;
+    uniform int uSeed; uniform float uTA;
+    void main() {
+      vec3 n = normalize(vN);
+      vec2 p = vW.xy;
+      int m = int(vMat.x + 0.5);
+      vec3 c = rgb(182.0, 172.0, 152.0);
+      float f = 0.94 + 0.1 * vMat.y;
+      float along = p.x * cos(uTA) + p.y * sin(uTA);
+      if (m == 0) {
+        // tiles: some newer and redder, some old and brown; the rows of cover
+        // tiles running down the slope, the courses across
+        c = mix(rgb(176.0, 92.0, 60.0), rgb(150.0, 104.0, 78.0), vMat.y * 0.6);
+        f = 0.88 + 0.22 * vMat.z;
+        if (length(n.xy) > 0.05) {
+          vec2 s = normalize(n.xy);
+          float al = dot(p, vec2(-s.y, s.x)), dn = dot(p, s);
+          f *= (fract(al / 0.55) < 0.3 ? 1.1 : 0.94) * (fract(dn / 0.42) < 0.1 ? 0.93 : 1.0);
         }
-        setAlb(p, c, f);
-      });
-    }
-    if (colour) town.fields.forEach((fl, i) => { if (vis(sc.bb.fields[i])) paint(fl.poly, fl.crop, fl.angle); });
+        f *= 0.9 + 0.2 * fnoise(p / 2.5, uSeed + 23);
+      } else if (m == 1) { f *= 0.92 + 0.12 * vnoise(p * 2.0, uSeed + 31); }
+      else if (m == 2) { c = rgb(228.0, 224.0, 214.0); f *= 0.92 + 0.12 * vnoise(p * 2.0, uSeed + 31); }
+      else if (m == 3) { c = rgb(130.0, 96.0, 64.0); f = fract(along / 0.3) < 0.15 ? 0.8 : 1.0; }
+      else if (m == 4) { c = rgb(104.0, 122.0, 62.0); f = 0.85 + 0.3 * fnoise(p / 1.5, uSeed + 37); }
+      else if (m == 5) { c = rgb(228.0, 224.0, 214.0); f = fract(along / 0.4) < 0.25 ? 0.85 : 1.03; }
+      else if (m == 6) { c = rgb(214.0, 194.0, 152.0); f = 0.95 + 0.1 * fnoise(p / 2.0, uSeed); }
+      else if (m == 7) { c = rgb(208.0, 200.0, 182.0); f = 0.95 + 0.08 * vnoise(p * 2.0, uSeed); }
+      else if (m == 8) { c = rgb(156.0, 134.0, 104.0); f = 0.7; }
+      else if (m == 9) { f *= 0.9 + 0.2 * vnoise(p * 1.5, uSeed + 29); }
+      oAlb = vec4(clamp(c * f, 0.0, 1.0), 0.0);
+      oNrm = vec4(n, 0.0);
+      oH = vW.z;
+    }`;
 
-    // roads: earth tracks, then paved ways with their kerbs
-    function road(pts, width, kind) {
-      const half = width / 2, base = C[kind];
-      const seg = (a, b) => {
-        const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1, nx = -dy / l * half, ny = dx / l * half;
-        return [[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]];
-      };
-      for (let q = 0; q + 1 < pts.length; q++) {
-        const a = pts[q], b = pts[q + 1], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
-        if (!vis([Math.min(a[0], b[0]) - half, Math.min(a[1], b[1]) - half, Math.max(a[0], b[0]) + half, Math.max(a[1], b[1]) + half])) continue;
-        const shade = (p, x, y) => {
-          const t = Math.abs(((x - a[0]) * -dy + (y - a[1]) * dx) / l) / half; // 0 in the middle, 1 at the edge
-          let f;
-          if (kind === 'via') {
-            f = t > 0.8 ? 1.25 : stones(x, y, 0.8, seed + 11);
-          } else {
-            const rut = Math.abs(t - 0.5) < 0.12 ? 0.86 : 1;
-            f = rut * (0.9 + 0.2 * fnoise(x / 2, y / 2, seed + 13)) * (t > 0.85 ? 0.97 : 1);
-          }
-          setAlb(p, base, f);
-        };
-        fillPoly(seg(a, b), shade);
-        fillDisc(b[0], b[1], half, (p, x, y) => shade(p, x, y));
+  // trees and beasts: round bodies, a tree's lumpy, its leaves in clumps
+  const BODY_VS = NOISE + `
+    layout(location = 0) in vec3 aDir;
+    layout(location = 1) in vec3 aC;   // the middle
+    layout(location = 2) in vec3 aR;   // the radii
+    layout(location = 3) in vec4 aCol; // colour, and how lumpy
+    layout(location = 4) in vec2 aRot; // turned, and its own number
+    uniform mat4 uMVP;
+    out vec3 vW, vD; flat out vec4 vCol;
+    void main() {
+      vec3 d = aDir;
+      if (aCol.w > 0.0) d.xy *= 0.86 + 0.24 * vnoise3(aDir * 2.2 + aRot.y * 13.7, 47);
+      vec3 q = d * aR;
+      float c = cos(aRot.x), s = sin(aRot.x);
+      vW = aC + vec3(c * q.x - s * q.y, s * q.x + c * q.y, q.z);
+      vec3 e = aDir / aR;
+      vD = vec3(c * e.x - s * e.y, s * e.x + c * e.y, e.z);
+      vCol = aCol;
+      gl_Position = uMVP * vec4(vW, 1.0);
+    }`;
+  const BODY_FS = NOISE + OUT + `
+    in vec3 vW, vD; flat in vec4 vCol;
+    void main() {
+      vec3 n = normalize(vD);
+      float tone = 1.0;
+      if (vCol.w > 0.0) {
+        vec3 q = vW / vCol.w;
+        float nn = vnoise3(q, 53) - 0.5;
+        n = normalize(n + 0.8 * vec3(vnoise3(q + 9.1, 59) - 0.5, vnoise3(q + 4.7, 61) - 0.5, 0.0));
+        tone = 0.8 + 0.4 * (nn + 0.5);
       }
-    }
-    if (colour) for (const kind of ['track', 'via']) town.roads.forEach((r, i) => { if (r.kind === kind && vis(sc.bb.roads[i])) road(r.points, r.width, kind); });
+      if (n.z < 0.0) n.z = -n.z;
+      oAlb = vec4(clamp(vCol.rgb * tone, 0.0, 1.0), 0.0);
+      oNrm = vec4(n, 0.0);
+      oH = vW.z;
+    }`;
 
-    // the river: water at its level, its banks muddy
-    if (town.river) {
-      const R = town.river, P = R.points, half = R.width / 2;
-      for (let q = 0; q + 1 < P.length; q++) {
-        const a = P[q], b = P[q + 1], dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
-        const la = R.level[q], lb = R.level[q + 1];
-        if (!vis([Math.min(a[0], b[0]) - half, Math.min(a[1], b[1]) - half, Math.max(a[0], b[0]) + half, Math.max(a[1], b[1]) + half])) continue;
-        const water = (p, x, y) => {
-          const t = clamp(((x - a[0]) * dx + (y - a[1]) * dy) / (l * l), 0, 1), d = Math.abs(((x - a[0]) * -dy + (y - a[1]) * dx) / l);
-          const lev = lerp(la, lb, t);
-          if (d > half - 0.6) { if (WET[p] !== 1) setAlb(p, C.yard, 0.75); return; }
-          if (WET[p] === 1 && Z[p] <= lev) return;
-          Z[p] = lev; NX[p] = 0; NY[p] = 0; WET[p] = 1;
-          setAlb(p, C.river, 0.92 + 0.12 * fnoise(x / 9, y / 9, seed + 17));
-        };
-        const nx = -dy / l * half, ny = dx / l * half;
-        fillPoly([[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]], water);
-        fillDisc(b[0], b[1], half, water);
+  // depth only, for the shadows
+  const DEPTH_VS = `
+    layout(location = 0) in vec3 aPos;
+    uniform mat4 uMVP;
+    void main() { gl_Position = uMVP * vec4(aPos, 1.0); }`;
+  const EMPTY_FS = 'void main() {}';
+
+  // a triangle over the whole target
+  const QUAD_VS = `void main() { vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0); gl_Position = vec4(p, 0.0, 1.0); }`;
+  // the light, every pixel
+  const LIGHT_FS = `
+    uniform sampler2D uAlb, uNrm, uHgt, uNear, uFar;
+    uniform sampler2DShadow uShadow;
+    uniform vec4 uView; uniform vec2 uSize, uWorld;
+    uniform mat4 uLight; uniform float uBias, uTexel, uShTexel;
+    uniform vec3 uL, uSun, uSky; uniform float uGrey, uZbase;
+    uniform vec4 uLamps[128]; uniform int uNL;
+    out vec4 o;
+    float tone(float v) {
+      float x = max(0.0, v * 0.9), y = x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14);
+      return y <= 0.0031308 ? 12.92 * y : 1.055 * pow(min(1.0, y), 1.0 / 2.4) - 0.055;
+    }
+    vec3 lin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+    void main() {
+      ivec2 px = ivec2(gl_FragCoord.xy);
+      vec4 A = texelFetch(uAlb, px, 0);
+      vec3 n = texelFetch(uNrm, px, 0).xyz;
+      float h = texelFetch(uHgt, px, 0).r;
+      vec2 uv = gl_FragCoord.xy / uSize;
+      vec2 w = vec2(uView.x + uView.z * uv.x, uView.y + uView.w * (1.0 - uv.y));
+      vec3 P = vec3(w, h);
+      // the sun's, or the moon's, unless something stands in the way
+      vec4 lc = uLight * vec4(P + n * uTexel * 1.5, 1.0);
+      vec3 s = lc.xyz * 0.5 + 0.5;
+      float lit = 1.0;
+      if (all(greaterThan(s.xy, vec2(0.0))) && all(lessThan(s.xy, vec2(1.0))) && s.z < 1.0) {
+        lit = 0.0;
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++)
+          lit += texture(uShadow, vec3(s.xy + vec2(x, y) * uShTexel * 1.2, s.z - uBias));
+        lit /= 9.0;
       }
-    }
-    town.grounds.forEach((g, i) => { if ((colour || g.kind === 'pool') && vis(sc.bb.grounds[i])) paint(g.poly, g.kind, g.angle); });
-
-    // ---- what stands on it ----
-    // write a pixel if it is higher than what stands there; the ground gives
-    // way to anything built on it, even below it, cut into a slope
-    const put = (p, z, gx, gy, c, f) => {
-      if (SOLID[p] && z <= Z[p]) return false;
-      const n = 1 / Math.sqrt(1 + gx * gx + gy * gy);
-      Z[p] = z; NX[p] = -gx * n; NY[p] = -gy * n; BOT[p] = -1e9; WET[p] = 0; SOLID[p] = 1;
-      setAlb(p, c, f);
-      return true;
-    };
-    function tint(b, base) {
-      const r = hash(Math.round(b.x * 10), Math.round(b.y * 10), seed + 21);
-      if (b.mat !== 'tile') return [base, 0.94 + 0.1 * r];
-      // tiles: some newer and redder, some old and brown
-      return [mix(base, [150, 104, 78], r * 0.6), 0.88 + 0.22 * hash(Math.round(b.x * 3), Math.round(b.y * 3), seed + 22)];
-    }
-    function drawBox(b) {
-      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), hw = b.w / 2, hd = b.d / 2;
-      const pts = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([a, c]) => [b.x + a * ca - c * sa, b.y + a * sa + c * ca]);
-      const [base, f0] = tint(b, C[b.mat] || C.stone), top = b.z0 + b.h, pitch = b.pitch, W2 = b.w, D2 = b.d;
-      const hole = b.hole;
-      fillPoly(pts, (p, x, y) => {
-        const dx = x - b.x, dy = y - b.y;
-        const a = dx * ca + dy * sa + hw, c = -dx * sa + dy * ca + hd;
-        let e = 0, ga = 0, gc = 0, along = a, down = 0;
-        switch (b.roof) {
-          case 'hip': {
-            const m = Math.min(a, W2 - a, c, D2 - c);
-            e = m;
-            if (m === a) { ga = 1; along = c; } else if (m === W2 - a) { ga = -1; along = c; } else if (m === c) gc = 1; else gc = -1;
-            break;
-          }
-          case 'gable':
-            if (b.axis === 'w') { e = Math.min(c, D2 - c); gc = c < D2 - c ? 1 : -1; }
-            else { e = Math.min(a, W2 - a); ga = a < W2 - a ? 1 : -1; along = c; }
-            break;
-          case 'shed':
-            if (b.low === '+w') { e = W2 - a; ga = -1; along = c; } else if (b.low === '-w') { e = a; ga = 1; along = c; }
-            else if (b.low === '+d') { e = D2 - c; gc = -1; } else { e = c; gc = 1; }
-            break;
-          case 'court': {
-            if (a > hole[0] && a < hole[2] && c > hole[1] && c < hole[3]) return;
-            const da = a < hole[0] ? hole[0] - a : a > hole[2] ? a - hole[2] : 0;
-            const dc = c < hole[1] ? hole[1] - c : c > hole[3] ? c - hole[3] : 0;
-            if (da >= dc) { e = da; ga = a < hole[0] ? -1 : 1; along = c; } else { e = dc; gc = c < hole[1] ? -1 : 1; }
-            break;
-          }
-        }
-        down = e;
-        const z = top + pitch * e;
-        const gx = pitch * (ga * ca - gc * sa), gy = pitch * (ga * sa + gc * ca);
-        let f = f0;
-        if (b.mat === 'tile' && pitch > 0) {
-          // the rows of cover tiles running down the slope, the courses across
-          const r = fract(along / 0.55);
-          f *= (r < 0.3 ? 1.1 : 0.94) * (fract(down / 0.42) < 0.1 ? 0.93 : 1) * (0.9 + 0.2 * fnoise(x / 2.5, y / 2.5, seed + 23));
-        } else if (b.use === 'wall' || b.use === 'gate') {
-          f *= 0.9 + 0.2 * vnoise(x * 1.5, y * 1.5, seed + 29);
-          // the parapet along both faces of the wall walk
-          if (b.use === 'wall' && (c < 0.5 || c > D2 - 0.5)) { put(p, z + 1.2, 0, 0, base, f * 1.08); return; }
-        } else if (b.mat === 'stone' || b.mat === 'marble') {
-          f *= 0.92 + 0.12 * vnoise(x * 2, y * 2, seed + 31);
-          if (b.use === 'steps') f *= fract(a / 0.4) < 0.25 ? 0.85 : 1.03;
-        } else if (b.mat === 'timber') f *= fract(a / 0.3) < 0.15 ? 0.8 : 1;
-        put(p, z, gx, gy, base, f);
-      });
-    }
-    function drawRound(b) {
-      const [base, f0] = tint(b, C[b.mat] || C.stone);
-      fillDisc(b.x, b.y, b.r, (p, x, y, dx, dy) => {
-        const d = Math.hypot(dx, dy) || 1e-6, ux = dx / d, uy = dy / d;
-        if (b.hole && d < b.hole) return;
-        let z = b.z0 + b.h, g = 0;
-        if (b.roof === 'cone') { z += b.pitch * (b.r - d); g = -b.pitch; }
-        else if (b.roof === 'dome') {
-          const q = Math.min(d / b.r, 0.985), c = b.r * b.pitch;
-          z += c * Math.sqrt(1 - q * q); g = -c * q / (b.r * Math.sqrt(1 - q * q));
-        }
-        let f = f0;
-        if (b.mat === 'tile' && b.roof === 'cone') f *= fract(Math.atan2(dy, dx) * b.r / 0.55 / TAU * TAU) < 0.3 ? 1.08 : 0.95;
-        if (b.mat === 'turf') f *= 0.85 + 0.3 * fnoise(x / 1.5, y / 1.5, seed + 37);
-        put(p, z, g * ux, g * uy, base, f);
-      });
-    }
-    // a theatre's seats: steps rising in half rings, aisles between wedges of them
-    function drawCavea(b) {
-      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), steps = Math.round((b.r1 - b.r0) / 0.8), rise = b.h / steps;
-      fillDisc(b.x, b.y, b.r1 + 2.5, (p, x, y, dx, dy) => {
-        const fx = dx * ca + dy * sa, fy = -dx * sa + dy * ca, d = Math.hypot(dx, dy);
-        if (fx < -0.2) return;
-        let z = b.z0, c = C.paving, f = 1;
-        if (d < b.r0) { z += 0.05; f = 0.95 + 0.08 * vnoise(x * 2, y * 2, seed); }
-        else if (d <= b.r1) {
-          const n = Math.floor((d - b.r0) / 0.8), r = fract((d - b.r0) / 0.8);
-          z += 1 + n * rise; c = C.stone;
-          const phi = Math.atan2(fy, fx), wedge = fract((phi + Math.PI / 2) / (Math.PI / (n < steps / 2 ? 6 : 12)));
-          f = (r > 0.85 ? 0.88 : 1) * (wedge < 0.04 || wedge > 0.96 ? 1.12 : 1) * (Math.abs(n - (steps >> 1)) < 1 ? 1.1 : 1);
-          f *= 0.94 + 0.1 * vnoise(x * 2, y * 2, seed + 41);
-        } else { z += 1 + b.h + 3; c = C.stone; f = 0.95; }
-        put(p, z, 0, 0, c, f);
-      });
-    }
-    // an amphitheatre: the arena of sand, the seats rising round it, the gates through
-    function drawArena(b) {
-      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), ro = 1 + 3 / b.a, r0 = b.a0 / b.a, steps = Math.round((b.a - b.a0) / 0.8);
-      const R = Math.max(b.a, b.b) * ro;
-      fillDisc(b.x, b.y, R, (p, x, y, dx, dy) => {
-        const fx = dx * ca + dy * sa, fy = -dx * sa + dy * ca;
-        const rho = Math.hypot(fx / b.a, fy / b.b);
-        if (rho > ro) return;
-        let z = b.z0, c = C.sand, f = 0.95 + 0.1 * fnoise(x / 2, y / 2, seed);
-        const gate = (Math.abs(fy) < 2.2 || Math.abs(fx) < 2.2) && rho > r0;
-        const ra = Math.hypot(fx / b.a0, fy / b.b0);
-        if (ra > 1 && !gate) {
-          if (rho <= 1) {
-            const t = (rho - r0) / (1 - r0), n = Math.floor(t * steps);
-            z += 3.5 + n * b.h / steps; c = C.stone;
-            f = (fract(t * steps) > 0.85 ? 0.88 : 1) * (0.94 + 0.1 * vnoise(x * 2, y * 2, seed + 43));
-          } else { z += 3.5 + b.h + 3; c = C.stone; f = 0.95; }
-        } else if (gate) { c = C.yard; f = 0.7; }
-        put(p, z, 0, 0, c, f);
-      });
-    }
-    // a tree: a crown of leaves, round or narrow or a spread umbrella, lumpy
-    function drawTree(t, k2) {
-      const shape = {
-        cypress: [1, 0], poplar: [0.95, 0], pine: [2.4 / t.h, 1.2], oak: [0.6, 0], olive: [0.6, 0],
-        fruit: [0.55, 0], shrub: [1, 0], plane: [0.55, 0.8],
-      }[t.kind] || [0.6, 0];
-      const cdep = shape[0] * t.h, zb = t.z0 + t.h - cdep, hang = shape[1];
-      const base = C.trees[t.kind] || C.trees.oak, sd = k2 * 7.31;
-      const tone = 0.88 + 0.24 * hash(k2, 3, seed);
-      const lump = t.kind === 'cypress' || t.kind === 'poplar' ? 0.6 : 1.1;
-      fillDisc(t.x, t.y, t.r * 1.1, (p, x, y, dx, dy) => {
-        const d = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
-        const rr = t.r * (0.86 + 0.24 * vnoise(ang * 2.2 + sd, sd, seed + 47));
-        if (d >= rr) return;
-        const q = Math.min(d / rr, 0.97), sq = Math.sqrt(1 - q * q);
-        const rx = (0.8 * x - 0.6 * y) / lump, ry = (0.6 * x + 0.8 * y) / lump;
-        const nn = vnoise(rx, ry, seed + 53) - 0.5, z = zb + cdep * sq + nn * 0.6 * Math.min(1, cdep / 3);
-        if (SOLID[p] && z <= Z[p]) return;
-        const g = -cdep * q / (rr * sq), ux = dx / (d || 1), uy = dy / (d || 1);
-        const n1 = vnoise(rx + 9.1, ry, seed + 59) - 0.5, n2 = vnoise(rx, ry + 4.7, seed + 61) - 0.5;
-        if (put(p, z, g * ux + 1.6 * n1, g * uy + 1.6 * n2, base, tone * (0.8 + 0.4 * (nn + 0.5)))) {
-          if (hang) BOT[p] = zb - hang;
-        }
-      });
-    }
-
-    // a grazing beast: a body and a head, low and rounded
-    const BEASTS = {
-      sheep: [1.3, 0.75, 0.85, [[230, 224, 208], [226, 220, 204], [70, 62, 56]]],
-      goat: [1.2, 0.55, 0.8, [[150, 126, 100], [232, 226, 214], [64, 56, 50]]],
-      cow: [2.3, 0.95, 1.4, [[128, 86, 58], [96, 66, 46], [40, 36, 34], [216, 206, 186]]],
-      horse: [2.2, 0.7, 1.55, [[112, 74, 48], [70, 50, 38], [176, 160, 140]]],
-    };
-    function drawBeast(an, k2) {
-      const [Ln, Wd, Ht, cols] = BEASTS[an.kind] || BEASTS.sheep;
-      const ca = Math.cos(an.angle), sa = Math.sin(an.angle), hl = Ln / 2, hw = Wd / 2;
-      const col = cols[Math.floor(hash(k2, 5, seed) ** 2 * cols.length)];
-      fillDisc(an.x, an.y, Ln * 0.85, (p, x, y, dx, dy) => {
-        const a = dx * ca + dy * sa, c = -dx * sa + dy * ca;
-        const q = (a / hl) ** 2 + (c / hw) ** 2, qh = ((a - hl * 1.1) / (Ln * 0.17)) ** 2 + (c / (hw * 0.55)) ** 2;
-        if (q < 1) {
-          const sq = Math.sqrt(1 - q), dz = Ht * 0.3;
-          const ga = -dz * a / (hl * hl * Math.max(sq, 0.15)), gc = -dz * c / (hw * hw * Math.max(sq, 0.15));
-          put(p, an.z0 + Ht * 0.7 + dz * sq, ga * ca - gc * sa, ga * sa + gc * ca, col, 1);
-        } else if (qh < 1) put(p, an.z0 + Ht * 0.8, 0, 0, col, 0.85);
-      });
-    }
-
-    for (let i = 0; i < town.buildings.length; i++) {
-      const b = town.buildings[i];
-      if (!vis(sc.bb.buildings[i])) continue;
-      if (b.shape === 'box') drawBox(b);
-      else if (b.shape === 'round') drawRound(b);
-      else if (b.shape === 'cavea') drawCavea(b);
-      else if (b.shape === 'arena') drawArena(b);
-    }
-    town.trees.forEach((t, i) => { if (vis(sc.bb.trees[i])) drawTree(t, i); });
-    if (colour) (town.animals || []).forEach((an, i) => { if (vis(sc.bb.animals[i])) drawBeast(an, i); });
-    return { Z, BOT, NX, NY, ALB, WET, w, h };
-  }
-
-
-  // each square of TS pixels' highest, and its neighbours': a step of a
-  // square from inside one lands among them
-  function tileMax(Z, w, h, TS) {
-    const tw = Math.ceil(w / TS), th = Math.ceil(h / TS), TM = new Float32Array(tw * th).fill(-1e9), TD = new Float32Array(tw * th);
-    let zmax = -1e9;
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-      const z = Z[j * w + i], t = ((j / TS) | 0) * tw + ((i / TS) | 0);
-      if (z > TM[t]) TM[t] = z;
-      if (z > zmax) zmax = z;
-    }
-    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) {
-      let m = -1e9;
-      for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) {
-        const ii = i + a, jj = j + b;
-        if (ii >= 0 && jj >= 0 && ii < tw && jj < th && TM[jj * tw + ii] > m) m = TM[jj * tw + ii];
+      float ndl = max(0.0, dot(n, uL)) * lit;
+      // the sky, less of it below the heights about
+      vec2 ta = vec2(w.x / uWorld.x, 1.0 - w.y / uWorld.y);
+      float near = texture(uNear, ta).r + uZbase, far = texture(uFar, ta).r + uZbase;
+      float ao = 1.0 - clamp((near - h) * 0.22, 0.0, 0.4) - clamp((far - h) * 0.06, 0.0, 0.25);
+      bool water = A.a > 0.5;
+      if (water) ao = max(ao, 0.85);
+      float amb = ao * (0.55 + 0.45 * n.z);
+      // lamps
+      float glow = 0.0, flame = 0.0;
+      for (int i = 0; i < uNL; i++) {
+        vec4 l = uLamps[i];
+        vec3 d = P - l.xyz;
+        float d2 = dot(d, d);
+        if (d2 > 256.0) continue;
+        float dd = sqrt(d2), f = 1.0 - dd / 16.0;
+        glow += l.w * 6.0 / (1.0 + d2 * 0.35) * f * f * max(0.2, dot(-d, n) / max(dd, 1e-3) * 0.8 + 0.2);
+        if (dot(d.xy, d.xy) < 0.09) flame += l.w * 3.0;
       }
-      TD[j * tw + i] = m;
-    }
-    return { TD, tw, TS, zmax };
-  }
+      const vec3 LAMP = vec3(1.0, 0.56, 0.22);
+      vec3 v = lin(A.rgb) * (uSky * amb + uSun * ndl + LAMP * glow) + LAMP * flame;
+      if (water) v += 0.05 * uSky * ao;
+      // at night colours fade, as they do to eyes in the dark, but lamplight's
+      float lum = dot(v, vec3(0.2126, 0.7152, 0.0722)), warm = v.r - v.b;
+      v = mix(v, lum * vec3(0.9, 0.97, 1.15), uGrey * clamp(1.0 - warm * 4.0, 0.0, 1.0));
+      o = vec4(tone(v.r), tone(v.g), tone(v.b), 1.0);
+    }`;
+  const DOWN_FS = `
+    uniform sampler2D uTex; uniform vec2 uOut;
+    out vec4 o;
+    void main() { o = texture(uTex, gl_FragCoord.xy / uOut); }`;
+  const BLUR_FS = `
+    uniform sampler2D uSrc; uniform ivec2 uDir; uniform int uR; uniform float uSub;
+    out float o;
+    void main() {
+      ivec2 p = ivec2(gl_FragCoord.xy), sz = textureSize(uSrc, 0);
+      float a = 0.0;
+      for (int k = -uR; k <= uR; k++) a += texelFetch(uSrc, clamp(p + uDir * k, ivec2(0), sz - 1), 0).r;
+      o = a / float(2 * uR + 1) - uSub;
+    }`;
 
-  // a box blur of a w × h grid, r cells each way
-  function blur(src, w, h, r) {
-    const tmp = new Float32Array(w * h), dst = new Float32Array(w * h);
-    for (let j = 0; j < h; j++) {
-      let acc = 0;
-      const row = j * w;
-      for (let i = -r; i <= r; i++) acc += src[row + clamp(i, 0, w - 1)];
-      for (let i = 0; i < w; i++) {
-        tmp[row + i] = acc / (2 * r + 1);
-        acc += src[row + Math.min(i + r + 1, w - 1)] - src[row + Math.max(i - r, 0)];
-      }
-    }
-    for (let i = 0; i < w; i++) {
-      let acc = 0;
-      for (let j = -r; j <= r; j++) acc += tmp[clamp(j, 0, h - 1) * w + i];
-      for (let j = 0; j < h; j++) {
-        dst[j * w + i] = acc / (2 * r + 1);
-        acc += tmp[Math.min(j + r + 1, h - 1) * w + i] - tmp[Math.max(j - r, 0) * w + i];
-      }
-    }
-    return dst;
-  }
-
-  // The light of a moment: the sun's, reddening as it sets, or after dusk
-  // the moon's, as bright as she is full; the sky's about, blue by day,
-  // rosy at twilight, dark at night. Night's light is far brighter than it
-  // is, as eyes used to the dark see it, and greyer.
+  // ---- the light of a moment ----
+  // the sun's, reddening as it sets, or after dusk the moon's, as bright as
+  // she is full; the sky's about, blue by day, rosy at twilight, dark at
+  // night; night's light far brighter than it is, as eyes used to the dark
+  // see it, and greyer; the lamps lit from dusk
   function lightOf(sky) {
     const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
     const mixc = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
@@ -487,161 +360,602 @@ const RomanTownView = (() => {
     const mUp = sm(-0.015, 0.06, moon.el) * moon.lit * (1 - day);
     const moonC = [0.42, 0.56, 0.95].map(v => v * 0.42 * mUp);
     const night = [0.022, 0.03, 0.06].map((v, q) => v + [0.022, 0.03, 0.055][q] * moon.lit * sm(-0.015, 0.06, moon.el));
-    const skyC = mixc(night, dusk, day);
     const bySun = sunC[1] >= moonC[1];
-    // lamps lit from dusk, the darker the brighter they seem
-    return { L: bySun ? dir(sun.az, sun.el) : dir(moon.az, moon.el), col: bySun ? sunC : moonC, sky: skyC, night: 1 - day, lamps: 1 - sm(-0.1, 0.03, sun.el) };
+    return {
+      L: bySun ? dir(sun.az, sun.el) : dir(moon.az, moon.el), col: bySun ? sunC : moonC,
+      sky: mixc(night, dusk, day), grey: 0.75 * (1 - day), lamps: 1 - sm(-0.1, 0.03, sun.el),
+    };
   }
 
-  // what holds wherever the town is looked at
-  function scene(town, { seed = 1 } = {}) {
-    const T = town.terrain, sc = { town, seed };
-    // the ground's slopes at its grid's points
-    sc.TN = new Float32Array(T.nx * T.ny * 2);
-    for (let j = 0; j < T.ny; j++) for (let i = 0; i < T.nx; i++) {
+  function create(canvas, town, { seed = 1 } = {}) {
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: true });
+    if (!gl) throw new Error('This painting needs WebGL2.');
+    if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('This painting needs float render targets (EXT_color_buffer_float).');
+    const W = town.W, H = town.H, T = town.terrain, TA = town.town.angle, iseed = seed % 100000;
+    let zmin = Infinity, zmax = -Infinity;
+    for (const v of T.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+    const zlo = zmin - 20, zhi = zmax + 80;
+
+    // ---- programs ----
+    function program(vs, fs) {
+      const p = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, HEAD + vs], [gl.FRAGMENT_SHADER, HEAD + fs]]) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+        gl.attachShader(p, s);
+      }
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const loc = {};
+      const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, ''); loc[name] = gl.getUniformLocation(p, name); }
+      return { p, loc };
+    }
+    const P = {
+      ground: program(GROUND_VS, GROUND_FS), solid: program(SOLID_VS, SOLID_FS), body: program(BODY_VS, BODY_FS),
+      depth: program(DEPTH_VS, EMPTY_FS), bodyDepth: program(BODY_VS, EMPTY_FS),
+      light: program(QUAD_VS, LIGHT_FS), down: program(QUAD_VS, DOWN_FS), blur: program(QUAD_VS, BLUR_FS),
+    };
+
+    // ---- the ground's heights and slopes, a texture ----
+    const terTex = gl.createTexture();
+    {
+      const d = new Float32Array(T.nx * T.ny * 4);
       const zz = (a, b) => T.z[clamp(b, 0, T.ny - 1) * T.nx + clamp(a, 0, T.nx - 1)];
-      sc.TN[2 * (j * T.nx + i)] = (zz(i + 1, j) - zz(i - 1, j)) / (2 * T.cell);
-      sc.TN[2 * (j * T.nx + i) + 1] = (zz(i, j + 1) - zz(i, j - 1)) / (2 * T.cell);
-    }
-    sc.zmin = Infinity; sc.zmax = -Infinity;
-    for (const v of T.z) { if (v < sc.zmin) sc.zmin = v; if (v > sc.zmax) sc.zmax = v; }
-    // where each thing lies, to leave out what a piece does not show
-    const ofPts = (pts, m = 0) => {
-      let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
-      for (const [x, y] of pts) { if (x < a) a = x; if (y < b) b = y; if (x > c) c = x; if (y > d) d = y; }
-      return [a - m, b - m, c + m, d + m];
-    };
-    const ofDisc = (x, y, r) => [x - r, y - r, x + r, y + r];
-    sc.bb = {
-      fields: town.fields.map(f => ofPts(f.poly)),
-      grounds: town.grounds.map(g => ofPts(g.poly)),
-      roads: town.roads.map(r => ofPts(r.points, r.width)),
-      trees: town.trees.map(t => ofDisc(t.x, t.y, t.r * 1.1)),
-      animals: (town.animals || []).map(a => ofDisc(a.x, a.y, 2.2)),
-      buildings: town.buildings.map(b =>
-        b.shape === 'box' ? ofDisc(b.x, b.y, Math.hypot(b.w, b.d) / 2 + 1.5)
-          : b.shape === 'round' ? ofDisc(b.x, b.y, b.r)
-            : b.shape === 'cavea' ? ofDisc(b.x, b.y, b.r1 + 3)
-              : ofDisc(b.x, b.y, Math.max(b.a, b.b) + 4)),
-    };
-    // the whole world, coarsely: heights for the shadows and the sky's light
-    const cs = 2, cw = Math.ceil(town.W * cs), ch = Math.ceil(town.H * cs);
-    const r = raster(sc, { x0: 0, y0: 0, s: cs, w: cw, h: ch }, false);
-    sc.coarse = {
-      x0: 0, y0: 0, s: cs, w: cw, h: ch, Z: r.Z, BOT: r.BOT, WET: r.WET, ...tileMax(r.Z, cw, ch, 16),
-      // the heights about each point, near and further, to tell a hollow
-      near: blur(blur(r.Z, cw, ch, 2), cw, ch, 2), far: blur(blur(r.Z, cw, ch, 7), cw, ch, 7),
-    };
-    return sc;
-  }
-
-  // How much of the sun each pixel of a piece is shaded from: a walk
-  // towards the sun, rising as the light does, through the piece, then
-  // through what lies towards the sun drawn coarser, then through the whole
-  // world coarser still, until it is higher than anything about. The shade
-  // softens as the thing casting it is further away.
-  function shadows(sc, r, cam, m, more, L) {
-    const hl = Math.hypot(L[0], L[1]), dx = L[0] / hl, dy = L[1] / hl, tanE = L[2] / hl;
-    const layers = [{ ...cam, Z: r.Z, BOT: r.BOT, WET: r.WET, ...tileMax(r.Z, cam.w, cam.h, 16), fine: true }, ...more, sc.coarse];
-    const top = Math.max(...layers.map(l => l.zmax));
-    const { w, h } = cam, occ = new Float32Array(w * h);
-    for (let j = m; j < h - m; j++) for (let i = m; i < w - m; i++) {
-      const p = j * w + i;
-      let wx = cam.x0 + (i + 0.5) / cam.s, wy = cam.y0 + (j + 0.5) / cam.s, zr = r.Z[p] + 0.03, o = 0, d = 0;
-      walk: for (const G of layers) {
-        let x = (wx - G.x0) * G.s, y = (wy - G.y0) * G.s;
-        if (x < 0 || y < 0 || x >= G.w || y >= G.h) continue;
-        const Z = G.Z, gw = G.w, rise = tanE / G.s, st = 1 / G.s;
-        for (;;) {
-          if (zr > top) break walk;
-          if (zr > G.TD[((y / 16) | 0) * G.tw + ((x / 16) | 0)]) { x += dx * 16; y += dy * 16; zr += rise * 16; d += st * 16; }
-          else { x += dx; y += dy; zr += rise; d += st; }
-          if (x < 0.5 || y < 0.5 || x >= G.w - 1 || y >= G.h - 1) break;
-          const q = (y | 0) * gw + (x | 0);
-          let zq;
-          if (G.fine) zq = Z[q];
-          else {
-            // (read smoothly between the coarser pixels)
-            const fx = x - 0.5, fy = y - 0.5, ix = fx | 0, iy = fy | 0, ax = fx - ix, ay = fy - iy, k = iy * gw + ix;
-            zq = (Z[k] * (1 - ax) + Z[k + 1] * ax) * (1 - ay) + (Z[k + gw] * (1 - ax) + Z[k + gw + 1] * ax) * ay;
-          }
-          if (zq > zr && G.BOT[q] < zr && G.WET[q] !== 1) { // (water, flat, shades nothing)
-            const v = (zq - zr) / (0.12 + 0.025 * d);
-            if (v >= 1) { o = 1; break walk; }
-            if (v > o) o = v;
-          }
-        }
-        wx = G.x0 + x / G.s; wy = G.y0 + y / G.s;
+      for (let j = 0; j < T.ny; j++) for (let i = 0; i < T.nx; i++) {
+        const k = 4 * (j * T.nx + i);
+        d[k] = zz(i, j); d[k + 1] = (zz(i + 1, j) - zz(i - 1, j)) / (2 * T.cell); d[k + 2] = (zz(i, j + 1) - zz(i, j - 1)) / (2 * T.cell);
       }
-      occ[p] = o;
+      gl.bindTexture(gl.TEXTURE_2D, terTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, T.nx, T.ny, 0, gl.RGBA, gl.FLOAT, d);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
     }
-    return occ;
-  }
 
-  // a piece of the town: w × h pixels from (x0, y0), s a metre, drawn k
-  // times finer and averaged, with a margin about it so what stands just
-  // outside casts its shadow in; RGBA bytes
-  function tile(sc, { x0, y0, s, w, h, k = 2, margin = 12 }, sky) {
-    const lit = lightOf(sky), L = lit.L;
-    const S = s * k, m = margin, bw = w * k + 2 * m, bh = h * k + 2 * m;
-    const cam = { x0: x0 - m / S, y0: y0 - m / S, s: S, w: bw, h: bh };
-    const r = raster(sc, cam, true), { Z, NX, NY, ALB, WET } = r;
-    // close up, what lies towards the sun drawn at 8 px a metre, 45 m of it
-    const more = [];
-    if (S > 10) {
-      const L0 = L, hl = Math.hypot(L0[0], L0[1]), ex = 45 * L0[0] / hl, ey = 45 * L0[1] / hl;
-      const X0 = Math.min(cam.x0, cam.x0 + ex) - 2, Y0 = Math.min(cam.y0, cam.y0 + ey) - 2;
-      const X1 = Math.max(cam.x0, cam.x0 + ex) + bw / S + 2, Y1 = Math.max(cam.y0, cam.y0 + ey) + bh / S + 2;
-      const mc = { x0: X0, y0: Y0, s: 8, w: Math.ceil((X1 - X0) * 8), h: Math.ceil((Y1 - Y0) * 8) };
-      const mr = raster(sc, mc, false);
-      more.push({ ...mc, Z: mr.Z, BOT: mr.BOT, WET: mr.WET, ...tileMax(mr.Z, mc.w, mc.h, 16) });
+    // ---- the ground's patches: x, y, what, angle, across, level, tint ----
+    const GV = [];
+    const gvert = (x, y, m, a = 0, t = 0, lev = 0, tint = 0) => GV.push(x, y, m, a, t, lev, tint);
+    function gpoly(pts, m, a = 0, tint = 0) {
+      for (let i = 1; i + 1 < pts.length; i++) for (const q of [pts[0], pts[i], pts[i + 1]]) gvert(q[0], q[1], m, a, 0, 0, tint);
     }
-    const occ = shadows(sc, r, cam, m, more, L), C = sc.coarse;
-    const sample = (G, x, y) => {
-      const fx = clamp(x * C.s - 0.5, 0, C.w - 1.001), fy = clamp(y * C.s - 0.5, 0, C.h - 1.001);
-      const i = Math.floor(fx), j = Math.floor(fy), ax = fx - i, ay = fy - j, q = j * C.w + i;
-      return lerp(lerp(G[q], G[q + 1], ax), lerp(G[q + C.w], G[q + C.w + 1], ax), ay);
-    };
-    const sun = lit.col, amb0 = lit.sky, grey = 0.75 * lit.night;
-    // the lamps near enough to light the piece
-    const R = 16, X1 = cam.x0 + bw / S, Y1 = cam.y0 + bh / S;
-    const lamps = lit.lamps > 0.01 ? (sc.town.lamps || []).filter(l => l.x > cam.x0 - R && l.x < X1 + R && l.y > cam.y0 - R && l.y < Y1 + R) : [];
-    const LAMP = [1.0, 0.56, 0.22];
-    const tone = v => { const x = Math.max(0, v * 0.9); const y = x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14); return y <= 0.0031308 ? 12.92 * y : 1.055 * Math.pow(Math.min(1, y), 1 / 2.4) - 0.055; };
-    const out = new Uint8ClampedArray(w * h * 4), acc = [0, 0, 0];
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-      acc[0] = acc[1] = acc[2] = 0;
-      for (let b = 0; b < k; b++) for (let a = 0; a < k; a++) {
-        const ii = m + i * k + a, jj = m + j * k + b, p = jj * bw + ii;
-        const nx = NX[p], ny = NY[p], nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
-        const ndl = Math.max(0, nx * L[0] + ny * L[1] + nz * L[2]) * (1 - occ[p]);
-        // the sky, less of it below the heights about
-        const wx = cam.x0 + (ii + 0.5) / S, wy = cam.y0 + (jj + 0.5) / S;
-        let ao = 1 - clamp((sample(C.near, wx, wy) - Z[p]) * 0.22, 0, 0.4) - clamp((sample(C.far, wx, wy) - Z[p]) * 0.06, 0, 0.25);
-        if (WET[p] === 1) ao = Math.max(ao, 0.85);
-        const amb = ao * (0.55 + 0.45 * nz);
-        let glow = 0, flame = 0;
-        for (const l of lamps) {
-          const ddx = wx - l.x, ddy = wy - l.y, ddz = Z[p] - l.z, d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-          if (d2 > R * R) continue;
-          const d = Math.sqrt(d2), f = 1 - d / R;
-          glow += l.power * lit.lamps * 6 / (1 + d2 * 0.35) * f * f * Math.max(0.2, (-ddx * nx - ddy * ny - ddz * nz) / (d || 1) * 0.8 + 0.2);
-          if (ddx * ddx + ddy * ddy < 0.09) flame += l.power * lit.lamps * 3;
+    // a line of a width: a strip, across it −1…1, mitred where it bends
+    function gline(pts, half, m, levels = null) {
+      const n = pts.length, side = [];
+      for (let q = 0; q < n; q++) {
+        const a = pts[Math.max(0, q - 1)], b = pts[Math.min(n - 1, q + 1)], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        let nx = -(b[1] - a[1]) / l, ny = (b[0] - a[0]) / l;
+        // as wide across the bend as along the straight
+        if (q > 0 && q < n - 1) {
+          const p0 = pts[q - 1], p1 = pts[q], l0 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+          const c = Math.max(0.5, nx * -(p1[1] - p0[1]) / l0 + ny * (p1[0] - p0[0]) / l0);
+          nx /= c; ny /= c;
         }
-        for (let q = 0; q < 3; q++) {
-          let v = LIN[ALB[3 * p + q]] * (amb0[q] * amb + sun[q] * ndl + LAMP[q] * glow) + LAMP[q] * flame;
-          if (WET[p] === 1) v += 0.05 * amb0[q] * ao; // the sky in the water
-          acc[q] += v;
+        side.push([nx * half, ny * half]);
+      }
+      for (let q = 0; q + 1 < n; q++) {
+        const [ax, ay] = pts[q], [bx, by] = pts[q + 1], [anx, any] = side[q], [bnx, bny] = side[q + 1];
+        const la = levels ? levels[q] : 0, lb = levels ? levels[q + 1] : 0;
+        const A1 = [ax + anx, ay + any, 1, la], A2 = [ax - anx, ay - any, -1, la], B1 = [bx + bnx, by + bny, 1, lb], B2 = [bx - bnx, by - bny, -1, lb];
+        for (const v of [A1, B1, B2, A1, B2, A2]) gvert(v[0], v[1], m, 0, v[2], v[3]);
+      }
+    }
+    gpoly([[0, 0], [W, 0], [W, H], [0, H]], GROUND.natural);
+    for (const f of town.fields) gpoly(f.poly, GROUND[f.crop] ?? GROUND.meadow, f.angle, hash(Math.round(f.poly[0][0] * 7), Math.round(f.poly[0][1] * 7), seed));
+    for (const kind of ['track', 'via']) for (const r of town.roads) if (r.kind === kind) gline(r.points, r.width / 2, GROUND[kind]);
+    if (town.river) {
+      const R = town.river;
+      gline(R.points, R.width / 2, GROUND.bank);
+      gline(R.points, R.width / 2 - 0.6, GROUND.river, R.level);
+    }
+    for (const g of town.grounds) gpoly(g.poly, GROUND[g.kind] ?? GROUND.yard, g.angle || 0);
+    const groundVAO = gl.createVertexArray(), groundN = GV.length / 7;
+    gl.bindVertexArray(groundVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(GV), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 28, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 8);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 28, 24);
+
+    // ---- the solids: x, y, z, normal, what, two tints ----
+    const SV = [];
+    let mat = [0, 0, 0, 0];
+    const svert = (p, n) => SV.push(p[0], p[1], p[2], n[0], n[1], n[2], mat[0], mat[1], mat[2], mat[3]);
+    // a flat convex polygon, its normal from all its corners (Newell's), so
+    // a corner repeated does no harm
+    function face(pts) {
+      let nx = 0, ny = 0, nz = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], c = pts[(i + 1) % pts.length];
+        nx += (a[1] - c[1]) * (a[2] + c[2]); ny += (a[2] - c[2]) * (a[0] + c[0]); nz += (a[0] - c[0]) * (a[1] + c[1]);
+      }
+      const l = Math.hypot(nx, ny, nz);
+      if (l < 1e-9) return;
+      const sg = nz < 0 ? -1 / l : 1 / l, n = [nx * sg, ny * sg, nz * sg];
+      for (let i = 1; i + 1 < pts.length; i++) { svert(pts[0], n); svert(pts[i], n); svert(pts[i + 1], n); }
+    }
+    const tri3 = (a, b, c, na, nb, nc) => { svert(a, na); svert(b, nb); svert(c, nc); };
+    // the walls under a line of points [x, y, ztop], down into the ground
+    function walls(pts, zb, closed = true) {
+      for (let i = 0; i + (closed ? 0 : 1) < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        face([[a[0], a[1], zb], [b[0], b[1], zb], [b[0], b[1], b[2]], [a[0], a[1], a[2]]]);
+      }
+    }
+    const matOf = b => b.use === 'steps' ? SOLID.steps : b.use === 'wall' || b.use === 'gate' ? SOLID.wall : SOLID[b.mat] ?? SOLID.stone;
+    const tints = b => [hash(Math.round(b.x * 10), Math.round(b.y * 10), seed + 21), hash(Math.round(b.x * 3), Math.round(b.y * 3), seed + 22)];
+    function box(b) {
+      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), hw = b.w / 2, hd = b.d / 2, Wd = b.w, D = b.d, k = b.pitch || 0;
+      const Q = (a, c, z) => [b.x + (a - hw) * ca - (c - hd) * sa, b.y + (a - hw) * sa + (c - hd) * ca, z];
+      const zt = b.z0 + b.h, zb = b.z0 - 3;
+      const rect = z => [Q(0, 0, z), Q(Wd, 0, z), Q(Wd, D, z), Q(0, D, z)];
+      switch (k > 0 || b.roof === 'court' ? b.roof : 'flat') {
+        case 'hip': {
+          if (Wd >= D) {
+            const r = D / 2, zr = zt + k * r;
+            face([Q(0, 0, zt), Q(Wd, 0, zt), Q(Wd - r, r, zr), Q(r, r, zr)]);
+            face([Q(0, D, zt), Q(r, r, zr), Q(Wd - r, r, zr), Q(Wd, D, zt)]);
+            face([Q(0, 0, zt), Q(r, r, zr), Q(0, D, zt)]);
+            face([Q(Wd, 0, zt), Q(Wd, D, zt), Q(Wd - r, r, zr)]);
+          } else {
+            const r = Wd / 2, zr = zt + k * r;
+            face([Q(0, 0, zt), Q(0, D, zt), Q(r, D - r, zr), Q(r, r, zr)]);
+            face([Q(Wd, 0, zt), Q(r, r, zr), Q(r, D - r, zr), Q(Wd, D, zt)]);
+            face([Q(0, 0, zt), Q(r, r, zr), Q(Wd, 0, zt)]);
+            face([Q(0, D, zt), Q(Wd, D, zt), Q(r, D - r, zr)]);
+          }
+          walls(rect(zt), zb);
+          break;
+        }
+        case 'gable': {
+          if (b.axis === 'w') {
+            const zr = zt + k * D / 2;
+            face([Q(0, 0, zt), Q(Wd, 0, zt), Q(Wd, D / 2, zr), Q(0, D / 2, zr)]);
+            face([Q(0, D, zt), Q(0, D / 2, zr), Q(Wd, D / 2, zr), Q(Wd, D, zt)]);
+            face([Q(0, 0, zt), Q(0, D, zt), Q(0, D / 2, zr)]);
+            face([Q(Wd, 0, zt), Q(Wd, D, zt), Q(Wd, D / 2, zr)]);
+          } else {
+            const zr = zt + k * Wd / 2;
+            face([Q(0, 0, zt), Q(0, D, zt), Q(Wd / 2, D, zr), Q(Wd / 2, 0, zr)]);
+            face([Q(Wd, 0, zt), Q(Wd / 2, 0, zr), Q(Wd / 2, D, zr), Q(Wd, D, zt)]);
+            face([Q(0, 0, zt), Q(Wd, 0, zt), Q(Wd / 2, 0, zr)]);
+            face([Q(0, D, zt), Q(Wd, D, zt), Q(Wd / 2, D, zr)]);
+          }
+          walls(rect(zt), zb);
+          break;
+        }
+        case 'shed': {
+          const zA = { '+w': [zt + k * Wd, zt, zt, zt + k * Wd], '-w': [zt, zt + k * Wd, zt + k * Wd, zt], '+d': [zt + k * D, zt + k * D, zt, zt], '-d': [zt, zt, zt + k * D, zt + k * D] }[b.low] || [zt, zt, zt, zt];
+          const top = [Q(0, 0, zA[0]), Q(Wd, 0, zA[1]), Q(Wd, D, zA[2]), Q(0, D, zA[3])];
+          face(top);
+          walls(top, zb);
+          break;
+        }
+        case 'court': {
+          const [s1, t1, s2, t2] = b.hole, zo = zt + k * Math.max(0, Math.min(t1, Wd - s2, D - t2, s1));
+          face([Q(0, 0, zo), Q(Wd, 0, zo), Q(s2, t1, zt), Q(s1, t1, zt)]);
+          face([Q(Wd, 0, zo), Q(Wd, D, zo), Q(s2, t2, zt), Q(s2, t1, zt)]);
+          face([Q(Wd, D, zo), Q(0, D, zo), Q(s1, t2, zt), Q(s2, t2, zt)]);
+          face([Q(0, D, zo), Q(0, 0, zo), Q(s1, t1, zt), Q(s1, t2, zt)]);
+          walls(rect(zo), zb);
+          walls([Q(s1, t1, zt), Q(s2, t1, zt), Q(s2, t2, zt), Q(s1, t2, zt)], zb);
+          break;
+        }
+        default: {
+          face(rect(zt));
+          walls(rect(zt), zb);
+          // a wall's walk between its parapets
+          if (b.use === 'wall' && D > 1.6) {
+            for (const [c1, c2] of [[0, 0.5], [D - 0.5, D]]) {
+              const pr = [Q(0, c1, zt + 1.2), Q(Wd, c1, zt + 1.2), Q(Wd, c2, zt + 1.2), Q(0, c2, zt + 1.2)];
+              face(pr);
+              walls(pr, zt);
+            }
+          }
         }
       }
-      const o = 4 * (j * w + i);
-      // (at night colours fade, as they do to eyes in the dark)
-      const lum = 0.2126 * acc[0] + 0.7152 * acc[1] + 0.0722 * acc[2], warm = acc[0] - acc[2];
-      for (let q = 0; q < 3; q++) out[o + q] = 255 * tone(lerp(acc[q], lum * [0.9, 0.97, 1.15][q], grey * clamp(1 - warm * 4, 0, 1)) / (k * k));
-      out[o + 3] = 255;
     }
-    return out;
+    function round(b) {
+      const n = clamp(Math.round(b.r * 7), 12, 64), zt = b.z0 + b.h, zb = b.z0 - 3, r = b.r, k = b.pitch || 0;
+      const at = (i, rr, z) => { const a = i / n * Math.PI * 2; return [b.x + rr * Math.cos(a), b.y + rr * Math.sin(a), z]; };
+      const rim = [];
+      for (let i = 0; i < n; i++) rim.push(at(i, r, zt));
+      walls(rim, zb);
+      if (b.hole) {
+        const inner = [];
+        for (let i = 0; i < n; i++) { inner.push(at(i, b.hole, zt)); face([at(i, b.hole, zt), at(i, r, zt), at(i + 1, r, zt), at(i + 1, b.hole, zt)]); }
+        walls(inner, zb);
+      } else if (b.roof === 'cone' && k > 0) {
+        const apex = [b.x, b.y, zt + k * r], l = Math.hypot(k, 1);
+        const nn = j => { const a = j / n * Math.PI * 2; return [k * Math.cos(a) / l, k * Math.sin(a) / l, 1 / l]; };
+        for (let i = 0; i < n; i++) tri3(at(i, r, zt), at(i + 1, r, zt), apex, nn(i), nn(i + 1), nn(i + 0.5));
+      } else if (b.roof === 'dome' && k > 0) {
+        const c = r * k, rings = 8;
+        const pt = (i, j) => at(i, r * Math.cos(j / rings * Math.PI / 2), zt + c * Math.sin(j / rings * Math.PI / 2));
+        const nn = (i, j) => {
+          const q = Math.cos(j / rings * Math.PI / 2), a = i / n * Math.PI * 2;
+          const v = [Math.cos(a) * q / r, Math.sin(a) * q / r, Math.sin(j / rings * Math.PI / 2) / c], l = Math.hypot(...v);
+          return v.map(x => x / l);
+        };
+        for (let j = 0; j < rings; j++) for (let i = 0; i < n; i++) {
+          tri3(pt(i, j), pt(i + 1, j), pt(i + 1, j + 1), nn(i, j), nn(i + 1, j), nn(i + 1, j + 1));
+          tri3(pt(i, j), pt(i + 1, j + 1), pt(i, j + 1), nn(i, j), nn(i + 1, j + 1), nn(i, j + 1));
+        }
+      } else face(rim);
+    }
+    // a theatre's seats: steps rising in a half ring about the orchestra
+    function cavea(b) {
+      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), steps = Math.round((b.r1 - b.r0) / 0.8), rise = b.h / steps, n = 48;
+      const at = (i, r, z) => { const a = -Math.PI / 2 + i / n * Math.PI, x = r * Math.cos(a), y = r * Math.sin(a); return [b.x + x * ca - y * sa, b.y + x * sa + y * ca, z]; };
+      mat = [SOLID.paving, 0, 0, 0];
+      for (let i = 0; i < n; i++) face([[b.x, b.y, b.z0 + 0.05], at(i, b.r0, b.z0 + 0.05), at(i + 1, b.r0, b.z0 + 0.05)]);
+      mat = [SOLID.stone, 0.5, 0, 0];
+      for (let s = 0; s < steps; s++) {
+        const r1 = b.r0 + s * 0.8, r2 = r1 + 0.8, z = b.z0 + 1 + s * rise, ring = [];
+        // each step's seat, its worn front edge darker
+        mat = [SOLID.stone, 0.5, 0, 0];
+        for (let i = 0; i < n; i++) face([at(i, r1 + 0.14, z), at(i, r2, z), at(i + 1, r2, z), at(i + 1, r1 + 0.14, z)]);
+        mat = [SOLID.stone, -1.2, 0, 0];
+        for (let i = 0; i < n; i++) face([at(i, r1, z), at(i, r1 + 0.14, z), at(i + 1, r1 + 0.14, z), at(i + 1, r1, z)]);
+        mat = [SOLID.stone, 0.5, 0, 0];
+        for (let i = 0; i <= n; i++) ring.push(at(i, r1, z));
+        walls(ring, b.z0 - 1, false);
+      }
+      const zt = b.z0 + 1 + b.h + 3, outer = [];
+      for (let i = 0; i < n; i++) face([at(i, b.r1, zt), at(i, b.r1 + 2.5, zt), at(i + 1, b.r1 + 2.5, zt), at(i + 1, b.r1, zt)]);
+      for (let i = 0; i <= n; i++) outer.push(at(i, b.r1 + 2.5, zt));
+      walls(outer, b.z0 - 1, false);
+    }
+    // an amphitheatre: the arena of sand, the seats rising round it, the gates through
+    function arena(b) {
+      const ca = Math.cos(b.angle), sa = Math.sin(b.angle), n = 96, r0 = b.a0 / b.a, steps = Math.round((b.a - b.a0) / 0.8), ro = 1 + 3 / b.a;
+      const loc = (i, rho) => { const a = i / n * Math.PI * 2; return [rho * b.a * Math.cos(a), rho * b.b * Math.sin(a)]; };
+      const at = (i, rho, z) => { const [x, y] = loc(i, rho); return [b.x + x * ca - y * sa, b.y + x * sa + y * ca, z]; };
+      const gate = (i, rho) => { const [x, y] = loc(i + 0.5, rho); return Math.abs(y) < 2.2 || Math.abs(x) < 2.2; };
+      mat = [SOLID.sand, 0, 0, 0];
+      for (let i = 0; i < n; i++) face([[b.x, b.y, b.z0], at(i, r0, b.z0), at(i + 1, r0, b.z0)]);
+      for (let s = 0; s <= steps; s++) {
+        const rA = r0 + (1 - r0) * s / steps, rB = s === steps ? ro : r0 + (1 - r0) * (s + 1) / steps;
+        const z = s === steps ? b.z0 + 3.5 + b.h + 3 : b.z0 + 3.5 + s * b.h / steps;
+        for (let i = 0; i < n; i++) {
+          if (gate(i, (rA + rB) / 2)) { mat = [SOLID.passage, 0, 0, 0]; face([at(i, rA, b.z0 + 0.02), at(i, rB, b.z0 + 0.02), at(i + 1, rB, b.z0 + 0.02), at(i + 1, rA, b.z0 + 0.02)]); continue; }
+          const lip = s < steps ? rA + (rB - rA) * 0.18 : rA;
+          mat = [SOLID.stone, -1.2, 0, 0];
+          if (lip > rA) face([at(i, rA, z), at(i, lip, z), at(i + 1, lip, z), at(i + 1, rA, z)]);
+          mat = [SOLID.stone, 0.5, 0, 0];
+          face([at(i, lip, z), at(i, rB, z), at(i + 1, rB, z), at(i + 1, lip, z)]);
+          face([at(i, rA, b.z0 - 1), at(i + 1, rA, b.z0 - 1), at(i + 1, rA, z), at(i, rA, z)]);
+          if (s === steps) face([at(i, rB, b.z0 - 1), at(i + 1, rB, b.z0 - 1), at(i + 1, rB, z), at(i, rB, z)]);
+        }
+      }
+    }
+    for (const b of town.buildings) {
+      const [t1, t2] = tints(b);
+      mat = [matOf(b), t1, t2, 0];
+      if (b.shape === 'box') box(b);
+      else if (b.shape === 'round') round(b);
+      else if (b.shape === 'cavea') cavea(b);
+      else if (b.shape === 'arena') arena(b);
+    }
+    const solidBuf = gl.createBuffer(), solidN = SV.length / 10;
+    gl.bindBuffer(gl.ARRAY_BUFFER, solidBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SV), gl.STATIC_DRAW);
+    const solidVAO = gl.createVertexArray();
+    gl.bindVertexArray(solidVAO);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 40, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 40, 24);
+    const solidDepthVAO = gl.createVertexArray();
+    gl.bindVertexArray(solidDepthVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, solidBuf);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+
+    // the ground as a mesh, for the hills' shadows
+    const terVAO = gl.createVertexArray();
+    let terN;
+    {
+      const v = new Float32Array(T.nx * T.ny * 3), idx = [];
+      for (let j = 0; j < T.ny; j++) for (let i = 0; i < T.nx; i++) { const k = j * T.nx + i; v[3 * k] = i * T.cell; v[3 * k + 1] = j * T.cell; v[3 * k + 2] = T.z[k]; }
+      for (let j = 0; j + 1 < T.ny; j++) for (let i = 0; i + 1 < T.nx; i++) { const k = j * T.nx + i; idx.push(k, k + 1, k + T.nx, k + 1, k + T.nx + 1, k + T.nx); }
+      gl.bindVertexArray(terVAO);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(idx), gl.STATIC_DRAW);
+      terN = idx.length;
+    }
+
+    // ---- round bodies: a sphere, coarser and finer; each body x, y, z, radii, colour, lumpiness, turn, number ----
+    function sphere(sub) {
+      const t = (1 + Math.sqrt(5)) / 2;
+      const norm = v => { const l = Math.hypot(...v); return v.map(x => x / l); };
+      const vs = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(norm);
+      let fs = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+      for (let s = 0; s < sub; s++) {
+        const cache = new Map(), nf = [];
+        const mid = (a, b) => {
+          const key = a < b ? a + ',' + b : b + ',' + a;
+          if (!cache.has(key)) { vs.push(norm(vs[a].map((x, i) => (x + vs[b][i]) / 2))); cache.set(key, vs.length - 1); }
+          return cache.get(key);
+        };
+        for (const [a, b, c] of fs) { const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a); nf.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+        fs = nf;
+      }
+      return new Float32Array(fs.flat().flatMap(i => vs[i]));
+    }
+    const bodies = [];
+    town.trees.forEach((t, i) => {
+      const [col, depth] = TREES[t.kind] || TREES.oak, cdep = depth > 1 ? Math.min(depth, t.h * 0.5) : depth * t.h;
+      const tone = 0.88 + 0.24 * hash(i, 3, seed), lump = t.kind === 'cypress' || t.kind === 'poplar' ? 0.6 : 1.1;
+      bodies.push([t.x, t.y, t.z0 + t.h - cdep, t.r, t.r, cdep, col[0] / 255 * tone, col[1] / 255 * tone, col[2] / 255 * tone, lump, 0, i]);
+    });
+    (town.animals || []).forEach((an, i) => {
+      const [Ln, Wd, Ht, cols] = BEASTS[an.kind] || BEASTS.sheep;
+      const col = cols[Math.floor(hash(i, 5, seed) ** 2 * cols.length)].map(v => v / 255);
+      const c = Math.cos(an.angle), s = Math.sin(an.angle);
+      bodies.push([an.x, an.y, an.z0 + Ht * 0.7, Ln / 2, Wd / 2, Ht * 0.3, ...col, 0, an.angle, 0]);
+      bodies.push([an.x + c * Ln * 0.55, an.y + s * Ln * 0.55, an.z0 + Ht * 0.8, Ln * 0.17, Wd * 0.28, Ht * 0.15, ...col.map(v => v * 0.85), 0, an.angle, 0]);
+    });
+    const spheres = [2, 3].map(sub => {
+      const data = sphere(sub), vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      return { vbo, n: data.length / 3 };
+    });
+    const instBuf = gl.createBuffer();
+    const bodyVAOs = spheres.map(sp => {
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, sp.vbo);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+      for (const [loc, size, off] of [[1, 3, 0], [2, 3, 12], [3, 4, 24], [4, 2, 40]]) {
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 48, off);
+        gl.vertexAttribDivisor(loc, 1);
+      }
+      return vao;
+    });
+    const instData = new Float32Array(Math.max(1, bodies.length) * 12);
+    // the bodies within a rectangle, into the instance buffer
+    function bodiesIn(x0, y0, x1, y1) {
+      let n = 0;
+      for (const b of bodies) {
+        const r = Math.max(b[3], b[4]);
+        if (b[0] + r < x0 || b[0] - r > x1 || b[1] + r < y0 || b[1] - r > y1) continue;
+        instData.set(b, 12 * n++);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, instData.subarray(0, 12 * Math.max(n, 1)), gl.DYNAMIC_DRAW);
+      return n;
+    }
+
+    // ---- render targets ----
+    function tex(w, h, internal, filter = gl.NEAREST) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, internal, w, h);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, filter);
+      for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+      return t;
+    }
+    function gbuffer(w, h) {
+      const g = { w, h, alb: tex(w, h, gl.RGBA8), nrm: tex(w, h, gl.RGBA16F), hgt: tex(w, h, gl.R32F), fbo: gl.createFramebuffer() };
+      const depth = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, g.alb, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, g.nrm, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, g.hgt, 0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+      g.free = () => { for (const t of [g.alb, g.nrm, g.hgt]) gl.deleteTexture(t); gl.deleteRenderbuffer(depth); gl.deleteFramebuffer(g.fbo); };
+      return g;
+    }
+    function target(t) {
+      const f = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      return f;
+    }
+    const SH = Math.min(4096, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+    const shadowTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT32F, SH, SH);
+    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+    const shadowFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTex, 0);
+    gl.drawBuffers([gl.NONE]);
+    gl.readBuffer(gl.NONE);
+
+    // ---- cameras ----
+    // straight down on a rectangle of the world, north up, the higher the nearer
+    function topDown(x0, y0, w, h) {
+      return new Float32Array([2 / w, 0, 0, 0, 0, -2 / h, 0, 0, 0, 0, -2 / (zhi - zlo), 0, -2 * x0 / w - 1, 2 * y0 / h + 1, 1 + 2 * zlo / (zhi - zlo), 1]);
+    }
+    // the light's: looking along it at whatever it falls on in the rectangle
+    function lightView(L, x0, y0, w, h) {
+      const f = [-L[0], -L[1], -L[2]];
+      let r = [f[1], -f[0], 0];
+      const rl = Math.hypot(r[0], r[1]);
+      r = rl < 1e-6 ? [1, 0, 0] : [r[0] / rl, r[1] / rl, 0];
+      const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+      const dot = (a, p) => a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
+      let ax = Infinity, bx = -Infinity, ay = Infinity, by = -Infinity, az = Infinity, bz = -Infinity;
+      for (const x of [x0, x0 + w]) for (const y of [y0, y0 + h]) for (const z of [zlo, zhi]) {
+        const p = [x, y, z];
+        ax = Math.min(ax, dot(r, p)); bx = Math.max(bx, dot(r, p)); ay = Math.min(ay, dot(u, p)); by = Math.max(by, dot(u, p));
+      }
+      for (const x of [0, W]) for (const y of [0, H]) for (const z of [zlo, zhi]) { const d = dot(f, [x, y, z]); az = Math.min(az, d); bz = Math.max(bz, d); }
+      az -= 10; bz += 10;
+      const sx = 2 / (bx - ax), sy = 2 / (by - ay), sz = 2 / (bz - az);
+      // clip = ((r·p − ax)·sx − 1, (u·p − ay)·sy − 1, (f·p − az)·sz − 1), by columns
+      const m = new Float32Array([
+        r[0] * sx, u[0] * sy, f[0] * sz, 0,
+        r[1] * sx, u[1] * sy, f[1] * sz, 0,
+        r[2] * sx, u[2] * sy, f[2] * sz, 0,
+        -ax * sx - 1, -ay * sy - 1, -az * sz - 1, 1,
+      ]);
+      return { m, texel: Math.max(bx - ax, by - ay) / SH, depth: bz - az };
+    }
+
+    // ---- passes ----
+    function drawScene(g, mvp, rect, scale) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo);
+      gl.viewport(0, 0, g.w, g.h);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clearDepth(1);
+      gl.depthMask(true);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      // the ground, in order, each patch over the last
+      gl.disable(gl.DEPTH_TEST);
+      gl.depthMask(false);
+      gl.useProgram(P.ground.p);
+      const L = P.ground.loc;
+      gl.uniformMatrix4fv(L.uMVP, false, mvp);
+      gl.uniform1f(L.uZmid, (zlo + zhi) / 2);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, terTex);
+      gl.uniform1i(L.uTer, 0);
+      gl.uniform3f(L.uTerDim, T.nx, T.ny, T.cell);
+      gl.uniform1i(L.uSeed, iseed);
+      gl.uniform1f(L.uTA, TA); gl.uniform1f(L.uZmin, zmin); gl.uniform1f(L.uZmax, zmax); gl.uniform1f(L.uRelief, 2);
+      gl.bindVertexArray(groundVAO);
+      gl.drawArrays(gl.TRIANGLES, 0, groundN);
+      // what stands on it, the highest seen
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LESS);
+      gl.depthMask(true);
+      gl.useProgram(P.solid.p);
+      gl.uniformMatrix4fv(P.solid.loc.uMVP, false, mvp);
+      gl.uniform1i(P.solid.loc.uSeed, iseed);
+      gl.uniform1f(P.solid.loc.uTA, TA);
+      gl.bindVertexArray(solidVAO);
+      gl.drawArrays(gl.TRIANGLES, 0, solidN);
+      const nb = bodiesIn(rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]);
+      if (nb) {
+        gl.useProgram(P.body.p);
+        gl.uniformMatrix4fv(P.body.loc.uMVP, false, mvp);
+        const k = scale > 15 ? 1 : 0; // (rounder close up)
+        gl.bindVertexArray(bodyVAOs[k]);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[k].n, nb);
+      }
+      gl.bindVertexArray(null);
+    }
+    function drawShadows(lv, rect) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFBO);
+      gl.viewport(0, 0, SH, SH);
+      gl.clearDepth(1);
+      gl.depthMask(true);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LESS);
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(1.5, 3);
+      gl.useProgram(P.depth.p);
+      gl.uniformMatrix4fv(P.depth.loc.uMVP, false, lv.m);
+      gl.bindVertexArray(terVAO);
+      gl.drawElements(gl.TRIANGLES, terN, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(solidDepthVAO);
+      gl.drawArrays(gl.TRIANGLES, 0, solidN);
+      // the bodies that may shade the rectangle: those in it, and about it
+      const m = 60;
+      const nb = bodiesIn(rect[0] - m, rect[1] - m, rect[0] + rect[2] + m, rect[1] + rect[3] + m);
+      if (nb) {
+        gl.useProgram(P.bodyDepth.p);
+        gl.uniformMatrix4fv(P.bodyDepth.loc.uMVP, false, lv.m);
+        gl.bindVertexArray(bodyVAOs[0]);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[0].n, nb);
+      }
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+      gl.bindVertexArray(null);
+    }
+    const quad = () => { gl.bindVertexArray(null); gl.drawArrays(gl.TRIANGLES, 0, 3); };
+
+    // ---- the heights about each point, the whole world's, once: near and further ----
+    const AS = 2, aw = Math.ceil(W * AS), ah = Math.ceil(H * AS), zbase = zmin;
+    const aoNear = tex(aw, ah, gl.R16F, gl.LINEAR), aoFar = tex(aw, ah, gl.R16F, gl.LINEAR);
+    {
+      const g = gbuffer(aw, ah);
+      drawScene(g, topDown(0, 0, aw / AS, ah / AS), [0, 0, W, H], AS);
+      gl.disable(gl.DEPTH_TEST);
+      const tmp = [tex(aw, ah, gl.R32F), tex(aw, ah, gl.R32F)], tf = tmp.map(target);
+      gl.useProgram(P.blur.p);
+      gl.viewport(0, 0, aw, ah);
+      const pass = (src, dstF, dir, r, sub) => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, dstF);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src);
+        gl.uniform1i(P.blur.loc.uSrc, 0); gl.uniform2i(P.blur.loc.uDir, dir[0], dir[1]); gl.uniform1i(P.blur.loc.uR, r); gl.uniform1f(P.blur.loc.uSub, sub);
+        quad();
+      };
+      for (const [r, out] of [[2, aoNear], [7, aoFar]]) {
+        const of = target(out);
+        pass(g.hgt, tf[0], [1, 0], r, 0);
+        pass(tmp[0], tf[1], [0, 1], r, 0);
+        pass(tmp[1], tf[0], [1, 0], r, 0);
+        pass(tmp[0], of, [0, 1], r, zbase);
+        gl.deleteFramebuffer(of);
+      }
+      tmp.forEach(t => gl.deleteTexture(t));
+      tf.forEach(f => gl.deleteFramebuffer(f));
+      g.free();
+    }
+
+    // ---- each frame ----
+    const ss = canvas.width * canvas.height * 4 <= 10e6 ? 2 : 1; // drawn finer, then averaged
+    const G = gbuffer(canvas.width * ss, canvas.height * ss);
+    const litTex = ss > 1 ? tex(G.w, G.h, gl.RGBA8, gl.LINEAR) : null, litFBO = litTex ? target(litTex) : null;
+    const lampData = new Float32Array(128 * 4);
+
+    function draw(rect, sky) {
+      const lt = lightOf(sky), scale = canvas.width / rect[2];
+      const lv = lightView(lt.L, ...rect);
+      drawShadows(lv, rect);
+      drawScene(G, topDown(...rect), rect, scale);
+      // the light
+      gl.disable(gl.DEPTH_TEST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, litFBO);
+      gl.viewport(0, 0, G.w, G.h);
+      gl.useProgram(P.light.p);
+      const L = P.light.loc;
+      [[G.alb, 'uAlb'], [G.nrm, 'uNrm'], [G.hgt, 'uHgt'], [aoNear, 'uNear'], [aoFar, 'uFar'], [shadowTex, 'uShadow']].forEach(([t, name], i) => {
+        gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(L[name], i);
+      });
+      gl.uniform4f(L.uView, ...rect);
+      gl.uniform2f(L.uSize, G.w, G.h);
+      gl.uniform2f(L.uWorld, aw / AS, ah / AS);
+      gl.uniformMatrix4fv(L.uLight, false, lv.m);
+      gl.uniform1f(L.uTexel, lv.texel);
+      gl.uniform1f(L.uShTexel, 1 / SH);
+      gl.uniform1f(L.uBias, (0.04 + lv.texel * 0.5) / lv.depth);
+      gl.uniform3f(L.uL, ...lt.L); gl.uniform3f(L.uSun, ...lt.col); gl.uniform3f(L.uSky, ...lt.sky);
+      gl.uniform1f(L.uGrey, lt.grey); gl.uniform1f(L.uZbase, zbase);
+      // the lamps near enough to light it
+      let nl = 0;
+      if (lt.lamps > 0.01) for (const l of town.lamps || []) {
+        if (nl >= 128 || l.x < rect[0] - 16 || l.x > rect[0] + rect[2] + 16 || l.y < rect[1] - 16 || l.y > rect[1] + rect[3] + 16) continue;
+        lampData.set([l.x, l.y, l.z, l.power * lt.lamps], 4 * nl++);
+      }
+      gl.uniform4fv(L.uLamps, lampData);
+      gl.uniform1i(L.uNL, nl);
+      quad();
+      if (ss > 1) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.useProgram(P.down.p);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, litTex);
+        gl.uniform1i(P.down.loc.uTex, 0);
+        gl.uniform2f(P.down.loc.uOut, canvas.width, canvas.height);
+        quad();
+      }
+    }
+    return { draw };
   }
 
-  return { scene, tile };
+  return { create };
 })();
