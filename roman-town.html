@@ -15,12 +15,12 @@
 <title>Roman Town</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A small Roman town laid out at random and seen from straight above in the afternoon sun: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river.">
+<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river.">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1915; }
   canvas {
     display: block; position: fixed; left: 50%; top: 50%;
-    transform: translate(-50%, -50%); cursor: pointer;
+    transform: translate(-50%, -50%); cursor: grab; touch-action: none;
   }
   #hint {
     position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
@@ -38,69 +38,257 @@
 <script src="pollock.js"></script>
 <script src="roman-town.js"></script>
 <script src="roman-town-view.js"></script>
+<script src="roman-town-sky.js"></script>
 <script>
 (() => {
   const PD = PollockDreams;
   const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
   const hint = document.getElementById('hint');
   const touch = matchMedia('(pointer: coarse)').matches;
   const fixed = new URLSearchParams(location.search).get('seed');
-  let seed = fixed !== null ? +fixed : (Math.random() * 1e9) | 0;
-  let town = null, busy = false;
+  const seed = fixed !== null ? +fixed : (Math.random() * 1e9) | 0;
 
-  // A town per click: the model lays it out, the view draws it. The world is
-  // as big whatever the screen's shape, as a 16:9 one's 820 × 461 m, only its
-  // shape the screen's.
-  function build() {
-    busy = true;
-    hint.textContent = 'laying out a town…';
-    showHint();
-    setTimeout(() => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const [CW, CH] = PD.canvasSize();
-      canvas.style.width = CW + 'px';
-      canvas.style.height = CH + 'px';
-      canvas.width = Math.round(CW * dpr);
-      canvas.height = Math.round(CH * dpr);
-      const aspect = CW / CH, A = 820 * 461, W = Math.sqrt(A * aspect), H = W / aspect;
-      const rng = PD.mulberry32(seed);
-      town = RomanTown.town(rng, { W, H });
-      window.town = town; // (for whoever wants to look inside)
-      // the sun in the afternoon, from the upper left, so hills stand up
-      const sunAzimuth = -Math.PI * (0.62 + 0.2 * rng()), sunElevation = (30 + 14 * rng()) * Math.PI / 180;
-      RomanTownView.render(town, canvas, { sunAzimuth, sunElevation, seed });
-      busy = false;
-      hint.textContent = `town ${seed}` + (touch ? ' · tap: another town' : ' · click: another town · S: save PNG');
-      showHint();
-    }, 30);
+  // One town per page load. The world is as big whatever the screen's shape,
+  // as a 16:9 one's 820 × 461 m, only its shape the screen's.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const [CW, CH] = PD.canvasSize();
+  canvas.style.width = CW + 'px';
+  canvas.style.height = CH + 'px';
+  const DW = canvas.width = Math.round(CW * dpr), DH = canvas.height = Math.round(CH * dpr);
+  const aspect = CW / CH, W = Math.sqrt(820 * 461 * aspect), H = W / aspect;
+  const rng = PD.mulberry32(seed);
+  const town = RomanTown.town(rng, { W, H });
+  window.town = town; // (for whoever wants to look inside)
+  const opts = { seed };
+
+  // ---- the hour: north up, the sun and the moon where they stand now by the
+  // visitor's clock (or at ?time=2026-06-21T19:30), the light following them ----
+  const at = new URLSearchParams(location.search).get('time');
+  const clock = () => at ? new Date(at) : new Date();
+  let sky = RomanTownSky.local(clock()), gen = 0;
+  setInterval(() => {
+    const next = RomanTownSky.local(clock()), deg = Math.PI / 180;
+    const moved = Math.abs(next.sun.el - sky.sun.el) > 0.6 * deg || Math.abs(next.sun.az - sky.sun.az) > 1.2 * deg
+      || Math.abs(next.moon.el - sky.moon.el) > 0.8 * deg;
+    if (moved) { sky = next; gen++; plan(); }
+  }, 30000);
+
+  // ---- the view: the whole world at zoom 1, up to 32 times closer ----
+  const ZMAX = 32, TILE = 256, LMAX = 5, sFit = DW / W; // device px a metre at zoom 1
+  let zoom = 1, cx = W / 2, cy = H / 2;
+  const scale = () => sFit * zoom;
+  function clampView() {
+    zoom = Math.min(ZMAX, Math.max(1, zoom));
+    const vw = DW / scale(), vh = DH / scale();
+    cx = Math.min(W - vw / 2, Math.max(vw / 2, cx));
+    cy = Math.min(H - vh / 2, Math.max(vh / 2, cy));
+  }
+  const viewRect = () => { const vw = DW / scale(), vh = DH / scale(); return [cx - vw / 2, cy - vh / 2, vw, vh]; };
+  function zoomAt(px, py, f) {
+    const [vx, vy] = viewRect(), wx = vx + px / scale(), wy = vy + py / scale();
+    zoom *= f;
+    clampView();
+    cx = wx - px / scale() + DW / scale() / 2;
+    cy = wy - py / scale() + DH / scale() / 2;
+    changed();
+  }
+  function pan(dx, dy) { cx -= dx / scale(); cy -= dy / scale(); changed(); }
+
+  // ---- tiles: the town drawn in pieces of 256 px, at zooms a power of two
+  // apart, by workers; a piece not yet drawn shown from a coarser one ----
+  const level = () => Math.min(LMAX, Math.max(0, Math.round(Math.log2(zoom))));
+  const key = (z, ix, iy) => z + '/' + ix + '/' + iy;
+  const tiles = new Map(), pending = new Set();
+  let queue = [], frameNo = 0, started = false;
+  function visible(z) {
+    const tw = TILE / (sFit * 2 ** z), [vx, vy, vw, vh] = viewRect(), out = [];
+    for (let iy = Math.max(0, Math.floor(vy / tw)); iy * tw < vy + vh; iy++)
+      for (let ix = Math.max(0, Math.floor(vx / tw)); ix * tw < vx + vw; ix++) out.push([ix, iy, tw]);
+    return out;
+  }
+  function plan() {
+    const z = level(), [vx, vy, vw, vh] = viewRect(), mx = vx + vw / 2, my = vy + vh / 2;
+    queue = visible(z).filter(([ix, iy]) => { const k = key(z, ix, iy), t = tiles.get(k); return (!t || t.gen !== gen) && !pending.has(k); })
+      .map(([ix, iy, tw]) => [Math.hypot((ix + 0.5) * tw - mx, (iy + 0.5) * tw - my), z, ix, iy])
+      .sort((a, b) => a[0] - b[0]);
+    pump();
+  }
+  function pump() {
+    for (const wk of workers) {
+      if (!wk.ready || wk.busy || !queue.length) continue;
+      const [, z, ix, iy] = queue.shift(), s = sFit * 2 ** z, k = key(z, ix, iy);
+      wk.busy = true;
+      pending.add(k);
+      wk.w.postMessage({ type: 'tile', key: k, gen, sky, cam: { x0: ix * TILE / s, y0: iy * TILE / s, s, w: TILE, h: TILE } });
+    }
+  }
+  function received(wk, m) {
+    if (m.type === 'ready') { wk.ready = true; pump(); return; }
+    wk.busy = false;
+    pending.delete(m.key);
+    const was = tiles.get(m.key);
+    if (was && was.gen > m.gen) { m.bmp.close?.(); } else { was?.bmp.close?.(); tiles.set(m.key, { bmp: m.bmp, gen: m.gen, used: frameNo }); }
+    if (m.gen !== gen) plan();
+    // the coarsest kept always, the others as long as there is room
+    if (tiles.size > 600) {
+      const old = [...tiles].filter(([k]) => !k.startsWith('0/')).sort((a, b) => a[1].used - b[1].used).slice(0, 100);
+      for (const [k, t] of old) { t.bmp.close?.(); tiles.delete(k); }
+    }
+    dirty = true;
+    pump();
   }
 
-  canvas.addEventListener('click', () => {
-    if (busy) return;
-    seed = (Math.random() * 1e9) | 0;
-    build();
+  // workers, as many as the machine has to spare; on the page itself if it
+  // cannot have them (opened from a file)
+  function localWorker(onmsg) {
+    let sc = null;
+    return {
+      postMessage(m) {
+        setTimeout(async () => {
+          if (m.type === 'scene') { sc = RomanTownView.scene(m.town, m.opts); onmsg({ type: 'ready' }); return; }
+          const px = RomanTownView.tile(sc, m.cam, m.sky);
+          onmsg({ type: 'tile', key: m.key, gen: m.gen, bmp: await createImageBitmap(new ImageData(px, m.cam.w, m.cam.h)) });
+        }, 0);
+      },
+    };
+  }
+  let workers = [];
+  function startWorkers() {
+    const n = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));
+    try {
+      for (let i = 0; i < n; i++) {
+        const wk = { ready: false, busy: false };
+        wk.w = new Worker('roman-town-worker.js');
+        wk.w.onmessage = e => received(wk, e.data);
+        wk.w.onerror = () => { if (!wk.ready) fallBack(); };
+        workers.push(wk);
+      }
+    } catch { return fallBack(); }
+    for (const wk of workers) wk.w.postMessage({ type: 'scene', town, opts });
+  }
+  function fallBack() {
+    if (workers.local) return;
+    for (const wk of workers) wk.w.terminate?.();
+    pending.clear();
+    const wk = { ready: false, busy: false };
+    wk.w = localWorker(m => received(wk, m));
+    workers = [wk];
+    workers.local = true;
+    wk.w.postMessage({ type: 'scene', town, opts });
+    plan();
+  }
+
+  // ---- drawing, whenever something changed ----
+  let dirty = true;
+  function changed() { dirty = true; plan(); }
+  function draw() {
+    frameNo++;
+    ctx.fillStyle = '#1b1915';
+    ctx.fillRect(0, 0, DW, DH);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    const S = scale(), [vx, vy] = viewRect(), z = level();
+    let missing = 0;
+    for (const [ix, iy, tw] of visible(z)) {
+      for (let a = z; a >= 0; a--) {
+        const f = 2 ** (z - a), t = tiles.get(key(a, Math.floor(ix / f), Math.floor(iy / f)));
+        if (!t) continue;
+        t.used = frameNo;
+        const sub = TILE / f, X0 = Math.round((ix * tw - vx) * S), X1 = Math.round(((ix + 1) * tw - vx) * S);
+        const Y0 = Math.round((iy * tw - vy) * S), Y1 = Math.round(((iy + 1) * tw - vy) * S);
+        ctx.drawImage(t.bmp, (ix % f) * sub, (iy % f) * sub, sub, sub, X0, Y0, X1 - X0, Y1 - Y0);
+        if (a !== z) missing++;
+        break;
+      }
+    }
+    if (!started && frameNo > 1 && !missing && !queue.length && !pending.size && tiles.size) {
+      started = true;
+      const t = clock(), hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom' : 'drag or arrows: move · wheel or + −: zoom · 0: all · S: save PNG');
+      showHint();
+    }
+  }
+  (function loop() {
+    if (dirty) { dirty = false; draw(); }
+    requestAnimationFrame(loop);
+  })();
+
+  // ---- moving about ----
+  const devicePt = e => {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * DW / r.width, (e.clientY - r.top) * DH / r.height];
+  };
+  const pointers = new Map();
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, devicePt(e));
+    canvas.style.cursor = 'grabbing';
   });
+  canvas.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    const p = devicePt(e);
+    if (pointers.size === 1) {
+      const q = pointers.get(e.pointerId);
+      pan(p[0] - q[0], p[1] - q[1]);
+    } else if (pointers.size === 2) {
+      // a pinch: the zoom by how far apart the fingers are, about between them
+      const [a, b] = [...pointers.values()], other = pointers.get(e.pointerId) === a ? b : a;
+      const before = Math.hypot(a[0] - b[0], a[1] - b[1]), after = Math.hypot(p[0] - other[0], p[1] - other[1]);
+      const q = pointers.get(e.pointerId);
+      pan((p[0] - q[0]) / 2, (p[1] - q[1]) / 2);
+      if (before > 10) zoomAt((p[0] + other[0]) / 2, (p[1] + other[1]) / 2, after / before);
+    }
+    pointers.set(e.pointerId, p);
+  });
+  const up = e => { pointers.delete(e.pointerId); if (!pointers.size) canvas.style.cursor = ''; };
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('dblclick', e => zoomAt(...devicePt(e), 2));
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const d = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1);
+    zoomAt(...devicePt(e), Math.exp(-d * 0.0018));
+  }, { passive: false });
+
   let lastMove = 0;
   window.addEventListener('mousemove', () => {
     const now = performance.now();
     if (now - lastMove > 500) { lastMove = now; showHint(); }
   });
   window.addEventListener('keydown', e => {
-    if ((e.key === 's' || e.key === 'S') && town && !busy) {
-      const a = document.createElement('a');
-      a.download = `roman-town-${seed}.png`;
-      a.href = canvas.toDataURL('image/png');
-      a.click();
+    // the screen's middle is the canvas's (it may be cropped on a phone)
+    const step = Math.min(innerWidth, innerHeight) * dpr * 0.25;
+    switch (e.key) {
+      case 'ArrowLeft': pan(step, 0); break;
+      case 'ArrowRight': pan(-step, 0); break;
+      case 'ArrowUp': pan(0, step); break;
+      case 'ArrowDown': pan(0, -step); break;
+      case '+': case '=': zoomAt(DW / 2, DH / 2, 1.5); break;
+      case '-': case '_': zoomAt(DW / 2, DH / 2, 1 / 1.5); break;
+      case '0': zoom = 1; cx = W / 2; cy = H / 2; changed(); break;
+      case 's': case 'S': {
+        const a = document.createElement('a');
+        a.download = `roman-town-${seed}.png`;
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+        break;
+      }
+      default: return;
     }
+    e.preventDefault();
   });
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
     clearTimeout(ht);
-    if (!busy) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+    ht = setTimeout(() => hint.classList.add('hidden'), started ? 4000 : 60000);
   }
 
-  build();
+  hint.textContent = 'laying out a town…';
+  showHint();
+  startWorkers();
+  plan();
 })();
 </script>
 </body>

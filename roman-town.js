@@ -18,8 +18,9 @@
 //   town                 { x, y, angle, hu, hv, corner, wall: { thickness, height } } the walls' rounded rectangle
 //   gates                [{ x, y, angle }] where the main streets leave, angle outwards
 //   grounds              [{ poly, kind }] convex patches of ground, to be laid in order:
-//                        street, main-street, paving, yard, garden, sand, floor, pool
-//   fields               [{ poly, crop, angle }] crop: wheat, stubble, fallow, meadow, vines, olives, orchard;
+//                        street, main-street, paving, yard, garden, sand, floor, pool, well
+//   fields               [{ poly, crop, angle }] crop: wheat, stubble, fallow, meadow, hay, pasture, vines,
+//                        olives, orchard;
 //                        angle, of its rows or furrows
 //   roads                [{ points, width, kind }] kind: via (paved), track (earth)
 //   buildings            boxes and other solids, each { shape, use, mat, z0, ... }:
@@ -28,18 +29,22 @@
 //                        shed (its low edge on side low: '+w', '-w', '+d', '-d'), court (open over
 //                        hole [s1, t1, s2, t2], from its corner, every side sloping down to it); pitch
 //                        the rise per metre
-//     round              { x, y, r, h, roof: flat | cone | dome, pitch }
+//     round              { x, y, r, h, roof: flat | cone | dome, pitch, hole } hole: an open
+//                        middle that radius (a well's curb)
 //     cavea              { x, y, angle, r0, r1, h } a theatre's seats: a half ring about its orchestra
 //                        (r0), rising h to r1 the way angle points
 //     arena              { x, y, angle, a, b, a0, b0, h } an amphitheatre: an ellipse a × b, its arena
 //                        a0 × b0, the seats rising h between
 //   trees                [{ x, y, z0, r, h, kind }] kind: cypress, pine, oak, olive, poplar, fruit, shrub, plane
+//   animals              [{ x, y, z0, angle, kind }] grazing, kind: sheep, goat, cow, horse
+//   lamps                [{ x, y, z, power }] where a lamp or a fire burns at night, z its height
 const RomanTown = (() => {
   const TAU = Math.PI * 2;
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const lerp = (a, b, t) => a + (b - a) * t;
   const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
   const range = (rng, a, b) => a + (b - a) * rng();
+  const gauss = rng => { let u = 0; while (u === 0) u = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * rng()); };
   const pick = (rng, weights) => {
     let s = 0;
     for (const k in weights) s += Math.max(0, weights[k]);
@@ -107,12 +112,7 @@ const RomanTown = (() => {
     const t = l2 ? clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1) : 0;
     return [Math.hypot(px - ax - t * dx, py - ay - t * dy), t];
   }
-  // signed distance to a rounded rectangle about the origin, half sizes hu × hv
-  function sdRound(u, v, hu, hv, r) {
-    const qx = Math.abs(u) - hu + r, qy = Math.abs(v) - hv + r;
-    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
-  }
-  // its outline, about one point a metre, going round
+  // a rounded rectangle about the origin, half sizes hu × hv, a point a metre, going round
   function roundRect(hu, hv, r) {
     const pts = [], corners = [[hu - r, hv - r, 0], [-hu + r, hv - r, 1], [-hu + r, -hv + r, 2], [hu - r, -hv + r, 3]];
     for (const [cx, cy, q] of corners) {
@@ -125,6 +125,83 @@ const RomanTown = (() => {
       for (let k = 0; k < m; k++) pts.push([sx + (ex - sx) * k / m, sy + (ey - sy) * k / m]);
     }
     return pts;
+  }
+
+  // a closed line resampled to a point about every metre
+  function resample(pts, step = 1) {
+    const out = [];
+    let carry = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let t = carry;
+      while (t < l) { out.push([a[0] + (b[0] - a[0]) * t / l, a[1] + (b[1] - a[1]) * t / l]); t += step; }
+      carry = t - l;
+    }
+    return out;
+  }
+  // The wall's line, in the town's frame, round its middle once and seen
+  // from it everywhere: a rounded rectangle, as a camp's; a polygon, its
+  // corners eased, as the ground allowed; an oval; or a wavering round.
+  // No wider than hu × hv; points a metre apart.
+  function outline(rng, hu, hv) {
+    const kind = pick(rng, { rect: 2, polygon: 3, oval: 2, round: 2 });
+    if (kind === 'rect') return { kind, ring: roundRect(hu, hv, range(rng, 12, 30)) };
+    let raw = [];
+    if (kind === 'polygon') {
+      const k = 5 + (rng() * 5 | 0), a0 = rng() * TAU;
+      for (let i = 0; i < k; i++) {
+        const a = a0 + (i + range(rng, -0.28, 0.28)) / k * TAU, r = range(rng, 0.78, 1);
+        raw.push([Math.cos(a) * r, Math.sin(a) * r]);
+      }
+      // each corner cut back a little, twice
+      for (let it = 0; it < 2; it++) {
+        const q = 0.12, next = [];
+        for (let i = 0; i < raw.length; i++) {
+          const a = raw[i], b = raw[(i + 1) % raw.length];
+          next.push([lerp(a[0], b[0], q), lerp(a[1], b[1], q)], [lerp(a[0], b[0], 1 - q), lerp(a[1], b[1], 1 - q)]);
+        }
+        raw = next;
+      }
+    } else {
+      // a superellipse, squarer or rounder, its radius wavering
+      const ex = kind === 'oval' ? range(rng, 2, 3) : range(rng, 2.2, 3.6), amp = kind === 'oval' ? 0.025 : 0.07;
+      const harm = [2, 3, 4, 5].map(k => [k, range(rng, 0, amp) * 2 / k, rng() * TAU]);
+      for (let i = 0; i < 720; i++) {
+        const a = i / 720 * TAU, c = Math.cos(a), sn = Math.sin(a);
+        let r = 1 / Math.pow(Math.abs(c) ** ex + Math.abs(sn) ** ex, 1 / ex);
+        for (const [k, A, ph] of harm) r *= 1 + A * Math.cos(k * a + ph);
+        raw.push([c * r, sn * r]);
+      }
+    }
+    // fitted to hu × hv about the middle
+    const xs = raw.map(p => p[0]), ys = raw.map(p => p[1]);
+    const mx = (Math.max(...xs) + Math.min(...xs)) / 2, my = (Math.max(...ys) + Math.min(...ys)) / 2;
+    const sx = (Math.max(...xs) - Math.min(...xs)) / 2, sy = (Math.max(...ys) - Math.min(...ys)) / 2;
+    return { kind, ring: resample(raw.map(([x, y]) => [(x - mx) / sx * hu, (y - my) / sy * hv])) };
+  }
+  // the signed distance to the wall's line, negative inside, on a 4 m grid
+  // over the world, read between its points
+  function sdfGrid(W, H, T, ring) {
+    const R = ring.filter((_, i) => i % 3 === 0), n = R.length;
+    const cell = 4, nx = Math.ceil(W / cell) + 1, ny = Math.ceil(H / cell) + 1, g = new Float32Array(nx * ny);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const [u, v] = T.loc(i * cell, j * cell);
+      let inside = false, d2 = Infinity;
+      for (let k = 0, m = n - 1; k < n; m = k++) {
+        const a = R[k], b = R[m];
+        if ((a[1] > v) !== (b[1] > v) && u < (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+        const ex = b[0] - a[0], ey = b[1] - a[1], l2 = ex * ex + ey * ey;
+        const t = l2 ? clamp(((u - a[0]) * ex + (v - a[1]) * ey) / l2, 0, 1) : 0;
+        const dx = u - a[0] - t * ex, dy = v - a[1] - t * ey, q = dx * dx + dy * dy;
+        if (q < d2) d2 = q;
+      }
+      g[j * nx + i] = (inside ? -1 : 1) * Math.sqrt(d2);
+    }
+    return (x, y) => {
+      const fx = clamp(x / cell, 0, nx - 1.001), fy = clamp(y / cell, 0, ny - 1.001);
+      const i = Math.floor(fx), j = Math.floor(fy), ax = fx - i, ay = fy - j, k = j * nx + i;
+      return lerp(lerp(g[k], g[k + 1], ax), lerp(g[k + nx], g[k + nx + 1], ax), ay);
+    };
   }
 
   // the town's frame: (u, v) to the world and back
@@ -214,7 +291,7 @@ const RomanTown = (() => {
   }
 
   // ---- the ground: hills about, the town on a low rise, levelled a little ----
-  function makeTerrain(rng, W, H, T, hu, hv, rc, river, ditch) {
+  function makeTerrain(rng, W, H, T, hu, hv, tsd, river, ditch) {
     const cell = 4, nx = Math.ceil(W / cell) + 1, ny = Math.ceil(H / cell) + 1;
     const z = new Float32Array(nx * ny);
     const n1 = perlin(rng), n2 = perlin(rng), n3 = perlin(rng), n4 = perlin(rng);
@@ -232,14 +309,14 @@ const RomanTown = (() => {
     };
     const zc = raw(T.cx, T.cy);
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      const x = i * cell, y = j * cell, [u, v] = T.loc(x, y);
+      const x = i * cell, y = j * cell;
       let h = raw(x, y);
       // the town levelled to a gentle slope, a little of the ground's lie kept
-      const sd = sdRound(u, v, hu, hv, rc), m = 1 - smooth(10, 75, sd);
+      const sd = tsd(x, y), m = 1 - smooth(10, 75, sd);
       const flat = zc + slope[0] * (x - T.cx) + slope[1] * (y - T.cy);
       h = lerp(h, flat + 0.18 * (h - flat), m);
       // the ditch before the wall
-      if (ditch) { const q = (sd - 13) / 5; if (q > -1 && q < 1) h -= 2.2 * (1 - q * q) ** 2; }
+      if (ditch) { const q = (sd - 15) / 8; if (q > -1 && q < 1) h -= 2 * (1 - q * q) ** 2; }
       z[j * nx + i] = h;
     }
     const terrain = { cell, nx, ny, z };
@@ -277,7 +354,7 @@ const RomanTown = (() => {
   }
 
   function town(rng, { W, H }) {
-    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], gates: [] };
+    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], lamps: [], gates: [] };
 
     // ---- the site, as big as the world allows, turned by the augur ----
     const th = range(rng, -0.35, 0.35), ar = range(rng, 1.05, 1.45);
@@ -290,13 +367,17 @@ const RomanTown = (() => {
       if ((bx <= Math.min(cx, W - cx) - margin && by <= Math.min(cy, H - cy) - margin) || L < 140) break;
     }
     const T = frame(cx, cy, th);
-    const rc = range(rng, 12, 30), wallT = range(rng, 2.6, 3.6), wallH = range(rng, 7, 9.5);
-    const tsd = (x, y) => { const [u, v] = T.loc(x, y); return sdRound(u, v, hu, hv, rc); };
-    out.town = { x: cx, y: cy, angle: th, hu, hv, corner: rc, wall: { thickness: wallT, height: wallH } };
+    const wallT = range(rng, 2.6, 3.6), wallH = range(rng, 7, 9.5);
+    const shape = outline(rng, hu, hv), ring = shape.ring;
+    const tsd = sdfGrid(W, H, T, ring), psd = (u, v) => tsd(...T.pt(u, v));
+    out.town = {
+      x: cx, y: cy, angle: th, hu, hv, shape: shape.kind, wall: { thickness: wallT, height: wallH },
+      outline: ring.filter((_, i) => i % 2 === 0).map(([u, v]) => T.pt(u, v)),
+    };
 
     if (rng() < 0.75) out.river = makeRiver(rng, W, H, T, hu, hv);
     const river = out.river;
-    const terrain = out.terrain = makeTerrain(rng, W, H, T, hu, hv, rc, river, rng() < 0.65);
+    const terrain = out.terrain = makeTerrain(rng, W, H, T, hu, hv, tsd, river, rng() < 0.65);
     const hAt = (x, y) => heightAt(terrain, x, y);
     const riverD = (x, y) => river ? riverNear(river, x, y)[0] - river.width / 2 : Infinity;
     const occ = occupancy(W, H);
@@ -308,7 +389,7 @@ const RomanTown = (() => {
     function box(r, p, within) {
       const [u1, v1, u2, v2] = r;
       if (u2 - u1 < 0.8 || v2 - v1 < 0.8) return null;
-      if (within && !(insideConvex(within, u1, v1) && insideConvex(within, u2, v1) && insideConvex(within, u2, v2) && insideConvex(within, u1, v2))) return null;
+      if (within && !(inTown(u1, v1) && inTown(u2, v1) && inTown(u2, v2) && inTown(u1, v2))) return null;
       const [x, y] = P((u1 + u2) / 2, (v1 + v2) / 2);
       const b = {
         shape: 'box', use: p.use || 'house', mat: p.mat || 'tile', x, y, angle: th, w: u2 - u1, d: v2 - v1,
@@ -320,15 +401,31 @@ const RomanTown = (() => {
       B.push(b);
       return b;
     }
-    function ground(r, kind, within) {
-      let poly = r.length === 4 && typeof r[0] === 'number' ? [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]] : r;
-      if (within) poly = clip(poly, within);
-      if (poly.length >= 3) G.push({ poly: poly.map(([u, v]) => P(u, v)), kind });
+    // a patch of ground; inside the walls (within, or 'wall' up to the
+    // wall's line) cut to the town's shape, in convex pieces
+    function ground(r, kind, within, extra) {
+      const poly = r.length === 4 && typeof r[0] === 'number' ? [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]] : r;
+      const pieces = within ? cut(poly, within === 'wall' ? outerFan : innerFan, within === 'wall' ? 0.5 : -gap + 0.3) : [poly];
+      for (const q of pieces) if (q.length >= 3) G.push({ poly: q.map(([u, v]) => P(u, v)), kind, ...extra });
+      return pieces;
     }
     function tree(u, v, kind, r, h, within) {
-      if (within && !insideConvex(within, u, v)) return;
+      if (within && !inTown(u, v)) return;
       const [x, y] = P(u, v);
       out.trees.push({ x, y, z0: hAt(x, y), r, h, kind });
+    }
+    // a lamp, or a fire, h above the ground
+    function lamp(u, v, h, power = 1, within) {
+      if (within && !inTown(u, v)) return;
+      const [x, y] = P(u, v);
+      out.lamps.push({ x, y, z: hAt(x, y) + h, power });
+    }
+    // a well: a round stone curb, the water dark down inside
+    function well(u, v, within) {
+      if (within && !inTown(u, v)) return;
+      const [x, y] = P(u, v), r = range(rng, 0.7, 0.9);
+      B.push({ shape: 'round', use: 'well', mat: 'stone', x, y, r, hole: r - 0.28, z0: hAt(x, y), h: 0.8, roof: 'flat', pitch: 0 });
+      G.push({ poly: Array.from({ length: 8 }, (_, k) => [x + (r - 0.2) * Math.cos(k * TAU / 8), y + (r - 0.2) * Math.sin(k * TAU / 8)]), kind: 'well' });
     }
     // a frame on a rectangle of the plan: s along it, t across, from a corner
     function lf([u1, v1, u2, v2], along, flipS = false, flipT = false) {
@@ -351,8 +448,33 @@ const RomanTown = (() => {
 
     // ---- the grid ----
     const gap = wallT / 2 + range(rng, 4, 7);
-    const iu = hu - gap, iv = hv - gap, ri = Math.max(2, rc - gap);
-    const inner = roundRect(iu, iv, ri);
+    const iu = hu - gap, iv = hv - gap;
+    const inTown = (u, v) => psd(u, v) <= -gap + 0.3;
+    // the town cut into thin wedges from its middle, each convex, to cut
+    // things to its shape: up to the wall, and up to the street inside it
+    const fanOf = R => R.map((p, i) => {
+      const tri = [[0, 0], p, R[(i + 1) % R.length]];
+      return { tri, bb: [Math.min(0, p[0], tri[2][0]), Math.min(0, p[1], tri[2][1]), Math.max(0, p[0], tri[2][0]), Math.max(0, p[1], tri[2][1])] };
+    });
+    const coarse = ring.filter((_, i) => i % 4 === 0);
+    const outerFan = fanOf(coarse);
+    const innerFan = fanOf(coarse.map(([u, v]) => {
+      // along the ray from the middle to where the inner street begins
+      let a = 0, b = 1;
+      for (let it = 0; it < 14; it++) { const m = (a + b) / 2; if (psd(u * m, v * m) < -gap) a = m; else b = m; }
+      return [u * a, v * a];
+    }));
+    function cut(poly, fan, limit) {
+      if (poly.every(([u, v]) => psd(u, v) <= limit)) return [poly];
+      const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+      const bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], out = [];
+      for (const f of fan) {
+        if (f.bb[0] > bb[2] || f.bb[2] < bb[0] || f.bb[1] > bb[3] || f.bb[3] < bb[1]) continue;
+        const c = clip(poly, f.tri);
+        if (c.length >= 3 && Math.abs(area(c)) > 0.05) out.push(c);
+      }
+      return out;
+    }
     const mainW = range(rng, 8, 11), minorW = range(rng, 4.5, 6.5);
     const bu = range(rng, 30, 46), bv = Math.min(75, bu * range(rng, 0.9, 1.9));
     const u0 = range(rng, -0.16, 0.16) * hu, v0 = range(rng, -0.16, 0.16) * hv;
@@ -363,23 +485,40 @@ const RomanTown = (() => {
     const [leftCols, cols] = axisSpans(u0, iu, bu), [topRows, rows] = axisSpans(v0, iv, bv);
     const ic = leftCols.length, jc = topRows.length;
 
-    ground(inner, 'street');
-    ground([u0 - mainW / 2, -iv - gap, u0 + mainW / 2, iv + gap], 'main-street');
-    ground([-iu - gap, v0 - mainW / 2, iu + gap, v0 + mainW / 2], 'main-street');
+    for (const f of outerFan) G.push({ poly: f.tri.map(([u, v]) => P(u, v)), kind: 'street' });
+    ground([u0 - mainW / 2, -hv - 2, u0 + mainW / 2, hv + 2], 'main-street', 'wall');
+    ground([-hu - 2, v0 - mainW / 2, hu + 2, v0 + mainW / 2], 'main-street', 'wall');
 
+    // lamps by the doors of taverns and shops along the main streets
+    for (const [along, c] of [['v', u0], ['u', v0]]) {
+      for (let t = -Math.max(hu, hv); t < Math.max(hu, hv); t += range(rng, 9, 26)) {
+        const side = rng() < 0.5 ? -1 : 1, o = side * (mainW / 2 - 0.4);
+        if (along === 'v') lamp(c + o, t, 2.6, 0.7, true); else lamp(t, c + o, 2.6, 0.7, true);
+      }
+    }
     const blocks = [];
     for (let j = 0; j < rows.length; j++) for (let i = 0; i < cols.length; i++) {
       const r = [cols[i][0], rows[j][0], cols[i][1], rows[j][1]];
-      const poly = clip([[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], inner);
-      const full = poly.length >= 3 ? Math.abs(area(poly)) / ((r[2] - r[0]) * (r[3] - r[1])) : 0;
-      blocks.push({ i, j, r, poly, full, kind: full < 0.35 ? 'open' : null });
+      const pieces = cut([[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], innerFan, -gap + 0.3);
+      const full = pieces.reduce((a, q) => a + Math.abs(area(q)), 0) / ((r[2] - r[0]) * (r[3] - r[1]));
+      blocks.push({ i, j, r, full, kind: full < 0.02 ? 'none' : full < 0.35 ? 'open' : null });
     }
     const at = (i, j) => i < 0 || j < 0 || i >= cols.length || j >= rows.length ? null : blocks[j * cols.length + i];
+    // public fountains at the crossings, a stone basin against a corner
+    for (let i = 1; i < cols.length; i++) for (let j = 1; j < rows.length; j++) {
+      if (rng() > 0.8) continue;
+      const su = rng() < 0.5 ? -1 : 1, sv = rng() < 0.5 ? -1 : 1;
+      const cu = su < 0 ? cols[i - 1][1] : cols[i][0], cv = sv < 0 ? rows[j - 1][1] : rows[j][0];
+      const along = rng() < 0.5, u = cu + (along ? -su * 0.95 : su * 1.6), v = cv + (along ? sv * 1.6 : -sv * 0.95);
+      const hw = along ? 0.8 : 1.25, hd = along ? 1.25 : 0.8;
+      const r = [u - hw, v - hd, u + hw, v + hd];
+      if (box(r, { use: 'fountain', mat: 'stone', h: 0.85, roof: 'court', pitch: 0, hole: [r[0] + 0.25, r[1] + 0.25, r[2] - 0.25, r[3] - 0.25] }, true))
+        { ground([r[0] + 0.25, r[1] + 0.25, r[2] - 0.25, r[3] - 0.25], 'pool'); if (rng() < 0.4) lamp(u, v, 2.6, 0.8); }
+    }
     const groups = [];
     function group(members, kind) {
       const r = [Math.min(...members.map(b => b.r[0])), Math.min(...members.map(b => b.r[1])), Math.max(...members.map(b => b.r[2])), Math.max(...members.map(b => b.r[3]))];
-      const poly = clip([[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], inner);
-      const g = { members, r, poly, kind };
+      const g = { members, r, poly: true, kind };
       for (const b of members) b.kind = kind;
       groups.push(g);
       return g;
@@ -435,7 +574,7 @@ const RomanTown = (() => {
     }
     // the rest: houses, gardens near the walls
     for (const b of blocks) {
-      if (b.kind === 'open') { ground(b.r, 'garden', b.poly); orchard(b.r, b.poly); continue; }
+      if (b.kind === 'open') { ground(b.r, 'garden', true); orchard(b.r, true); continue; }
       if (b.kind) continue;
       if (rng() < 0.03 + 0.22 * (1 - central(b)) ** 2) { garden(group([b], 'garden')); continue; }
       houses(group([b], 'houses'), central(b));
@@ -446,7 +585,7 @@ const RomanTown = (() => {
       const [x, y] = dims(g.r), along = x >= y ? 'u' : 'v';
       const F = lf(g.r, along, rng() < 0.5, false), L = F.S, S = F.D;
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
-      ground(g.r, 'paving', g.poly);
+      ground(g.r, 'paving', true);
       const pd = 5.5, shops = S > 46 ? 5 : 0;
       const bD = clamp(0.22 * L, 14, 26), a = bD * 0.26;
       // the basilica across one end: a high nave between lower aisles
@@ -467,6 +606,9 @@ const RomanTown = (() => {
       box(F.rect(2, tc - tw / 2, 2 + tl, tc + tw / 2), { use: 'temple', h: 13, z0, roof: 'gable', axis: F.axis('s'), pitch: 0.36 });
       box(F.rect(2 + tl, tc - tw / 2 + 1, 2 + tl + 4, tc + tw / 2 - 1), { use: 'steps', h: 1.8, z0, mat: 'marble' });
       box(F.rect(2 + tl + 7, tc - 1.5, 2 + tl + 9, tc + 1.5), { use: 'altar', h: 1.3, z0, mat: 'marble' });
+      lamp(...F.pt(2 + tl + 8, tc), 1.8, 1.4);
+      for (const sg of [-1, 1]) lamp(...F.pt(2 + tl + 4.5, tc + sg * (tw / 2 - 1)), 2.5, 0.9);
+      for (let s = 2 + tl + 12; s < e - 3; s += 11) for (const t of [shops + pd + 0.6, S - shops - pd - 0.6]) lamp(...F.pt(s, t), 3, 0.8);
       // statues about the square
       const ns = 4 + (rng() * 7 | 0);
       for (let k = 0; k < ns; k++) {
@@ -482,7 +624,14 @@ const RomanTown = (() => {
       const F = lf(g.r, along, false, rng() < 0.5), L = F.S, S = F.D;
       const R = Math.min(L / 2 - 3, S - 17, 44);
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
-      ground(g.r, 'yard', g.poly);
+      ground(g.r, 'garden', true);
+      // plane trees in the garden about the seats
+      for (let k = 0; k < 40; k++) {
+        const s2 = range(rng, 3, L - 3), t2 = range(rng, 11, S - 3);
+        if (Math.hypot(s2 - L / 2, t2 - 13.5) < R + 5) continue;
+        const [u, v] = F.pt(s2, t2);
+        tree(u, v, rng() < 0.75 ? 'plane' : 'cypress', range(rng, 2.5, 4.5), range(rng, 9, 14), true);
+      }
       box(F.rect(L / 2 - R - 3, 1, L / 2 + R + 3, 8), { use: 'scaena', h: 15, z0, roof: 'gable', axis: F.axis('s') });
       box(F.rect(L / 2 - R * 0.8, 8, L / 2 + R * 0.8, 13.5), { use: 'stage', h: 1.5, z0, mat: 'timber' });
       const [cx2, cy2] = P(...F.pt(L / 2, 13.5));
@@ -494,29 +643,29 @@ const RomanTown = (() => {
       const [x, y] = dims(g.r), along = x >= y ? 'u' : 'v';
       const F = lf(g.r, along, rng() < 0.5, rng() < 0.5), L = F.S, S = F.D;
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
-      ground(g.r, 'paving', g.poly);
+      ground(g.r, 'paving', true);
       const Lb = clamp(0.52 * L, 16, 42), n = S > 34 ? 3 : 2;
       for (let k = 0; k < n; k++) {
         const t1 = k * S / n + 0.5, t2 = (k + 1) * S / n - 0.5;
-        const b = box(F.rect(1, t1, Lb, t2), { use: 'baths', h: range(rng, 9, 12), z0, roof: k === n - 1 ? 'hip' : 'gable', axis: F.axis('s') }, g.poly);
+        const b = box(F.rect(1, t1, Lb, t2), { use: 'baths', h: range(rng, 9, 12), z0, roof: k === n - 1 ? 'hip' : 'gable', axis: F.axis('s') }, true);
         if (b && k === 0 && rng() < 0.6) {
           const r = Math.min(t2 - t1, Lb) * 0.3, [ux, uy] = P(...F.pt(Lb / 2, (t1 + t2) / 2));
           B.push({ shape: 'round', use: 'baths', mat: 'tile', x: ux, y: uy, r, z0: z0 + b.h - 1, h: 0, roof: 'dome', pitch: 0.7 });
         }
       }
       const c = F.rect(Lb + 1, 1, L - 1, S - 1);
-      box(c, { use: 'palaestra', h: 5.5, z0, roof: 'court', hole: F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5) }, g.poly);
-      ground(F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5), 'sand', g.poly);
+      box(c, { use: 'palaestra', h: 5.5, z0, roof: 'court', hole: F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5) }, true);
+      ground(F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5), 'sand', true);
       const pl = (L - Lb - 11) * 0.5, pw = (S - 11) * 0.45, ps = (Lb + L) / 2, pt = S / 2;
-      if (pl > 4 && pw > 3) ground(F.rect(ps - pl / 2, pt - pw / 2, ps + pl / 2, pt + pw / 2), 'pool', g.poly);
+      if (pl > 4 && pw > 3) ground(F.rect(ps - pl / 2, pt - pw / 2, ps + pl / 2, pt + pw / 2), 'pool', true);
     }
 
     // ---- the market: shops round a court, a round pavilion in the middle ----
     function market(g) {
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       const [x, y] = dims(g.r), k = Math.min(9, Math.min(x, y) * 0.28);
-      ground(g.r, 'paving', g.poly);
-      box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k] }, g.poly);
+      ground(g.r, 'paving', true);
+      box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k] }, true);
       const [mx, my] = P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2);
       B.push({ shape: 'round', use: 'tholos', mat: 'tile', x: mx, y: my, r: Math.min(5.5, Math.min(x, y) * 0.14), z0, h: 5, roof: 'cone', pitch: 0.55 });
     }
@@ -527,8 +676,8 @@ const RomanTown = (() => {
       const F = lf(g.r, along, rng() < 0.5, false), L = F.S, S = F.D;
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       const k = 5;
-      ground(g.r, 'paving', g.poly);
-      box(F.rect(0.5, 0.5, L - 0.5, S - 0.5), { use: 'portico', h: 5.5, z0, roof: 'court', hole: F.rect(k, k, L - k, S - k) }, g.poly);
+      ground(g.r, 'paving', true);
+      box(F.rect(0.5, 0.5, L - 0.5, S - 0.5), { use: 'portico', h: 5.5, z0, roof: 'court', hole: F.rect(k, k, L - k, S - k) }, true);
       if (rng() < 0.25) {
         const [mx, my] = P(...F.pt(L / 2, S / 2));
         B.push({ shape: 'round', use: 'temple', mat: 'tile', x: mx, y: my, r: Math.min(8, S * 0.2), z0, h: 9, roof: 'cone', pitch: 0.5 });
@@ -537,10 +686,11 @@ const RomanTown = (() => {
         box(F.rect(s0, S / 2 - tw / 2, s0 + tl, S / 2 + tw / 2), { use: 'temple', h: 11, z0, roof: 'gable', axis: F.axis('s'), pitch: 0.36 });
         box(F.rect(s0 + tl, S / 2 - tw / 2 + 1, s0 + tl + 3, S / 2 + tw / 2 - 1), { use: 'steps', h: 1.6, z0, mat: 'marble' });
         box(F.rect(s0 + tl + 5, S / 2 - 1.2, s0 + tl + 6.6, S / 2 + 1.2), { use: 'altar', h: 1.2, z0, mat: 'marble' });
+        lamp(...F.pt(s0 + tl + 5.8, S / 2), 1.7, 1.2);
       }
       if (rng() < 0.5) for (let n = 0; n < 6; n++) {
         const [u, v] = F.pt(range(rng, k + 3, L - k - 3), rng() < 0.5 ? range(rng, k + 2, k + 4) : range(rng, S - k - 4, S - k - 2));
-        tree(u, v, rng() < 0.5 ? 'cypress' : 'plane', range(rng, 1.4, 3.5), range(rng, 7, 13), g.poly);
+        tree(u, v, rng() < 0.5 ? 'cypress' : 'plane', range(rng, 1.4, 3.5), range(rng, 7, 13), true);
       }
     }
 
@@ -552,25 +702,25 @@ const RomanTown = (() => {
       }
     }
     function garden(g) {
-      ground(g.r, 'garden', g.poly);
-      if (rng() < 0.6) orchard(g.r, g.poly);
-      else G.push({ poly: clip(rectPoly(g.r).map(p => T.loc(...p)), g.poly).map(([u, v]) => P(u, v)), kind: 'vines', angle: th + (rng() < 0.5 ? 0 : Math.PI / 2) });
+      ground(g.r, 'garden', true);
+      if (rng() < 0.6) orchard(g.r, true);
+      else ground(g.r, 'vines', true, { angle: th + (rng() < 0.5 ? 0 : Math.PI / 2) });
       const [x, y] = dims(g.r);
-      box([g.r[0] + 2, g.r[1] + 2, g.r[0] + 2 + Math.min(10, x / 3), g.r[1] + 2 + Math.min(7, y / 3)], { use: 'shed', h: 4, roof: 'gable', axis: 'u' }, g.poly);
+      box([g.r[0] + 2, g.r[1] + 2, g.r[0] + 2 + Math.min(10, x / 3), g.r[1] + 2 + Math.min(7, y / 3)], { use: 'shed', h: 4, roof: 'gable', axis: 'u' }, true);
     }
 
     // ---- houses: lots along both long sides of a block ----
     function houses(g, cen) {
       const [x, y] = dims(g.r), along = x >= y ? 'u' : 'v', S = Math.min(x, y);
-      ground(g.r, 'yard', g.poly);
+      ground(g.r, 'yard', true);
       let dA, dB;
       if (S <= 66) { dA = S * range(rng, 0.42, 0.58); dB = S - dA; }
       else { dA = range(rng, 24, 34); dB = range(rng, 24, 34); }
       const FA = lf(g.r, along, rng() < 0.5, false), FB = lf(g.r, along, rng() < 0.5, true);
       if (S > dA + dB + 2) {
         const mid = FA.rect(0, dA, FA.S, S - dB);
-        ground(mid, 'garden', g.poly);
-        orchard(mid, g.poly);
+        ground(mid, 'garden', true);
+        orchard(mid, true);
       }
       for (const [F, d] of [[FA, dA], [FB, dB]]) {
         let s = 0;
@@ -578,7 +728,7 @@ const RomanTown = (() => {
           const r = rng();
           let w = r < 0.5 ? range(rng, 7, 13) : r < 0.87 ? range(rng, 15, 24) : range(rng, 26, 36);
           if (F.S - s - w < 7) w = F.S - s;
-          lot(F, s, w, d, cen, g.poly);
+          lot(F, s, w, d, cen, true);
           s += w;
         }
       }
@@ -610,6 +760,7 @@ const RomanTown = (() => {
         if (rng() < 0.45) box(R(0, D + 3, Math.min(w, range(rng, 5, 9)), d - 0.5), { use: 'house', h: h - 1.5, z0, roof: 'shed', low: F.low('+s') }, within);
         else if (rng() < 0.6) {
           ground(R(0, D, w, d), 'garden', within);
+          if (rng() < 0.4) well(...F.pt(s0 + range(rng, 1.2, w - 1.2), D + 1.3), within);
           const [u, v] = F.pt(s0 + w / 2, (D + d) / 2);
           tree(u, v, pick(rng, { fruit: 3, olive: 2, cypress: 1, plane: 1 }), range(rng, 1.8, 3.5), range(rng, 5, 10), within);
         }
@@ -628,6 +779,7 @@ const RomanTown = (() => {
       box(R(sA1, f, sA2, f + A), { use: 'domus', h: h - 0.5, z0, roof: 'court', hole: R(sA1 + o, f + o, sA2 - o, f + A - o) }, within);
       ground(R(sA1 + o, f + o, sA2 - o, f + A - o), 'floor', within);
       ground(R(sA1 + o + 0.6, f + o + 0.6, sA2 - o - 0.6, f + A - o - 0.6), 'pool', within);
+      if (rng() < 0.5) lamp(...F.pt(s0 + sA1 + o + 0.4, f + o + 0.4), 1.6, 0.6, within);
       if (sA1 > 2.5) box(R(0, f, sA1, f + A), { use: 'domus', h: h - 0.3, z0, roof: 'gable', axis: tA }, within);
       if (w - sA2 > 2.5) box(R(sA2, f, w, f + A), { use: 'domus', h: h - 0.3, z0, roof: 'gable', axis: tA }, within);
       let t = f + A;
@@ -643,6 +795,7 @@ const RomanTown = (() => {
         ground(R(k, t + k, w - side - k, t + Pd - k), 'garden', within);
         const gw = w - side - 2 * k, gd = Pd - 2 * k;
         if (rng() < 0.4 && gw > 6 && gd > 5) ground(R(k + gw * 0.35, t + k + gd * 0.35, k + gw * 0.65, t + k + gd * 0.65), 'pool', within);
+        else if (rng() < 0.5) well(...F.pt(s0 + k + 1.3, t + k + 1.3), within);
         for (let n = 0, m = 1 + (rng() * 4 | 0); n < m; n++) {
           const [u, v] = F.pt(s0 + k + range(rng, 1.2, gw - 1.2), t + k + range(rng, 1.2, gd - 1.2));
           tree(u, v, pick(rng, { fruit: 3, shrub: 3, cypress: 1, plane: 1 }), range(rng, 1, 2.6), range(rng, 3, 7), within);
@@ -653,10 +806,14 @@ const RomanTown = (() => {
 
     // ---- the walls, their towers and gates ----
     {
-      const ring = roundRect(hu, hv, rc), n = ring.length;
-      const gw = mainW + 3;
-      const gates = [[u0, hv, 0, 1], [u0, -hv, 0, -1], [hu, v0, 1, 0], [-hu, v0, -1, 0]];
-      const inGate = ([u, v]) => gates.some(([gu, gv, nu, nv]) => Math.abs(nu ? v - gv : u - gu) < gw / 2 && Math.abs(nu ? u - gu : v - gv) < 2);
+      const n = ring.length, gw = mainW + 3;
+      // the gates where the main streets meet the wall
+      const gates = [[0, 1], [0, -1], [1, 0], [-1, 0]].map(([nu, nv]) => {
+        let a = 0, b = 2 * Math.hypot(hu, hv);
+        for (let it = 0; it < 30; it++) { const m = (a + b) / 2; if (psd(u0 + nu * m, v0 + nv * m) < 0) a = m; else b = m; }
+        return [u0 + nu * a, v0 + nv * a, nu, nv];
+      });
+      const inGate = ([u, v]) => gates.some(([gu, gv]) => Math.hypot(u - gu, v - gv) < gw / 2 + 0.5);
       const z = ([u, v]) => hAt(...P(u, v));
       // the curtain wall, in pieces of up to 8 m between the gates
       let run = [];
@@ -691,11 +848,14 @@ const RomanTown = (() => {
         const nearGate = gates.some(([gu, gv]) => Math.hypot(a[0] - gu, a[1] - gv) < gw / 2 + 14);
         if (nearGate) continue;
         acc = 0;
-        const t = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(...t), nu = t[1] / l, nv = -t[0] / l;
-        // the outward normal of a counter-clockwise ring in (u, v), y down
-        const s = sdRound(a[0] + nu, a[1] + nv, hu, hv, rc) > sdRound(a[0], a[1], hu, hv, rc) ? 1 : -1;
-        const corner = Math.abs(a[0]) > hu - rc && Math.abs(a[1]) > hv - rc;
-        tower(a[0], a[1], s * nu, s * nv, corner ? ts * 1.2 : ts, corner);
+        // facing out, square to the wall; round where it turns
+        const p0 = ring[(k - 6 + n) % n], p1 = ring[(k + 6) % n], t = [p1[0] - p0[0], p1[1] - p0[1]], l = Math.hypot(...t);
+        let nu = t[1] / l, nv = -t[0] / l;
+        if (psd(a[0] + nu, a[1] + nv) < psd(a[0] - nu, a[1] - nv)) { nu = -nu; nv = -nv; }
+        const q0 = ring[(k - 8 + n) % n], q1 = ring[(k + 8) % n];
+        const turn = Math.abs(Math.atan2(cross(a[0] - q0[0], a[1] - q0[1], q1[0] - a[0], q1[1] - a[1]), (a[0] - q0[0]) * (q1[0] - a[0]) + (a[1] - q0[1]) * (q1[1] - a[1])));
+        const corner = turn > 0.3;
+        tower(a[0], a[1], nu, nv, corner ? ts * 1.2 : ts, corner);
       }
       // the gates: an arch over the street, a tower either side
       const roundG = rng() < 0.5;
@@ -704,6 +864,7 @@ const RomanTown = (() => {
         const r = [gu - Math.abs(tu) * half - Math.abs(nu) * (wallT / 2 + 1.5), gv - Math.abs(tv) * half - Math.abs(nv) * (wallT / 2 + 1.5),
           gu + Math.abs(tu) * half + Math.abs(nu) * (wallT / 2 + 1.5), gv + Math.abs(tv) * half + Math.abs(nv) * (wallT / 2 + 1.5)];
         box(r, { use: 'gate', mat: 'stone', h: wallH + 1, roof: 'flat', pitch: 0 });
+        for (const sg of [-1, 1]) for (const io of [-1, 1]) lamp(gu + tu * sg * (half - 0.8) + nu * io * (wallT / 2 + 2), gv + tv * sg * (half - 0.8) + nv * io * (wallT / 2 + 2), 3.5, 1);
         const gs = ts * 1.25;
         for (const sg of [-1, 1]) tower(gu + tu * sg * (half + gs / 2), gv + tv * sg * (half + gs / 2), nu, nv, gs, roundG);
         const [x, y] = P(gu, gv);
@@ -780,6 +941,8 @@ const RomanTown = (() => {
       const z0 = hAt(x, y);
       box([u - A / 2, v - Bd / 2, u + A / 2, v + Bd / 2], { use: 'villa', h: 6, z0, roof: 'court', hole: [u - A / 2 + k, v - Bd / 2 + k, u + A / 2 - k, v + Bd / 2 - k] });
       ground([u - A / 2 + k, v - Bd / 2 + k, u + A / 2 - k, v + Bd / 2 - k], 'yard');
+      well(u + range(rng, -2, 2), v + range(rng, -2, 2));
+      lamp(u - A / 2 + k + 0.8, v, 2.2, 0.8);
       const bx = u + A / 2 + 8;
       box([bx, v - Bd / 2, bx + 9, v - Bd / 2 + range(rng, 16, 26)], { use: 'barn', h: 6.5, z0: hAt(...P(bx + 4, v)), roof: 'gable', axis: 'v' });
       ground([u - A / 2 - 6, v + Bd / 2 + 2, u + A / 2, v + Bd / 2 + 16], 'garden');
@@ -861,32 +1024,84 @@ const RomanTown = (() => {
           else parcels.push([r[0], r[1], lerp(r[0], r[2], m), r[3]], [lerp(r[0], r[2], m), r[1], r[2], r[3]]);
         } else parcels.push(r);
       }
-      for (const r of parcels) {
-        const pr = [r[0] + 1.2, r[1] + 1.2, r[2] - 1.2, r[3] - 1.2];
-        let ok = true;
-        for (const fu of [0.1, 0.5, 0.9]) for (const fv of [0.1, 0.5, 0.9]) {
-          const [x, y] = P(lerp(pr[0], pr[2], fu), lerp(pr[1], pr[3], fv));
-          if (!inWorld(x, y, 40) || tsd(x, y) < 20 || occ.get(x, y) === 3 || occ.get(x, y) === 1 || slopeAt(x, y) > 0.2) { if (inWorld(x, y)) ok = false; }
+      for (const r of parcels) parcel(r, 0);
+    }
+    // A parcel: tilled where it is level enough, grazed where it is steeper,
+    // halved and halved again to fit round what is in its way.
+    function parcel(r, depth) {
+      const pr = [r[0] + 1.2, r[1] + 1.2, r[2] - 1.2, r[3] - 1.2];
+      let hard = 0, steep = 0, seen = 0;
+      for (const fu of [0.1, 0.5, 0.9]) for (const fv of [0.1, 0.5, 0.9]) {
+        const [x, y] = P(lerp(pr[0], pr[2], fu), lerp(pr[1], pr[3], fv));
+        if (!inWorld(x, y)) continue;
+        seen++;
+        const sl = slopeAt(x, y);
+        if (tsd(x, y) < 20 || occ.get(x, y) === 3 || occ.get(x, y) === 1 || sl > 0.42) hard++;
+        else if (sl > 0.2) steep++;
+      }
+      if (!seen) return;
+      if (hard) {
+        if (depth < 2 && Math.min(r[2] - r[0], r[3] - r[1]) > 22) {
+          const mu = lerp(r[0], r[2], range(rng, 0.4, 0.6)), mv = lerp(r[1], r[3], range(rng, 0.4, 0.6));
+          for (const q of [[r[0], r[1], mu, mv], [mu, r[1], r[2], mv], [r[0], mv, mu, r[3]], [mu, mv, r[2], r[3]]]) parcel(q, depth + 1);
         }
-        if (!ok) continue;
-        const [mx, my] = P((pr[0] + pr[2]) / 2, (pr[1] + pr[3]) / 2);
-        if (!inWorld(mx, my, 10)) continue;
-        // neighbouring fields alike more often than not
-        const wild = fbm(nCrop, mx / 260, my / 260, 2);
-        const crop = pick(rng, { wheat: 3 + 3 * wild, stubble: 1.2, fallow: 1.5, meadow: 2 - 2 * wild, vines: 2, olives: 2.2 - 2 * wild, orchard: 0.6 });
-        const longU = pr[2] - pr[0] >= pr[3] - pr[1];
-        const poly = rectPoly(pr);
-        out.fields.push({ poly, crop, angle: th + (longU ? 0 : Math.PI / 2) });
-        occ.poly(poly, 1);
-        if (crop === 'olives' || crop === 'orchard') {
-          const sp = crop === 'olives' ? range(rng, 8, 11) : range(rng, 5.5, 7);
-          let row = 0;
-          for (let v = pr[1] + sp / 2; v < pr[3] - 1; v += sp * 0.87, row++) for (let u = pr[0] + sp / 2 + (row % 2) * sp / 2; u < pr[2] - 1; u += sp) {
-            if (rng() < 0.08) continue;
-            const [x, y] = P(u + range(rng, -0.7, 0.7), v + range(rng, -0.7, 0.7));
-            if (!inWorld(x, y, 10) || occ.get(x, y) > 1) continue;
-            out.trees.push({ x, y, z0: hAt(x, y), r: crop === 'olives' ? range(rng, 2.2, 3.3) : range(rng, 1.8, 2.6), h: range(rng, 4, 6.5), kind: crop === 'olives' ? 'olive' : 'fruit' });
-          }
+        return;
+      }
+      const [mx, my] = P((pr[0] + pr[2]) / 2, (pr[1] + pr[3]) / 2);
+      // neighbouring fields alike more often than not
+      const wild = fbm(nCrop, mx / 260, my / 260, 2);
+      const crop = steep > 2 ? 'pasture' : pick(rng, {
+        wheat: 3 + 3 * wild, stubble: 1.2, fallow: 1.4, meadow: 1.2 - wild, hay: 1.2, pasture: 1.3 - wild,
+        vines: 2, olives: 2.2 - 2 * wild, orchard: 0.6,
+      });
+      const longU = pr[2] - pr[0] >= pr[3] - pr[1];
+      const poly = rectPoly(pr);
+      out.fields.push({ poly, crop, angle: th + (longU ? 0 : Math.PI / 2) });
+      occ.poly(poly, 1);
+      if (crop === 'olives' || crop === 'orchard') {
+        const sp = crop === 'olives' ? range(rng, 8, 11) : range(rng, 5.5, 7);
+        let row = 0;
+        for (let v = pr[1] + sp / 2; v < pr[3] - 1; v += sp * 0.87, row++) for (let u = pr[0] + sp / 2 + (row % 2) * sp / 2; u < pr[2] - 1; u += sp) {
+          if (rng() < 0.08) continue;
+          const [x, y] = P(u + range(rng, -0.7, 0.7), v + range(rng, -0.7, 0.7));
+          if (!inWorld(x, y, 10) || occ.get(x, y) > 1) continue;
+          out.trees.push({ x, y, z0: hAt(x, y), r: crop === 'olives' ? range(rng, 2.2, 3.3) : range(rng, 1.8, 2.6), h: range(rng, 4, 6.5), kind: crop === 'olives' ? 'olive' : 'fruit' });
+        }
+      }
+      if (crop === 'pasture') pasture(pr);
+    }
+    // a pasture: a dry-stone wall about it, a gap for a gate, a shade tree, a
+    // trough's well maybe, and a flock or a herd
+    function pasture(pr) {
+      const [u1, v1, u2, v2] = pr, edges = [[u1, v1, u2, v1], [u2, v1, u2, v2], [u2, v2, u1, v2], [u1, v2, u1, v1]];
+      const gateEdge = rng() * 4 | 0, gateAt = range(rng, 0.2, 0.8);
+      edges.forEach(([a, b, c, d], e) => {
+        const L = Math.hypot(c - a, d - b), n = Math.max(1, Math.ceil(L / 6));
+        for (let k = 0; k < n; k++) {
+          const t1 = k / n, t2 = (k + 1) / n;
+          if (e === gateEdge && Math.abs((t1 + t2) / 2 - gateAt) < 2.5 / L) continue;
+          const p1 = [lerp(a, c, t1), lerp(b, d, t1)], p2 = [lerp(a, c, t2), lerp(b, d, t2)];
+          const [x1, y1] = P(...p1), [x2, y2] = P(...p2);
+          if (!inWorld(x1, y1, 2) && !inWorld(x2, y2, 2)) continue;
+          const [x, y] = P((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2);
+          B.push({ shape: 'box', use: 'drystone', mat: 'stone', x, y, angle: th + Math.atan2(p2[1] - p1[1], p2[0] - p1[0]), w: L / n + 0.6, d: 0.7, z0: Math.min(hAt(x1, y1), hAt(x2, y2)), h: range(rng, 0.9, 1.2), roof: 'flat', pitch: 0 });
+        }
+      });
+      if (rng() < 0.5) tree(range(rng, u1 + 4, u2 - 4), range(rng, v1 + 4, v2 - 4), rng() < 0.6 ? 'oak' : 'pine', range(rng, 4, 6.5), range(rng, 9, 14));
+      if (rng() < 0.35) well(range(rng, u1 + 3, u2 - 3), range(rng, v1 + 3, v2 - 3));
+      if (rng() < 0.25) return;
+      const kind = pick(rng, { sheep: 4, goat: 1.5, cow: 2, horse: 0.7 });
+      const herds = kind === 'sheep' || kind === 'goat' ? 1 + (rng() * 2 | 0) : 1;
+      for (let hh = 0; hh < herds; hh++) {
+        const n = kind === 'sheep' ? 8 + (rng() * 26 | 0) : kind === 'goat' ? 5 + (rng() * 12 | 0) : kind === 'cow' ? 3 + (rng() * 8 | 0) : 2 + (rng() * 5 | 0);
+        const spread = kind === 'sheep' ? range(rng, 3, 7) : range(rng, 6, 14), heading = rng() * TAU;
+        const cu = range(rng, u1 + spread, u2 - spread), cv = range(rng, v1 + spread, v2 - spread);
+        for (let k = 0; k < n; k++) {
+          const u = cu + gauss(rng) * spread, v = cv + gauss(rng) * spread * 0.7;
+          if (u < u1 + 1 || u > u2 - 1 || v < v1 + 1 || v > v2 - 1) continue;
+          const [x, y] = P(u, v);
+          if (!inWorld(x, y)) continue;
+          out.animals.push({ x, y, z0: hAt(x, y), angle: heading + gauss(rng) * (kind === 'sheep' ? 0.6 : 1.2), kind });
         }
       }
     }
