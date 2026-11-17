@@ -72,11 +72,12 @@ const SoapBubble = (() => {
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * rng());
   }
 
-  // The film, Lx × Ly (Ly = 1), on an NX × NY grid: its waves, of speed c,
+  // The film, Lx × Ly (Ly = 1), on an NX × NY grid: its waves, of speed c
+  // (√(T/μ), its tension T over its mass per area μ: the tauter, the faster),
   // their slopes S (rms), most of it in wavelengths about PEAK, none shorter
   // than four cells; its thickness at rest, D nm on average, varying by a
   // factor of e^(±SPREAD) over lengths of DLEN and more.
-  function film(rng, { Lx, Ly, NX, NY, c = 0.045, S = 0.34, PEAK = 0.38, D = 420, SPREAD = 0.3, DLEN = 0.3 }) {
+  function film(rng, { Lx, Ly, NX, NY, c = 0.09, S = 0.34, PEAK = 0.2, D = 420, SPREAD = 0.3, DLEN = 0.3 }) {
     const ifft = fft2(NX, NY), size = NX * NY;
     const re = new Float64Array(size), im = new Float64Array(size);
     const kOf = (i, j) => [TAU * (i < NX / 2 ? i : i - NX) / Lx, TAU * (j < NY / 2 ? j : j - NY) / Ly];
