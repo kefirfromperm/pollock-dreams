@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8J2V3WVJ2Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-8J2V3WVJ2Z');
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roman Town</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="description" content="A small Roman town laid out at random and seen from straight above in the afternoon sun: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river.">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1915; }
+  canvas {
+    display: block; position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%); cursor: pointer;
+  }
+  #hint {
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border-radius: 4px;
+    transition: opacity 1.2s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint"></div>
+<script src="pollock.js"></script>
+<script src="roman-town.js"></script>
+<script src="roman-town-view.js"></script>
+<script>
+(() => {
+  const PD = PollockDreams;
+  const canvas = document.getElementById('c');
+  const hint = document.getElementById('hint');
+  const touch = matchMedia('(pointer: coarse)').matches;
+  const fixed = new URLSearchParams(location.search).get('seed');
+  let seed = fixed !== null ? +fixed : (Math.random() * 1e9) | 0;
+  let town = null, busy = false;
+
+  // A town per click: the model lays it out, the view draws it. The world is
+  // as big whatever the screen's shape, as a 16:9 one's 820 × 461 m, only its
+  // shape the screen's.
+  function build() {
+    busy = true;
+    hint.textContent = 'laying out a town…';
+    showHint();
+    setTimeout(() => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const [CW, CH] = PD.canvasSize();
+      canvas.style.width = CW + 'px';
+      canvas.style.height = CH + 'px';
+      canvas.width = Math.round(CW * dpr);
+      canvas.height = Math.round(CH * dpr);
+      const aspect = CW / CH, A = 820 * 461, W = Math.sqrt(A * aspect), H = W / aspect;
+      const rng = PD.mulberry32(seed);
+      town = RomanTown.town(rng, { W, H });
+      window.town = town; // (for whoever wants to look inside)
+      // the sun in the afternoon, from the upper left, so hills stand up
+      const sunAzimuth = -Math.PI * (0.62 + 0.2 * rng()), sunElevation = (30 + 14 * rng()) * Math.PI / 180;
+      RomanTownView.render(town, canvas, { sunAzimuth, sunElevation, seed });
+      busy = false;
+      hint.textContent = `town ${seed}` + (touch ? ' · tap: another town' : ' · click: another town · S: save PNG');
+      showHint();
+    }, 30);
+  }
+
+  canvas.addEventListener('click', () => {
+    if (busy) return;
+    seed = (Math.random() * 1e9) | 0;
+    build();
+  });
+  let lastMove = 0;
+  window.addEventListener('mousemove', () => {
+    const now = performance.now();
+    if (now - lastMove > 500) { lastMove = now; showHint(); }
+  });
+  window.addEventListener('keydown', e => {
+    if ((e.key === 's' || e.key === 'S') && town && !busy) {
+      const a = document.createElement('a');
+      a.download = `roman-town-${seed}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+  });
+  let ht;
+  function showHint() {
+    hint.classList.remove('hidden');
+    clearTimeout(ht);
+    if (!busy) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+  }
+
+  build();
+})();
+</script>
+</body>
+</html>
