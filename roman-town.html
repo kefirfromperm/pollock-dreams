@@ -78,22 +78,28 @@
   const ZMAX = 32, TILE = 256, LMAX = 5, sFit = DW / W; // device px a metre at zoom 1
   let zoom = 1, cx = W / 2, cy = H / 2;
   const scale = () => sFit * zoom;
+  // the canvas, centred, may be bigger than the window: what is seen of it
+  const seenPx = () => [Math.min(DW, innerWidth * dpr), Math.min(DH, innerHeight * dpr)];
+  // the world a rectangle: what is seen of it kept inside it
   function clampView() {
     zoom = Math.min(ZMAX, Math.max(1, zoom));
-    const vw = DW / scale(), vh = DH / scale();
-    cx = Math.min(W - vw / 2, Math.max(vw / 2, cx));
-    cy = Math.min(H - vh / 2, Math.max(vh / 2, cy));
+    const [sw, sh] = seenPx(), hx = sw / 2 / scale(), hy = sh / 2 / scale();
+    cx = hx * 2 >= W ? W / 2 : Math.min(W - hx, Math.max(hx, cx));
+    cy = hy * 2 >= H ? H / 2 : Math.min(H - hy, Math.max(hy, cy));
   }
+  // the canvas's rectangle of the world, and the part of it seen
   const viewRect = () => { const vw = DW / scale(), vh = DH / scale(); return [cx - vw / 2, cy - vh / 2, vw, vh]; };
+  const seenRect = () => { const [sw, sh] = seenPx(), vw = sw / scale(), vh = sh / scale(); return [cx - vw / 2, cy - vh / 2, vw, vh]; };
   function zoomAt(px, py, f) {
     const [vx, vy] = viewRect(), wx = vx + px / scale(), wy = vy + py / scale();
-    zoom *= f;
-    clampView();
+    zoom = Math.min(ZMAX, Math.max(1, zoom * f));
     cx = wx - px / scale() + DW / scale() / 2;
     cy = wy - py / scale() + DH / scale() / 2;
+    clampView();
     changed();
   }
-  function pan(dx, dy) { cx -= dx / scale(); cy -= dy / scale(); changed(); }
+  function pan(dx, dy) { cx -= dx / scale(); cy -= dy / scale(); clampView(); changed(); }
+  window.addEventListener('resize', () => { clampView(); changed(); });
 
   // ---- tiles: the town drawn in pieces of 256 px, at zooms a power of two
   // apart, by workers; a piece not yet drawn shown from a coarser one ----
@@ -101,14 +107,15 @@
   const key = (z, ix, iy) => z + '/' + ix + '/' + iy;
   const tiles = new Map(), pending = new Set();
   let queue = [], frameNo = 0, started = false;
+  // the tiles over what is seen, none beyond the world
   function visible(z) {
-    const tw = TILE / (sFit * 2 ** z), [vx, vy, vw, vh] = viewRect(), out = [];
-    for (let iy = Math.max(0, Math.floor(vy / tw)); iy * tw < vy + vh; iy++)
-      for (let ix = Math.max(0, Math.floor(vx / tw)); ix * tw < vx + vw; ix++) out.push([ix, iy, tw]);
+    const tw = TILE / (sFit * 2 ** z), [vx, vy, vw, vh] = seenRect(), out = [];
+    for (let iy = Math.max(0, Math.floor(vy / tw)); iy * tw < Math.min(H, vy + vh); iy++)
+      for (let ix = Math.max(0, Math.floor(vx / tw)); ix * tw < Math.min(W, vx + vw); ix++) out.push([ix, iy, tw]);
     return out;
   }
   function plan() {
-    const z = level(), [vx, vy, vw, vh] = viewRect(), mx = vx + vw / 2, my = vy + vh / 2;
+    const z = level(), [vx, vy, vw, vh] = seenRect(), mx = vx + vw / 2, my = vy + vh / 2;
     queue = visible(z).filter(([ix, iy]) => { const k = key(z, ix, iy), t = tiles.get(k); return (!t || t.gen !== gen) && !pending.has(k); })
       .map(([ix, iy, tw]) => [Math.hypot((ix + 0.5) * tw - mx, (iy + 0.5) * tw - my), z, ix, iy])
       .sort((a, b) => a[0] - b[0]);
