@@ -35,7 +35,7 @@ const RomanTownView = (() => {
     wheat: 10, stubble: 11, fallow: 12, meadow: 13, hay: 14, pasture: 15, vines: 16, olives: 17, orchard: 18,
     via: 19, track: 20, river: 21, bank: 22,
   };
-  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9 };
+  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15 };
   const TREES = {
     // colour; the crown's depth as a part of the height (or metres, if over 1)
     cypress: [[44, 62, 38], 1], poplar: [[92, 118, 56], 0.95], pine: [[62, 84, 46], 2.4], oak: [[58, 76, 42], 0.6],
@@ -260,7 +260,30 @@ const RomanTownView = (() => {
       else if (m == 7) { c = rgb(208.0, 200.0, 182.0); f = 0.95 + 0.08 * vnoise(p * 2.0, uSeed); }
       else if (m == 8) { c = rgb(156.0, 134.0, 104.0); f = 0.7; }
       else if (m == 9) { f *= 0.9 + 0.2 * vnoise(p * 1.5, uSeed + 29); }
-      oAlb = vec4(clamp(c * f, 0.0, 1.0), 0.0);
+      float water = 0.0;
+      vec2 pl = vec2(along, p.y * cos(uTA) - p.x * sin(uTA)); // (in the town's own frame)
+      if (m == 10) {
+        // a mosaic: tesserae, white, black and a red, laid in a pattern of
+        // squares, diamonds or rings, a border about each
+        vec2 tq = pl / 0.11, ti = floor(tq);
+        float tess = (fract(tq.x) < 0.12 || fract(tq.y) < 0.12) ? 0.8 : 0.95 + 0.1 * hf(ivec2(ti), uSeed + 101);
+        vec2 q = pl / 0.9, fq = fract(q) - 0.5;
+        int pat = int(vMat.y * 3.0);
+        float ink = pat == 0 ? step(abs(fq.x) + abs(fq.y), 0.28) : pat == 1 ? step(abs(length(fq) - 0.3), 0.06) : step(max(abs(fq.x), abs(fq.y)), 0.2) * step(mod(floor(q.x) + floor(q.y), 2.0), 0.5);
+        float band = step(abs(fq.x), 0.03) + step(abs(fq.y), 0.03);
+        c = mix(rgb(226.0, 218.0, 198.0), vMat.z < 0.4 ? rgb(150.0, 62.0, 40.0) : rgb(38.0, 34.0, 32.0), clamp(ink + band * 0.6, 0.0, 1.0));
+        f = tess;
+      }
+      else if (m == 11) {
+        // opus signinum: crushed tile in lime, white chips set in it
+        c = rgb(170.0, 104.0, 82.0); f = 0.9 + 0.16 * fnoise(p * 2.0, uSeed + 103);
+        if (hf(ivec2(floor(pl / 0.07)), uSeed + 105) > 0.95) c = mix(c, rgb(228.0, 222.0, 208.0), 0.6);
+      }
+      else if (m == 12) { c = rgb(142.0, 116.0, 86.0); f = 0.82 + 0.3 * fnoise(p * 1.5, uSeed + 107); }
+      else if (m == 13) { c = rgb(70.0, 142.0, 150.0); f = 0.95 + 0.08 * fnoise(p, uSeed + 109); water = 1.0; }
+      else if (m == 14) { c = rgb(206.0, 196.0, 176.0); f = 0.9 + 0.14 * vnoise(p * 3.0, uSeed + 111); }
+      else if (m == 15) { c = rgb(232.0, 228.0, 218.0); f = 0.9 + 0.1 * n.z; }
+      oAlb = vec4(clamp(c * f, 0.0, 1.0), water);
       oNrm = vec4(n, 0.0);
       oH = vW.z;
     }`;
@@ -757,26 +780,64 @@ const RomanTownView = (() => {
         }
       }
     }
-    for (const b of town.buildings) {
-      const [t1, t2] = tints(b);
-      mat = [matOf(b), t1, t2, 0];
-      if (b.shape === 'box') box(b);
-      else if (b.shape === 'round') round(b);
-      else if (b.shape === 'cavea') cavea(b);
-      else if (b.shape === 'arena') arena(b);
+    // a building cut through as a plan is, a little above the floor: its
+    // floors, the stumps of its walls, its columns
+    const CUT = 2.4;
+    function cutaway(b, t1, t2) {
+      const I = b.interior, ca = Math.cos(b.angle), sa = Math.sin(b.angle), hw = b.w / 2, hd = b.d / 2;
+      const Q = (a, c, z) => [b.x + (a - hw) * ca - (c - hd) * sa, b.y + (a - hw) * sa + (c - hd) * ca, z];
+      const zf = b.z0 + 0.08, zw = b.z0 + Math.min(CUT, b.h);
+      for (const [a1, c1, a2, c2, kind] of I.floors) {
+        mat = [SOLID[kind] ?? SOLID.paving, t1, t2, 0];
+        const z = kind === 'pool' ? zf + 0.02 : zf;
+        face([Q(a1, c1, z), Q(a2, c1, z), Q(a2, c2, z), Q(a1, c2, z)]);
+      }
+      mat = [SOLID.plaster, t1, t2, 0];
+      const T = 0.25;
+      for (const [a1, c1, a2, c2] of I.walls) {
+        const x1 = Math.min(a1, a2) - T, x2 = Math.max(a1, a2) + T, y1 = Math.min(c1, c2) - T, y2 = Math.max(c1, c2) + T;
+        const top = [Q(x1, y1, zw), Q(x2, y1, zw), Q(x2, y2, zw), Q(x1, y2, zw)];
+        face(top);
+        walls(top, b.z0 - 3);
+      }
+      mat = [SOLID.column, t1, t2, 0];
+      for (const [a, c, r] of I.columns) {
+        const [x, y] = Q(a, c, 0), n = 10, zc = b.z0 + Math.min(CUT, b.h) + 0.3, ring = [];
+        for (let k = 0; k < n; k++) { const an = k / n * Math.PI * 2; ring.push([x + r * Math.cos(an), y + r * Math.sin(an), zc]); }
+        face(ring);
+        walls(ring, b.z0 - 1);
+      }
     }
-    const solidBuf = gl.createBuffer(), solidN = SV.length / 10;
-    gl.bindBuffer(gl.ARRAY_BUFFER, solidBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SV), gl.STATIC_DRAW);
-    const solidVAO = gl.createVertexArray();
-    gl.bindVertexArray(solidVAO);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 40, 12);
-    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 40, 24);
-    const solidDepthVAO = gl.createVertexArray();
-    gl.bindVertexArray(solidDepthVAO);
-    gl.bindBuffer(gl.ARRAY_BUFFER, solidBuf);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+    // the solids, roofed or cut through, into a buffer
+    function solids(cut) {
+      SV.length = 0;
+      for (const b of town.buildings) {
+        const [t1, t2] = tints(b);
+        mat = [matOf(b), t1, t2, 0];
+        if (b.shape === 'box') { if (cut && b.interior) cutaway(b, t1, t2); else box(b); }
+        else if (b.shape === 'round') round(b);
+        else if (b.shape === 'cavea') cavea(b);
+        else if (b.shape === 'arena') arena(b);
+      }
+      const buf = gl.createBuffer(), n = SV.length / 10;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SV), gl.STATIC_DRAW);
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 40, 12);
+      gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 40, 24);
+      const dvao = gl.createVertexArray();
+      gl.bindVertexArray(dvao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+      return { vao, dvao, n };
+    }
+    const ROOFED = solids(false), CUTAWAY = solids(true);
+    SV.length = 0;
+    // close enough (less than this many metres across) to look inside
+    const INSIDE = 200;
+    let S = ROOFED;
 
     // the ground as a mesh, for the hills' shadows
     const terVAO = gl.createVertexArray();
@@ -1011,8 +1072,8 @@ const RomanTownView = (() => {
       gl.uniform1i(P.solid.loc.uSeed, iseed);
       gl.uniform1f(P.solid.loc.uTA, TA);
       setWind(P.solid);
-      gl.bindVertexArray(solidVAO);
-      gl.drawArrays(gl.TRIANGLES, 0, solidN);
+      gl.bindVertexArray(S.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, S.n);
       const nb = bodiesIn(rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]);
       if (nb) {
         gl.useProgram(P.body.p);
@@ -1039,8 +1100,8 @@ const RomanTownView = (() => {
       gl.uniformMatrix4fv(P.depth.loc.uMVP, false, lv.m);
       gl.bindVertexArray(terVAO);
       gl.drawElements(gl.TRIANGLES, terN, gl.UNSIGNED_INT, 0);
-      gl.bindVertexArray(solidDepthVAO);
-      gl.drawArrays(gl.TRIANGLES, 0, solidN);
+      gl.bindVertexArray(S.dvao);
+      gl.drawArrays(gl.TRIANGLES, 0, S.n);
       // the bodies that may shade the rectangle: those in it, and about it
       const m = 60;
       const nb = bodiesIn(rect[0] - m, rect[1] - m, rect[0] + rect[2] + m, rect[1] + rect[3] + m);
@@ -1096,7 +1157,11 @@ const RomanTownView = (() => {
     function draw(rect, sky, t = 0) {
       time = t % 3600;
       const lt = lightOf(sky), scale = canvas.width / rect[2];
-      const key = rect.join() + lt.L.join();
+      // roofs off when close, as a plan is drawn (a little either way, so it
+      // does not flicker at the edge)
+      if (S === ROOFED && rect[2] < INSIDE * 0.95) S = CUTAWAY;
+      else if (S === CUTAWAY && rect[2] > INSIDE * 1.05) S = ROOFED;
+      const key = rect.join() + lt.L.join() + (S === CUTAWAY);
       if (key !== shadowKey) { lv = lightView(lt.L, ...rect); drawShadows(lv, rect); shadowKey = key; }
       drawScene(G, topDown(...rect), rect, scale);
       // the light
