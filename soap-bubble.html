@@ -23,7 +23,7 @@
     transform: translate(-50%, -50%); cursor: pointer;
   }
   #hint {
-    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 32px);
+    position: fixed; left: 16px; bottom: 14px; max-width: calc(100vw - 172px); /* (clear of the sound button) */
     font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #f4efe3; background: rgba(20,17,15,.55);
     padding: 6px 10px; border-radius: 4px;
@@ -31,11 +31,21 @@
   }
   #hint.hidden { opacity: 0; }
   #spectrum { height: 6px; width: 180px; margin-bottom: 5px; border-radius: 2px; }
+  #sounds { position: fixed; right: 16px; bottom: 14px; }
+  #sounds button {
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
+    transition: opacity 1.2s; opacity: 1;
+  }
+  #sounds.dim button { opacity: .35; }
+  #sounds button:hover, #sounds button:focus-visible { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint"><div id="spectrum"></div><div id="hintText"></div></div>
+<div id="sounds"><button id="gurgle" type="button" aria-pressed="false">∘ gurgle: off</button></div>
 <script src="pollock.js"></script>
 <script src="soap-bubble.js"></script>
 <script>
@@ -45,6 +55,8 @@
   const hint = document.getElementById('hint');
   const hintText = document.getElementById('hintText');
   const spectrum = document.getElementById('spectrum');
+  const sounds = document.getElementById('sounds');
+  const gurgleButton = document.getElementById('gurgle');
 
   const seed = (Math.random() * 1e9) | 0;
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -73,7 +85,7 @@
     const lamps = [];
     const n = 3 + (rng() * 2 | 0);
     for (let k = 0; k < n; k++) {
-      const th = (32 + rng() * 34) * Math.PI / 180, ph = rng() * PD.TAU;
+      const th = (30 + rng() * 20) * Math.PI / 180, ph = rng() * PD.TAU;
       lamps.push([Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), Math.cos(th), 60 + rng() * 80]);
     }
     return { lamps, side: rng() * PD.TAU };
@@ -170,7 +182,7 @@
       gl.uniform1f(show.loc.side, env.side);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
-    return { draw };
+    return { draw, slopes };
   }
 
   // the film's colours, thin to thick, seen straight on, as a strip over the hint
@@ -184,11 +196,152 @@
     spectrum.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
   }
 
+  // ---- gurgling ----
+  // A glare is born where the film, tilting, comes to catch a lamp where
+  // nowhere near had caught it a moment before; each is heard as a bubble.
+  // A bubble rings as it is born (Minnaert): a pure tone, dying away within
+  // a few dozen of its cycles, rising a little as it does, the smaller the
+  // bubble the higher; so the glare, by how sharply the film is curved
+  // where it is born, the sharper the higher, and heard from where it is,
+  // left or right. The glares come in runs as the waves pass, and the
+  // bubbles with them: a gurgle.
+  function glares(f, lamps) {
+    const { NX, NY } = f, size = NX * NY, R = 2;
+    // lit, as the shader draws a glare, to e^−2 of its peak; near lit, to e^−8
+    const COS = 1 - 2 * 0.0005, NEAR = 1 - 8 * 0.0005;
+    let lit = new Uint8Array(size), was = new Uint8Array(size);
+    const seen = new Uint8Array(size), stack = new Int32Array(size), born = [];
+    const at = (i, j) => ((j + NY) % NY) * NX + (i + NX) % NX;
+    let first = true;
+    return slopes => {
+      [lit, was] = [was, lit];
+      lit.fill(0);
+      for (let n = 0; n < size; n++) {
+        const gx = slopes[2 * n], gy = slopes[2 * n + 1], c2 = 1 / (1 + gx * gx + gy * gy);
+        const rx = -2 * c2 * gx, ry = -2 * c2 * gy, rz = 2 * c2 - 1;
+        for (let k = 0; k < lamps.length; k++) {
+          const L = lamps[k], d = rx * L[0] + ry * L[1] + rz * L[2];
+          if (d > NEAR) { lit[n] = (k + 1) | (d > COS ? 16 : 0); break; }
+        }
+      }
+      // each glare (its points lit, together), new if none of them was near
+      // lit by the same lamp a moment ago
+      born.length = 0;
+      seen.fill(0);
+      for (let n0 = 0; n0 < size; n0++) {
+        if (!(lit[n0] & 16) || seen[n0]) continue;
+        const lamp = lit[n0] & 15;
+        let top = 0, count = 0, old = false, si = 0, sj = 0, best = 0, bn = n0;
+        stack[top++] = n0; seen[n0] = 1;
+        while (top) {
+          const n = stack[--top], i = n % NX, j = (n / NX) | 0;
+          count++;
+          // (its centre, across the seam too, from the first point)
+          const i0 = n0 % NX, j0 = (n0 / NX) | 0;
+          si += i - NX * Math.round((i - i0) / NX); sj += j - NY * Math.round((j - j0) / NY);
+          if (!old) for (let dj = -R; dj <= R && !old; dj++) for (let di = -R; di <= R; di++) {
+            if ((was[at(i + di, j + dj)] & 15) === lamp) { old = true; break; }
+          }
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const m = at(i + di, j + dj);
+            if (!seen[m] && (lit[m] & 16) && (lit[m] & 15) === lamp) { seen[m] = 1; stack[top++] = m; }
+          }
+        }
+        if (old) continue;
+        const ci = si / count, cj = sj / count, i = Math.round(ci), j = Math.round(cj);
+        // the film's curvature there, ∇²h, from the slopes about it
+        const curv = (slopes[2 * at(i + 1, j)] - slopes[2 * at(i - 1, j)]) * NX / (2 * f.Lx)
+                   + (slopes[2 * at(i, j + 1) + 1] - slopes[2 * at(i, j - 1) + 1]) * NY / (2 * f.Ly);
+        born.push({ x: ((ci / NX) % 1 + 1) % 1, y: ((cj / NY) % 1 + 1) % 1, curv: Math.abs(curv), size: count, lamp: lamp - 1 });
+      }
+      if (first) { first = false; born.length = 0; } // (all there at the start, none born)
+      return born;
+    };
+  }
+
+  // Off until asked for (browsers only let sound start from a click or a key
+  // press); it waits while the painting is paused, as the film does.
+  const Gurgle = (() => {
+    let ac = null, out = null, on = false;
+    function setup() {
+      ac = new AudioContext();
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -20; comp.ratio.value = 4;
+      out = ac.createGain(); out.gain.value = 0.8;
+      // a small wet room, from decaying noise
+      const len = ac.sampleRate * 1.2, ir = ac.createBuffer(2, len, ac.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+      }
+      const verb = ac.createConvolver(); verb.buffer = ir;
+      const wet = ac.createGain(); wet.gain.value = 0.25;
+      out.connect(comp); out.connect(verb); verb.connect(wet); wet.connect(comp);
+      comp.connect(ac.destination);
+    }
+    // a bubble of pitch f0 Hz, as loud as loud, from pan (−1 left, 1 right), delay s from now
+    function bubble(f0, loud, pan, delay = 0) {
+      const t = ac.currentTime + 0.005 + delay;
+      const d = 0.6 * (0.13 * f0 + 0.0072 * Math.pow(f0, 1.5)); // its damping, 1/s (after van den Doel)
+      const life = 5 / d;
+      const osc = ac.createOscillator(), g = ac.createGain(), p = ac.createStereoPanner();
+      osc.frequency.setValueAtTime(f0, t);
+      osc.frequency.exponentialRampToValueAtTime(f0 * 1.6, t + life);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(loud, t + 0.003);
+      g.gain.setTargetAtTime(0, t + 0.003, 1 / d);
+      p.pan.value = pan;
+      osc.connect(g); g.connect(p); p.connect(out);
+      osc.start(t); osc.stop(t + life + 0.05);
+    }
+    // not more than a few at once: a run of many, only some heard
+    let budget = 0, lastAt = 0;
+    const RATE = 8, BURST = 5;
+    return {
+      set(o) {
+        on = o;
+        if (on && !ac) setup();
+        if (ac) on ? ac.resume() : setTimeout(() => { if (!on) ac.suspend(); }, 400);
+      },
+      get on() { return on; },
+      // the glares just born, each heard as a run of a few bubbles, one
+      // after another, a glug (or told, as 'bubble' events, for whoever
+      // records the painting with its sound): its pitch by the film's
+      // curvature there, the bigger the glare, the more of them, and lower
+      born(list, lamps) {
+        const now = performance.now() / 1000;
+        budget = Math.min(BURST, budget + (now - lastAt) * RATE); lastAt = now;
+        for (const b of list) {
+          if (budget < 1) break;
+          budget -= 1;
+          const base = Math.min(1100, Math.max(140, 320 * Math.pow(b.curv / 13, 0.7) / Math.pow(Math.max(1, b.size / 6), 0.25)));
+          const runs = 1 + Math.floor(Math.random() * Math.min(4, 1.5 + b.size / 8));
+          const loud = 0.12 * Math.min(1, lamps[b.lamp][3] / 140), pan = (b.x * 2 - 1) * 0.85;
+          let dt = 0;
+          for (let q = 0; q < runs; q++) {
+            const f0 = base * (0.85 + 0.35 * Math.random()), l = loud * (0.55 + 0.45 * Math.random()) * Math.pow(0.8, q);
+            dispatchEvent(new CustomEvent('bubble', { detail: { f0, loud: l, pan, delay: dt } }));
+            if (on) bubble(f0, l, pan, dt);
+            dt += 0.035 + Math.random() * 0.08;
+          }
+        }
+      },
+    };
+  })();
+  function setGurgle(o) {
+    Gurgle.set(o);
+    gurgleButton.textContent = `∘ gurgle: ${o ? 'on' : 'off'}`;
+    gurgleButton.setAttribute('aria-pressed', o);
+    showHint();
+  }
+  const toggleGurgle = () => setGurgle(!Gurgle.on);
+  gurgleButton.addEventListener('click', toggleGurgle);
+
   let paused = false, film = null;
   function showStats() {
     if (!film) return;
     hintText.textContent = `waves ${film.modes}` + (paused ? ' · paused' : '') +
-      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · thin ← colour → thick · click: ${paused ? 'resume' : 'pause'} · S: save PNG`);
+      (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · thin ← colour → thick · click: ${paused ? 'resume' : 'pause'} · G: gurgle · S: save PNG`);
   }
 
   const awake = PD.screenAwake();
@@ -216,7 +369,7 @@
     while (Ly / NY > 1 / 128) NY *= 2;
     const f = film = SoapBubble.film(rng, { Lx, Ly, NX, NY });
     window.film = f; // (for whoever wants to look inside)
-    const painter = glPainter(gl, f, lights(rng));
+    const env = lights(rng), painter = glPainter(gl, f, env), glaresBorn = glares(f, env.lamps);
     painter.draw();
     showStats();
     showHint();
@@ -228,6 +381,7 @@
       if (!paused && dt > 0) {
         f.step(dt);
         painter.draw();
+        Gurgle.born(glaresBorn(painter.slopes), env.lamps);
       }
       requestAnimationFrame(frame);
     };
@@ -240,6 +394,7 @@
     if (now - lastMove > 500) { lastMove = now; showHint(); }
   });
   window.addEventListener('keydown', e => {
+    if ((e.key === 'g' || e.key === 'G') && !e.repeat) toggleGurgle();
     if ((e.key === 's' || e.key === 'S') && film) {
       const a = document.createElement('a');
       a.download = `soap-bubble-${seed}.png`;
@@ -250,8 +405,9 @@
   let ht;
   function showHint() {
     hint.classList.remove('hidden');
+    sounds.classList.remove('dim');
     clearTimeout(ht);
-    if (!paused) ht = setTimeout(() => hint.classList.add('hidden'), 4000);
+    if (!paused) ht = setTimeout(() => { hint.classList.add('hidden'); sounds.classList.add('dim'); }, 4000);
   }
 
   start();
