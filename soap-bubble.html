@@ -15,7 +15,20 @@
 <title>Soap Bubble</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A soap film stretched flat and clear over the dark, set trembling once and trembling forever: wherever its waves tilt it, it catches the light in the colours of thin films, and glares.">
+<meta name="description" content="A soap film stretched flat and clear over the dark, trembling forever: wherever its waves tilt it, it catches the light in the colours of thin films, its glares gurgling.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Digital Art Meditation">
+<meta property="og:title" content="Soap Bubble">
+<meta property="og:description" content="A soap film stretched flat and clear over the dark, trembling forever: wherever its waves tilt it, it catches the light in the colours of thin films, its glares gurgling.">
+<meta property="og:url" content="https://digitalartmeditation.com/soap-bubble.html">
+<meta property="og:image" content="https://digitalartmeditation.com/og/og-soap-bubble.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="“Soap Bubble” written in poured cursive lines over a trembling soap film in the dark, its waves shining gold, magenta and blue, glinting">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Soap Bubble">
+<meta name="twitter:description" content="A soap film stretched flat and clear over the dark, trembling forever: wherever its waves tilt it, it catches the light in the colours of thin films, its glares gurgling.">
+<meta name="twitter:image" content="https://digitalartmeditation.com/og/og-soap-bubble.png">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
   canvas {
@@ -48,6 +61,7 @@
 <div id="sounds"><button id="gurgle" type="button" aria-pressed="false">∘ gurgle: off</button></div>
 <script src="pollock.js"></script>
 <script src="soap-bubble.js"></script>
+<script src="soap-bubble-music.js"></script>
 <script>
 (() => {
   const PD = PollockDreams;
@@ -262,37 +276,13 @@
   // Off until asked for (browsers only let sound start from a click or a key
   // press); it waits while the painting is paused, as the film does.
   const Gurgle = (() => {
-    let ac = null, out = null, on = false;
+    let ac = null, sound = null, on = false;
     function setup() {
       ac = new AudioContext();
       const comp = ac.createDynamicsCompressor();
       comp.threshold.value = -20; comp.ratio.value = 4;
-      out = ac.createGain(); out.gain.value = 0.8;
-      // a small wet room, from decaying noise
-      const len = ac.sampleRate * 1.2, ir = ac.createBuffer(2, len, ac.sampleRate);
-      for (let ch = 0; ch < 2; ch++) {
-        const d = ir.getChannelData(ch);
-        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
-      }
-      const verb = ac.createConvolver(); verb.buffer = ir;
-      const wet = ac.createGain(); wet.gain.value = 0.25;
-      out.connect(comp); out.connect(verb); verb.connect(wet); wet.connect(comp);
       comp.connect(ac.destination);
-    }
-    // a bubble of pitch f0 Hz, as loud as loud, from pan (−1 left, 1 right), delay s from now
-    function bubble(f0, loud, pan, delay = 0) {
-      const t = ac.currentTime + 0.005 + delay;
-      const d = 0.6 * (0.13 * f0 + 0.0072 * Math.pow(f0, 1.5)); // its damping, 1/s (after van den Doel)
-      const life = 5 / d;
-      const osc = ac.createOscillator(), g = ac.createGain(), p = ac.createStereoPanner();
-      osc.frequency.setValueAtTime(f0, t);
-      osc.frequency.exponentialRampToValueAtTime(f0 * 1.6, t + life);
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(loud, t + 0.003);
-      g.gain.setTargetAtTime(0, t + 0.003, 1 / d);
-      p.pan.value = pan;
-      osc.connect(g); g.connect(p); p.connect(out);
-      osc.start(t); osc.stop(t + life + 0.05);
+      sound = SoapBubbleMusic.player(ac, comp, seed); // (the bubbles themselves)
     }
     // not more than a few at once: a run of many, only some heard
     let budget = 0, lastAt = 0;
@@ -321,7 +311,7 @@
           for (let q = 0; q < runs; q++) {
             const f0 = base * (0.85 + 0.35 * Math.random()), l = loud * (0.55 + 0.45 * Math.random()) * Math.pow(0.8, q);
             dispatchEvent(new CustomEvent('bubble', { detail: { f0, loud: l, pan, delay: dt } }));
-            if (on) bubble(f0, l, pan, dt);
+            if (on) sound.bubble(f0, l, pan, dt);
             dt += 0.035 + Math.random() * 0.08;
           }
         }

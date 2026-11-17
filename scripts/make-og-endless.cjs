@@ -10,6 +10,8 @@
 //                                    --seed 5 --seconds 720 --out og/og-wall.png
 //   node scripts/make-og-endless.cjs --page black-holes.html --text "Black Holes" \
 //                                    --seed 5 --seconds 60 --out og/og-black-holes.png
+//   node scripts/make-og-endless.cjs --page soap-bubble.html --text "Soap Bubble" \
+//                                    --seed 5 --seconds 5 --out og/og-soap-bubble.png
 //
 // Needs playwright-core (NODE_PATH) and chromium (WebGL paintings are drawn
 // by its software GPU, SwiftShader); og.html loads opentype.js from cdnjs,

@@ -23,6 +23,8 @@ const PAINTINGS = [
   { page: 'the-wall.html', seed: 5, out: 'previews/the-wall.jpg', webgl: true, seconds: 720 },
   // a minute of ours: holes grown, their wells red about them
   { page: 'black-holes.html', seed: 5, out: 'previews/black-holes.jpg', webgl: true, seconds: 60 },
+  // the same at any moment: a few seconds of trembling
+  { page: 'soap-bubble.html', seed: 5, out: 'previews/soap-bubble.jpg', webgl: true, seconds: 5 },
 ].filter(p => !args.only || p.page === args.only);
 const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome']
   .find(p => fs.existsSync(p));

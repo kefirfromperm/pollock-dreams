@@ -6,7 +6,7 @@
 #
 #   seconds  length of each reel (default 45)
 #   outdir   where the MP4s go (default reels)
-#   page     which paintings (default all five)
+#   page     which paintings (default all six)
 #
 # Each painting uses the seed of its preview in the gallery. Pour Dreams fills
 # its canvas slowly, so its reel starts once it has been painting for a while,
@@ -16,7 +16,8 @@
 # poured; The Wall's wind blows as it blows the bits off, and its cracks
 # crackle where they crack. Black Holes starts a minute in, as its preview,
 # and its mergers chirp in one ear, then the other, as their waves reach the
-# edges.
+# edges. Soap Bubble has no music, only its gurgling: its glares bubble as
+# they are born, where they are.
 # Needs node, ffmpeg (libx264) and chromium; playwright-core is installed into
 # a temporary directory if it can't be found.
 set -euo pipefail
@@ -32,7 +33,8 @@ REELS="pollock-dreams 7 0
 rectangle-dreams 23 0
 pour-dreams 5 90
 the-wall 5 720
-black-holes 5 60"
+black-holes 5 60
+soap-bubble 5 0"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

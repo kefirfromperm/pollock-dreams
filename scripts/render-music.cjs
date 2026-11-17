@@ -12,7 +12,8 @@
 //   events what the painting did, as render-frames.cjs writes it, for music
 //          that hears it: the paint poured (pour-music.js) gurgles, the
 //          wall's wind blows and its cracks crackle (wall-music.js), a black
-//          hole merger is heard as its wave reaches an edge (black-holes-music.js), in time
+//          hole merger is heard as its wave reaches an edge (black-holes-music.js),
+//          a soap film's glares gurgle as they are born (soap-bubble-music.js), in time
 //          with the video, a video second v being music second from + v
 //   from   where the video starts in the music (default 0)
 //
@@ -70,6 +71,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       if (type === 'pour' && music.pour) music.pour(from + t + at, d.dt, d);
       if (type === 'wall' && music.hear) music.hear(from + t + at, d);
       if (type === 'wave' && music.chirp) music.chirp(from + t + at, d.M, d.loud, d.pan);
+      if (type === 'bubble' && music.bubble) music.bubble(from + t + at + d.delay, d.f0, d.loud, d.pan);
     }
     music.schedule(seconds + ahead);
     const buf = await ac.startRendering();

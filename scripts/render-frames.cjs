@@ -10,7 +10,8 @@
 //   events a JSON file to write what the painting did each frame, for music
 //          that hears it: how it poured (its pour events) or what the wall
 //          did (its wall events), or a black hole merger's wave reaching an
-//          edge (wave), as [video seconds, type, detail], for
+//          edge (wave), or a soap film's glare born (bubble), as
+//          [video seconds, type, detail], for
 //          render-music.cjs to play in time with the video
 //
 // A painting of more than one canvas (The Wall's flying bits over it) is
@@ -67,7 +68,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
     };
     window.__skip = (ms, n) => { for (let i = 0; i < n; i++) step(ms); };
     window.__events = [];
-    for (const type of ['pour', 'wall', 'wave'])
+    for (const type of ['pour', 'wall', 'wave', 'bubble'])
       addEventListener(type, ({ detail }) => window.__events.push([now / 1000, type, detail]));
     // a WebGL canvas kept as it was last drawn, to be read between frames
     const getContext = HTMLCanvasElement.prototype.getContext;
