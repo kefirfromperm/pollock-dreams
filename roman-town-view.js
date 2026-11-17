@@ -35,7 +35,7 @@ const RomanTownView = (() => {
     wheat: 10, stubble: 11, fallow: 12, meadow: 13, hay: 14, pasture: 15, vines: 16, olives: 17, orchard: 18,
     via: 19, track: 20, river: 21, bank: 22,
   };
-  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15 };
+  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15, fabric: 16, cushion: 17, dark: 18, hay: 19, terracotta: 20, door: 21 };
   const TREES = {
     // colour; the crown's depth as a part of the height (or metres, if over 1)
     cypress: [[44, 62, 38], 1], poplar: [[92, 118, 56], 0.95], pine: [[62, 84, 46], 2.4], oak: [[58, 76, 42], 0.6],
@@ -283,6 +283,12 @@ const RomanTownView = (() => {
       else if (m == 13) { c = rgb(70.0, 142.0, 150.0); f = 0.95 + 0.08 * fnoise(p, uSeed + 109); water = 1.0; }
       else if (m == 14) { c = rgb(206.0, 196.0, 176.0); f = 0.9 + 0.14 * vnoise(p * 3.0, uSeed + 111); }
       else if (m == 15) { c = rgb(232.0, 228.0, 218.0); f = 0.9 + 0.1 * n.z; }
+      else if (m == 16) { c = rgb(222.0, 212.0, 188.0); f = 0.92 + 0.1 * vnoise(p * 6.0, uSeed + 113); }
+      else if (m == 17) { c = vMat.z < 0.33 ? rgb(150.0, 46.0, 36.0) : vMat.z < 0.66 ? rgb(186.0, 130.0, 52.0) : rgb(60.0, 74.0, 110.0); f = 0.9 + 0.12 * vnoise(p * 5.0, uSeed + 115); }
+      else if (m == 18) { c = rgb(30.0, 26.0, 24.0); f = 0.9 + 0.2 * vnoise(p * 4.0, uSeed + 117); }
+      else if (m == 19) { c = rgb(200.0, 174.0, 98.0); f = 0.8 + 0.3 * vnoise(p * 9.0, uSeed + 119); }
+      else if (m == 20) { c = rgb(172.0, 96.0, 62.0); f = 0.88 + 0.16 * vMat.y; }
+      else if (m == 21) { c = rgb(96.0, 64.0, 40.0); f = 0.9 + 0.15 * vnoise(p * 6.0, uSeed + 121); }
       oAlb = vec4(clamp(c * f, 0.0, 1.0), water);
       oNrm = vec4(n, 0.0);
       oH = vW.z;
@@ -799,6 +805,83 @@ const RomanTownView = (() => {
         const top = [Q(x1, y1, zw), Q(x2, y1, zw), Q(x2, y2, zw), Q(x1, y2, zw)];
         face(top);
         walls(top, b.z0 - 3);
+      }
+      // a block, from z1 to z2 above the floor
+      const block = (a1, c1, a2, c2, z1, z2, m) => {
+        mat = [m, t1, t2, 0];
+        const top = [Q(a1, c1, b.z0 + z2), Q(a2, c1, b.z0 + z2), Q(a2, c2, b.z0 + z2), Q(a1, c2, b.z0 + z2)];
+        face(top);
+        walls(top, b.z0 + z1);
+      };
+      const disc = (a, c, r, z1, z2, m, n = 10) => {
+        mat = [m, t1, t2, 0];
+        const ring = [];
+        for (let k = 0; k < n; k++) { const an = k / n * Math.PI * 2; ring.push(Q(a + r * Math.cos(an), c + r * Math.sin(an), b.z0 + z2)); }
+        face(ring);
+        walls(ring, b.z0 + z1);
+      };
+      // windows: the wall below them left, to the sill, a lattice across
+      for (const [a1, c1, a2, c2] of I.windows || []) {
+        block(Math.min(a1, a2) - T, Math.min(c1, c2) - T, Math.max(a1, a2) + T, Math.max(c1, c2) + T, -3, 1.0, SOLID.plaster);
+        const h = Math.abs(a2 - a1) > Math.abs(c2 - c1);
+        const mx = (a1 + a2) / 2, my = (c1 + c2) / 2, L = Math.max(Math.abs(a2 - a1), Math.abs(c2 - c1)) / 2;
+        block(h ? mx - L : mx - 0.03, h ? my - 0.03 : my - L, h ? mx + L : mx + 0.03, h ? my + 0.03 : my + L, 1.0, 1.7, SOLID.timber);
+        for (let k = -1; k <= 1; k++) {
+          const o = k * L * 0.5;
+          block(h ? mx + o - 0.025 : mx - T, h ? my - T : my + o - 0.025, h ? mx + o + 0.025 : mx + T, h ? my + T : my + o + 0.025, 1.0, 1.72, SOLID.timber);
+        }
+      }
+      // doors: a wooden leaf from its hinge, ajar or shut
+      for (const [ha, hc, ang, wd] of I.doors || []) {
+        const ux = Math.cos(ang), uy = Math.sin(ang), nx = -uy * 0.06, ny = ux * 0.06;
+        mat = [SOLID.door, t1, t2, 0];
+        const top = [Q(ha + nx, hc + ny, zf + 2.1), Q(ha + ux * wd + nx, hc + uy * wd + ny, zf + 2.1), Q(ha + ux * wd - nx, hc + uy * wd - ny, zf + 2.1), Q(ha - nx, hc - ny, zf + 2.1)];
+        face(top);
+        walls(top, b.z0);
+      }
+      // furniture
+      for (const f of I.furniture || []) {
+        const a1 = f.a - (f.w || 0) / 2, c1 = f.c - (f.d || 0) / 2, a2 = f.a + (f.w || 0) / 2, c2 = f.c + (f.d || 0) / 2;
+        const longW = (f.w || 0) >= (f.d || 0), e = 0.07;
+        switch (f.k) {
+          case 'bed': case 'couch': {
+            // a wooden frame, a woollen cover over it, a pillow at the head
+            const g = 0.1;
+            block(a1, c1, a2, c2, 0, 0.42, SOLID.timber);
+            block(a1 + g, c1 + g, a2 - g, c2 - g, 0.42, 0.58, SOLID.cushion);
+            const p = 0.42;
+            if (longW) block(a2 - g - p, c1 + g * 1.5, a2 - g - 0.05, c2 - g * 1.5, 0.58, 0.7, SOLID.fabric);
+            else block(a1 + g * 1.5, c2 - g - p, a2 - g * 1.5, c2 - g - 0.05, 0.58, 0.7, SOLID.fabric);
+            break;
+          }
+          case 'table': if (f.round) disc(f.a, f.c, f.w / 2, 0, 0.72, SOLID.timber, 14); else block(a1, c1, a2, c2, 0, 0.75, SOLID.timber); break;
+          case 'bench': case 'stall': block(a1, c1, a2, c2, 0, f.k === 'bench' ? 0.45 : 0.85, SOLID.timber); break;
+          case 'chest': block(a1, c1, a2, c2, 0, 0.6, SOLID.timber); block(a1 - 0.01, (c1 + c2) / 2 - 0.04, a2 + 0.01, (c1 + c2) / 2 + 0.04, 0, 0.61, SOLID.dark); break;
+          case 'hearth': block(a1, c1, a2, c2, 0, 0.5, SOLID.stone); block(a1 + 0.12, c1 + 0.12, a2 - 0.12, c2 - 0.12, 0.5, 0.52, SOLID.dark); break;
+          case 'counter': {
+            block(a1, c1, a2, c2, 0, 0.95, SOLID.plaster);
+            const n = f.jars || 2;
+            for (let k = 0; k < n; k++) {
+              const t = (k + 0.5) / n;
+              disc(longW ? a1 + (a2 - a1) * t : f.a, longW ? f.c : c1 + (c2 - c1) * t, 0.22, 0.95, 0.965, SOLID.dark, 12);
+            }
+            break;
+          }
+          case 'plinth': case 'tribunal': block(a1, c1, a2, c2, 0, f.k === 'plinth' ? 1.2 : 1.1, SOLID.marble); break;
+          case 'statue': disc(f.a, f.c, f.r, 1.2, 3.0, SOLID.column, 12); break;
+          case 'hay': {
+            // a heap, rounded
+            mat = [SOLID.hay, t1, t2, 0];
+            const n = 14, rings = 4, rx = f.w / 2, ry = f.d / 2, hh = 1.3;
+            for (let j = 0; j < rings; j++) for (let k = 0; k < n; k++) {
+              const p = (jj, kk) => { const q = Math.cos(jj / rings * Math.PI / 2), an = kk / n * Math.PI * 2; return Q(f.a + rx * q * Math.cos(an), f.c + ry * q * Math.sin(an), b.z0 + hh * Math.sin(jj / rings * Math.PI / 2)); };
+              face([p(j, k), p(j, k + 1), p(j + 1, k + 1), p(j + 1, k)]);
+            }
+            break;
+          }
+          case 'amphora': disc(f.a, f.c, f.r, 0, 0.72, SOLID.terracotta, 8); disc(f.a, f.c, f.r * 0.35, 0.72, 0.8, SOLID.terracotta, 6); break;
+          case 'dolium': disc(f.a, f.c, f.r, 0, 0.75, SOLID.terracotta, 14); disc(f.a, f.c, f.r * 0.5, 0.75, 0.77, SOLID.dark, 12); break;
+        }
       }
       mat = [SOLID.column, t1, t2, 0];
       for (const [a, c, r] of I.columns) {
