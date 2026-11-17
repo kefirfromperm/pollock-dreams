@@ -5,7 +5,7 @@
 // there. Once, it turns the model into geometry: the ground and every patch
 // laid on it (fields, roads, streets, the river) as flat shapes coloured
 // by what they are; every building as boxes with their roofs, walls and
-// steps; trees, rocks and beasts as lumpy round bodies. Then for each frame, any
+// steps; trees, rocks and beasts as lumpy round bodies, still. Then for each frame, any
 // rectangle of the world at any scale:
 //   - the sun's (or the moon's) view of everything, for the shadows;
 //   - from above, for each pixel, its height, which way it faces and its
@@ -19,7 +19,7 @@
 //     the world, lit as the sky is: { sun: { az, el }, moon: { az, el, lit } },
 //     azimuths from north (up) clockwise, elevations, radians; lit, the
 //     moon's lit part; t, seconds, for what moves: the wind in the grass,
-//     the crops and the trees, the torches' flames
+//     the crops, the torches' flames
 const RomanTownView = (() => {
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -272,7 +272,7 @@ const RomanTownView = (() => {
     layout(location = 2) in vec3 aR;   // the radii
     layout(location = 3) in vec4 aCol; // colour, and how lumpy
     layout(location = 4) in vec2 aRot; // turned, and its own number (a tree's, and which of its clumps)
-    layout(location = 5) in vec2 aAnchor; // a tree's foot, and its height
+    layout(location = 5) in vec2 aAnchor; // a tree's foot, and its height (unused while trees stand still)
     uniform mat4 uMVP;
     out vec3 vW, vD; flat out vec4 vCol; flat out vec2 vSeedOff;
     void main() {
@@ -290,16 +290,6 @@ const RomanTownView = (() => {
       vec3 q = d * aR;
       float c = cos(aRot.x), s = sin(aRot.x);
       vW = aC + vec3(c * q.x - s * q.y, s * q.x + c * q.y, q.z);
-      if (aCol.w > 0.0) {
-        // the wind: the tree leaning with the gusts, the higher the more,
-        // swaying back and to, its leaves fluttering
-        float tid = floor(aRot.y), ph = tid * 1.7, H = max(aAnchor.y, 1.0);
-        float up = clamp((vW.z - aAnchor.x) / H, 0.0, 1.2);
-        float sway = (gust(aC.xy) - 0.3) * 1.4 + 0.4 * sin(uTime * (0.35 + 0.2 * fract(tid * 0.37)) + ph) + 0.12 * sin(uTime * 0.9 + ph * 1.3);
-        vW.xy += uWind * sway * up * up * min(H, 16.0) * 0.08;
-        float fl = 0.03 * min(aR.x, 2.5) * (0.5 + gust(aC.xy));
-        vW.xy += fl * vec2(sin(uTime * 2.2 + dot(aDir, vec3(13.0, 7.0, 5.0)) + ph), cos(uTime * 1.9 + dot(aDir, vec3(5.0, 11.0, 3.0)) + ph));
-      }
       vec3 e = aDir / aR;
       vD = vec3(c * e.x - s * e.y, s * e.x + c * e.y, e.z);
       vCol = aCol;
@@ -322,10 +312,9 @@ const RomanTownView = (() => {
       if (vCol.w > 0.0) {
         // foliage, as it looks from above: puffs of leaves heaped on one
         // another, big and small, each lit on its sunny side, dark in the
-        // gaps between; warped, so no lattice shows; stirring in the wind
-        float sz = vCol.w, g = gust(vW.xy);
-        vec3 stir = vec3(uWind * (0.05 + 0.07 * g) * sin(uTime * 0.9 + vW.z * 0.7), 0.0);
-        vec3 w = vW + stir;
+        // gaps between; warped, so no lattice shows
+        float sz = vCol.w;
+        vec3 w = vW;
         vec2 warp = 1.2 * vec2(fbm3(w / (sz * 6.0), 91) - 0.5, fbm3(w / (sz * 6.0) + 5.0, 93) - 0.5);
         float big = puffs(w.xy / (sz * 4.2) + warp + vSeedOff, 53);
         float small = puffs(w.xy / (sz * 1.7) + warp * 2.0 + vSeedOff * 1.7, 57);
@@ -1102,8 +1091,7 @@ const RomanTownView = (() => {
     const litTex = ss > 1 ? tex(G.w, G.h, gl.RGBA8, gl.LINEAR) : null, litFBO = litTex ? target(litTex) : null;
     const lampData = new Float32Array(128 * 4);
 
-    // the shadows drawn again only when the view or the light has moved (the
-    // trees' swaying left out of them)
+    // the shadows drawn again only when the view or the light has moved
     let shadowKey = '', lv = null;
     function draw(rect, sky, t = 0) {
       time = t % 3600;
