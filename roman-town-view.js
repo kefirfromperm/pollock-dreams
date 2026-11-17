@@ -94,6 +94,20 @@ const RomanTownView = (() => {
     // fractal: three octaves, each half the last
     float fbm3(vec3 p, int s) { return 0.55 * vnoise3(p, s) + 0.3 * vnoise3(p * 2.03, s + 1) + 0.15 * vnoise3(p * 4.1, s + 2); }
     vec3 rgb(float r, float g, float b) { return vec3(r, g, b) / 255.0; }
+    // a crown's surface: rounded puffs of leaves, overlapping, of sizes
+    // about one; the highest at each point
+    float puffs(vec2 p, int s) {
+      vec2 i = floor(p);
+      float h = 0.0;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        ivec2 c = ivec2(i) + ivec2(x, y);
+        float a = hf(c, s);
+        vec2 m = vec2(c) + 0.15 + 0.7 * vec2(a, hf(c, s + 1));
+        float r = 0.6 + 0.45 * hf(c, s + 2), d = length(p - m) / r;
+        h = max(h, sqrt(max(0.0, 1.0 - d * d)) * (0.75 + 0.25 * a));
+      }
+      return h;
+    }
     // the wind: gusts going over, downwind at 5 m/s, streaks longer across
     // the wind than along it
     uniform vec2 uWind; uniform float uTime;
@@ -260,9 +274,10 @@ const RomanTownView = (() => {
     layout(location = 4) in vec2 aRot; // turned, and its own number (a tree's, and which of its clumps)
     layout(location = 5) in vec2 aAnchor; // a tree's foot, and its height
     uniform mat4 uMVP;
-    out vec3 vW, vD; flat out vec4 vCol;
+    out vec3 vW, vD; flat out vec4 vCol; flat out vec2 vSeedOff;
     void main() {
       vec3 d = aDir;
+      vSeedOff = vec2(fract(aRot.y * 0.618) * 37.0, fract(aRot.y * 0.377) * 41.0);
       // a clump of a crown: its outline fractal, lumps on lumps
       float fr = 0.0;
       if (aCol.w > 0.0) {
@@ -291,7 +306,7 @@ const RomanTownView = (() => {
       gl_Position = uMVP * vec4(vW, 1.0);
     }`;
   const BODY_FS = NOISE + OUT + `
-    in vec3 vW, vD; flat in vec4 vCol;
+    in vec3 vW, vD; flat in vec4 vCol; flat in vec2 vSeedOff;
     uniform float uPx; // metres a pixel
     void main() {
       vec3 n = normalize(vD);
@@ -305,22 +320,24 @@ const RomanTownView = (() => {
       }
       vec3 col = vCol.rgb;
       if (vCol.w > 0.0) {
-        // foliage, as it looks from above: billows of leaves on billows,
-        // fractal, shaded by their own slopes; dark in the hollows between,
-        // pale and yellow at the sunlit tips; stirring in the wind
+        // foliage, as it looks from above: puffs of leaves heaped on one
+        // another, big and small, each lit on its sunny side, dark in the
+        // gaps between; warped, so no lattice shows; stirring in the wind
         float sz = vCol.w, g = gust(vW.xy);
         vec3 stir = vec3(uWind * (0.05 + 0.07 * g) * sin(uTime * 0.9 + vW.z * 0.7), 0.0);
-        vec3 q = (vW + stir) / sz;
-        float b1 = fbm3(q * 0.35, 53), b2 = fbm3(q * 0.9 + 4.1, 57), b3 = vnoise3(q * 2.3 + 9.7, 59);
-        float hgt = 0.5 * b1 + 0.32 * b2 + 0.18 * b3;
+        vec3 w = vW + stir;
+        vec2 warp = 1.2 * vec2(fbm3(w / (sz * 6.0), 91) - 0.5, fbm3(w / (sz * 6.0) + 5.0, 93) - 0.5);
+        float big = puffs(w.xy / (sz * 4.2) + warp + vSeedOff, 53);
+        float small = puffs(w.xy / (sz * 1.7) + warp * 2.0 + vSeedOff * 1.7, 57);
+        float hgt = 0.62 * big + 0.28 * small + 0.1 * vnoise3(w / (sz * 0.6), 59);
         // its slopes, from the pixels beside (north up, so y turned)
-        float hm = hgt * sz * 2.2;
+        float hm = hgt * sz * 3.0;
         vec2 gr = vec2(dFdx(hm), -dFdy(hm)) / uPx;
-        n = normalize(n + vec3(-gr * 0.6, 0.0));
-        float holl = smoothstep(0.32, 0.62, hgt);
-        tone = (0.66 + 0.42 * holl) * (0.94 + 0.12 * vnoise3(q * 5.0, 61));
-        col = mix(col * vec3(0.8, 0.88, 1.0), col * vec3(1.12, 1.1, 0.9), holl * 0.8);
-        col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 0.72) * 0.92; // (duller, as Mediterranean leaves are)
+        // and the leaves themselves, a fine grain over it, catching the light
+        float leafg = vnoise3(w / (sz * 0.32), 63), leafg2 = vnoise3(w / (sz * 0.14) + 1.7, 67);
+        n = normalize(n + vec3(-gr * 0.75, 0.0) + 0.35 * vec3(leafg - 0.5, leafg2 - 0.5, 0.0));
+        tone = (0.42 + 0.68 * smoothstep(0.05, 0.85, hgt)) * (0.82 + 0.22 * leafg + 0.12 * leafg2);
+        col = mix(col * vec3(0.82, 0.9, 1.0), col * vec3(1.12, 1.1, 0.88), smoothstep(0.3, 0.9, hgt) * 0.7);
       } else if (vCol.w < 0.0) {
         // weathered stone, cracked, lichen in patches
         vec3 q = vW / 0.45;
@@ -812,8 +829,13 @@ const RomanTownView = (() => {
     const LEAF = { cypress: 0.22, poplar: 0.26, pine: 0.34, oak: 0.3, olive: 0.2, fruit: 0.27, shrub: 0.18, plane: 0.38 };
     const bodies = [];
     town.trees.forEach((t, i) => {
-      const [col, depth] = TREES[t.kind] || TREES.oak, cdep = depth > 1 ? Math.min(depth, t.h * 0.5) : depth * t.h;
-      const tone = 0.88 + 0.24 * hash(i, 3, seed), R = t.r, zb = t.z0 + t.h - cdep, leaf = LEAF[t.kind] || 0.3;
+      const [colK, depth] = TREES[t.kind] || TREES.oak, cdep = depth > 1 ? Math.min(depth, t.h * 0.5) : depth * t.h;
+      const R = t.r, zb = t.z0 + t.h - cdep, leaf = LEAF[t.kind] || 0.3;
+      // each tree its own green, from yellow-lime to dark, as in a wood
+      const VAR = [[136, 152, 58], [156, 154, 66], [92, 124, 50], [42, 72, 36], [104, 112, 56], [66, 100, 42], [50, 84, 40]];
+      const vr = VAR[Math.floor(hash(i, 11, seed) * VAR.length)], vt = 0.25 + 0.4 * hash(i, 12, seed);
+      const tone = 0.9 + 0.22 * hash(i, 3, seed);
+      const col = [0, 1, 2].map(q => lerp(colK[q], vr[q], t.kind === 'olive' ? vt * 0.4 : vt));
       let k = 0;
       const rnd = () => hash(i, 100 + k * 7 + (rnd.n = (rnd.n || 0) + 1), seed + 77);
       const clump = (dx, dy, z, rx, rz) => {
