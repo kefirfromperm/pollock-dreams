@@ -603,6 +603,12 @@ const RomanTown = (() => {
       const b = shuffled(blocks.filter(free)).sort((p, q) => central(q) - central(p))[0];
       if (b) market(group([b], 'market'));
     }
+    // a nymphaeum, on a main street near the middle
+    if (rng() < 0.85) {
+      const c = blocks.filter(b => free(b) && (b.i === ic - 1 || b.i === ic || b.j === jc - 1 || b.j === jc));
+      const b = shuffled(c).sort((p, q) => central(q) - central(p))[0];
+      if (b) nymphaeum(group([b], 'nymphaeum'), b);
+    }
     // a temple or two in their precincts
     for (let k = 0, n = 1 + (rng() < 0.6); k < n; k++) {
       const b = shuffled(blocks.filter(free))[0];
@@ -706,6 +712,73 @@ const RomanTown = (() => {
       box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k], front: ways[0], back: ways[1] }, true);
       const [mx, my] = P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2);
       B.push({ shape: 'round', use: 'tholos', mat: 'tile', x: mx, y: my, r: Math.min(5.5, Math.min(x, y) * 0.14), z0, h: 5, roof: 'cone', pitch: 0.55 });
+    }
+
+    // ---- a nymphaeum: the town's grand fountain, a little square open to
+    // the main street, at its back a tall apse of marble with wings, columns
+    // standing round it in the water, statues in its niches, the water
+    // falling into a pool in the apse and a long basin before it; cypresses
+    // either side; behind, houses on the next street ----
+    function nymphaeum(g, blk) {
+      const faces = [];
+      if (blk.i === ic - 1) faces.push(['v', true]); if (blk.i === ic) faces.push(['v', false]);
+      if (blk.j === jc - 1) faces.push(['u', true]); if (blk.j === jc) faces.push(['u', false]);
+      const [along, flipT] = faces[rng() * faces.length | 0];
+      const F = lf(g.r, along, false, flipT), S = F.S, D = F.D;
+      const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
+      const Dn = Math.min(D, clamp(S * 0.6, 20, 28)), R = clamp(S * 0.17, 5, 8), sc = S / 2, tA = Dn - R - 2.6;
+      const wl = clamp((S - 2 * R) / 2 - 4, 1.5, 5), Wb = 2 * R + 1.4 * wl;
+      const W2 = (s, t) => P(...F.pt(s, t));
+      ground(F.rect(0, 0, S, Dn), 'paving', true);
+      // the apse: a half ring of wall, in pieces
+      const Rw = R + 0.6, n = Math.ceil(Math.PI * Rw / 2);
+      for (let k = 0; k < n; k++) {
+        const a1 = Math.PI * k / n, a2 = Math.PI * (k + 1) / n;
+        const p1 = W2(sc + Rw * Math.cos(a1), tA + Rw * Math.sin(a1)), p2 = W2(sc + Rw * Math.cos(a2), tA + Rw * Math.sin(a2));
+        const [x, y] = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+        B.push({ shape: 'box', use: 'nymphaeum', mat: 'marble', x, y, angle: Math.atan2(p2[1] - p1[1], p2[0] - p1[0]), w: Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) + 0.5, d: 1.2, z0, h: 9, roof: 'flat', pitch: 0 });
+      }
+      // its wings, straight, either side
+      for (const sg of [-1, 1]) {
+        const s1 = sc + sg * R, s2 = sc + sg * (R + 1.2 + wl);
+        box(F.rect(Math.min(s1, s2), tA - 0.2, Math.max(s1, s2), tA + 1.2), { use: 'nymphaeum', mat: 'marble', h: 8, z0 }, true);
+      }
+      // columns round the apse, in the water, and along the wings
+      const column = (s, t) => { const [x, y] = W2(s, t); B.push({ shape: 'round', use: 'column', mat: 'marble', x, y, r: 0.36, z0, h: 7, roof: 'flat', pitch: 0 }); };
+      const Rc = R - 1.5, nc = Math.max(4, Math.round(Math.PI * Rc / 2.4));
+      for (let k = 0; k <= nc; k++) { const a = Math.PI * k / nc; column(sc + Rc * Math.cos(a), tA + Rc * Math.sin(a)); }
+      for (const sg of [-1, 1]) for (let q = 1; R + q * 2.3 < R + 1.2 + wl; q++) column(sc + sg * (R + q * 2.3), tA - 1.2);
+      // statues in the niches, between the columns
+      for (let k = 0; k < nc; k++) {
+        if (k % 2 === 0 && rng() < 0.85) {
+          const a = Math.PI * (k + 0.5) / nc, s = sc + (R - 0.5) * Math.cos(a), t = tA + (R - 0.5) * Math.sin(a);
+          box(F.rect(s - 0.45, t - 0.45, s + 0.45, t + 0.45), { use: 'statue', h: range(rng, 2.2, 2.8), z0, mat: 'marble' }, true);
+        }
+      }
+      // the water: a pool in the apse, a long basin in front with a curb
+      ground(Array.from({ length: 13 }, (_, k) => { const a = Math.PI * k / 12; return F.pt(sc + (R - 0.2) * Math.cos(a), tA + (R - 0.2) * Math.sin(a)); }), 'pool', true);
+      const bas = F.rect(sc - Wb / 2, tA - 5.5, sc + Wb / 2, tA - 0.3), hole = [bas[0] + 0.4, bas[1] + 0.4, bas[2] - 0.4, bas[3] - 0.4];
+      box(bas, { use: 'fountain', mat: 'marble', h: 0.9, z0, roof: 'court', pitch: 0, hole }, true);
+      ground(hole, 'pool', true);
+      for (const sg of [-1, 1]) lamp(...F.pt(sc + sg * (Wb / 2 + 0.8), tA - 5.8), 2.4, 1);
+      // cypresses either side, and benches of the square
+      for (const sg of [-1, 1]) {
+        const [u, v] = F.pt(sc + sg * (R + 1.2 + wl + 2.2), tA + 0.6);
+        tree(u, v, 'cypress', range(rng, 1.3, 1.7), range(rng, 10, 14), true);
+        const s = sc + sg * (Wb / 2 + 3);
+        box(F.rect(Math.min(s, s + sg * 0.6), tA - 7, Math.max(s, s + sg * 0.6), tA - 4.4), { use: 'steps', h: 0.45, z0, mat: 'marble' }, true);
+      }
+      // behind: houses on the next street, or a garden
+      const back = F.rect(0, Dn, S, D);
+      if (D - Dn < 10) { if (D - Dn > 1) ground(back, 'garden', true); return; }
+      ground(back, 'yard', true);
+      const FB = lf(back, along, rng() < 0.5, !flipT);
+      for (let s = 0; s < FB.S - 0.5;) {
+        let w = rng() < 0.6 ? range(rng, 7, 13) : range(rng, 15, 24);
+        if (FB.S - s - w < 7) w = FB.S - s;
+        lot(FB, s, w, FB.D, central(blk), true);
+        s += w;
+      }
     }
 
     // ---- a temple in its precinct, porticoes about it ----
