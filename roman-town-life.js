@@ -14,7 +14,8 @@
 // night whatever their length: up before dawn, water from the fountain, the
 // fields, the shop, the forum, school under a portico; a meal at noon and a
 // rest; the baths in the afternoon, dinner on couches; home before dark, the
-// watch going round with torches, sleep. Each goes where it is going as one
+// watch going round with torches, sleep; and day and night sentries on the
+// walls and a lookout on every other tower. Each goes where it is going as one
 // would walk: out through the doors of its house, along the streets, the
 // roads and the tracks, round whatever stands in the way.
 //
@@ -765,11 +766,13 @@ const RomanTownLife = (() => {
         guards: [-1, 1].map(sg => { const [x, y] = at(half + 1.5); return { x: x - uy * sg * lat, y: y + ux * sg * lat, a: g.angle }; }),
       };
     });
-    // the walk along the top of the wall, and how high it is there
+    // the walk along the top of the wall, and how high it is there (over a
+    // tower's flat top, up on it; through a roofed one, inside)
     const wallWalk = (() => {
+      const flatTop = b => b.use === 'tower' && b.roof === 'flat';
       const pts = town.town.outline.map(([x, y]) => {
         let z = -Infinity;
-        for (const b of near(x, y, 2)) if ((b.use === 'wall' || b.use === 'gate') && RomanTown.onBuilding(b, x, y, 0.6)) z = Math.max(z, b.z0 + b.h);
+        for (const b of near(x, y, 2)) if ((b.use === 'wall' || b.use === 'gate') && RomanTown.onBuilding(b, x, y, 0.6) || flatTop(b) && RomanTown.onBuilding(b, x, y, -0.4)) z = Math.max(z, b.z0 + b.h);
         return [x, y, z];
       });
       for (let i = 0; i < pts.length; i++) if (pts[i][2] === -Infinity) { const p = pts[(i + pts.length - 1) % pts.length]; pts[i][2] = p[2] === -Infinity ? hAt(pts[i][0], pts[i][1]) + town.town.wall.height : p[2]; }
@@ -781,7 +784,35 @@ const RomanTownLife = (() => {
         pts.forEach((p, i) => { const d = Math.hypot(p[0] - t.x, p[1] - t.y); if (d < bd) { bd = d; best = i; } });
         if (best >= 0) towerAt.add(best);
       }
-      return { pts, atGate, towerAt };
+      // the lookouts' posts, every other tower: up on its top, at the
+      // parapet on the country's side; by a roofed one, on the walk beside
+      // it; each with the way up to it from the nearest gate, along the walk
+      const n = pts.length, ring = (a, b) => Math.min((a - b + n) % n, (b - a + n) % n);
+      const posts = [];
+      if (n && gates.length) byUse('tower').forEach((t, k) => {
+        if (k % 2) return;
+        let q = -1, bd = 7;
+        pts.forEach((p, i) => { const d = Math.hypot(p[0] - t.x, p[1] - t.y); if (d < bd) { bd = d; q = i; } });
+        if (q < 0) return;
+        const ol = Math.hypot(t.x - town.town.x, t.y - town.town.y) || 1, ox = (t.x - town.town.x) / ol, oy = (t.y - town.town.y) / ol;
+        const size = t.shape === 'round' ? 2 * t.r : Math.min(t.w, t.d);
+        let x, y, z;
+        if (t.roof === 'flat') { x = t.x + ox * size * 0.22; y = t.y + oy * size * 0.22; z = t.z0 + t.h; }
+        else {
+          // (the first point of the walk clear of the tower, a little to the outer side)
+          let p = q;
+          for (let s = 1; s < 12; s++) { const r = (q + s) % n; if (Math.hypot(pts[r][0] - t.x, pts[r][1] - t.y) > size / 2 + 1.2) { p = r; break; } }
+          if (p === q) return;
+          q = p; x = pts[q][0] + ox * 0.5; y = pts[q][1] + oy * 0.5; z = pts[q][2];
+        }
+        let gi = 0;
+        atGate.forEach((g, i) => { if (ring(g, q) < ring(atGate[gi], q)) gi = i; });
+        const g = atGate[gi], dir = (q - g + n) % n <= n / 2 ? 1 : -1, up = [];
+        for (let i = g, s = 0; s < n; s++, i = (i + dir + n) % n) { up.push(pts[i]); if (i === q) break; }
+        up.push([x, y, z]);
+        posts.push({ x, y, z, out: Math.atan2(oy, ox), gate: gi, up });
+      });
+      return { pts, atGate, towerAt, posts };
     })();
     // the river's banks, a step from the water
     const banks = [];
@@ -911,7 +942,8 @@ const RomanTownLife = (() => {
         for (const m of pool.slice(0, n)) { m.job = job; free.splice(free.indexOf(m), 1); }
       };
       take(gates.length * 2, 'guard');
-      take(wallWalk.pts.length ? gates.length * 2 : 0, 'sentry');
+      take(wallWalk.pts.length ? gates.length * 4 : 0, 'sentry');
+      take(Math.min(16, wallWalk.posts.length) * 2, 'lookout');
       take(2, 'watch');
       for (const al of altars.slice(0, 2)) take(1, 'priest', m => -m.home.outer);
       if (forum) take(1, 'teacher');
@@ -1126,15 +1158,17 @@ const RomanTownLife = (() => {
         case 'teacher': at(wake, 'eat'); at(0.3, 'teach'); at(5.8, 'eat'); at(6.4, 'rest'); afternoon(() => at(7.8, 'baths')); at(10.2, 'home'); at(10.5, 'eat'); at(bed, 'sleep'); break;
         case 'attendant': at(wake, 'eat'); at(0.2, 'attend'); at(11, 'home'); at(11.3, 'eat'); at(bed, 'sleep'); break;
         case 'guard': at(wake, 'eat'); at(0, 'guard'); at(12, 'home'); at(12.3, 'eat'); at(bed, 'sleep'); break;
-        case 'sentry':
+        case 'sentry': case 'lookout':
           // half of them on the walls by day, half by night
-          if (all.filter(a => a.job === 'sentry').indexOf(ag) % 2 === 0) { at(wake, 'eat'); at(0, 'sentry'); at(12, 'home'); at(12.3, 'eat'); at(bed, 'sleep'); break; }
+          if (all.filter(a => a.job === ag.job).indexOf(ag) % 2 === 0) { at(wake, 'eat'); at(0, ag.job); at(12, 'home'); at(12.3, 'eat'); at(bed, 'sleep'); break; }
           // falls through
-        case 'watch':
+        case 'watch': {
           P.length = 0;
-          at(-6, ag.job === 'watch' ? 'patrol' : 'sentry'); at(-0.3, 'home'); at(0.2, 'sleep'); at(7.5, 'home'); at(9.5, 'eat'); at(11, 'home');
-          at(12.3, ag.job === 'watch' ? 'patrol' : 'sentry');
+          const duty = ag.job === 'watch' ? 'patrol' : ag.job;
+          at(-6, duty); at(-0.3, 'home'); at(0.2, 'sleep'); at(7.5, 'home'); at(9.5, 'eat'); at(11, 'home');
+          at(12.3, duty);
           break;
+        }
         case 'traveller': at(-6, 'travel'); break;
         default: at(wake, 'eat'); at(1, 'chores'); at(5.8, 'eat'); at(6.4, 'rest'); at(7.6, 'chores'); at(10, 'eat'); at(bed, 'sleep');
       }
@@ -1580,9 +1614,38 @@ const RomanTownLife = (() => {
         // spear on the shoulder (a torch by night), stopping at the towers to look out
         const idx = all.filter(a => a.job === 'sentry').indexOf(ag), n = gates.length;
         if (!n || !wallWalk.pts.length) return ACT.patrol(ag, e, until);
-        const night = clock.R > 11.8 || clock.R < 0, i = (idx >> 1) % n, G = gates[i], [ix, iy] = G.inner;
+        // (two to each stretch by day and two by night, from either end)
+        const night = clock.R > 11.8 || clock.R < 0, k = idx >> 1, i = k % n, j = (i + 1) % n, back = (k / n | 0) % 2 === 1;
+        const [ix, iy] = gates[back ? j : i].inner;
         go(ag, spot(ix, iy, NaN, 0, 'stand', { cl: null }), night ? { torch: true, carry: 'torch' } : { carry: 'spear' });
-        ag.legs.push({ k: 'wall', from: wallWalk.atGate[i], to: wallWalk.atGate[(i + 1) % n], until, night });
+        ag.legs.push({ k: 'wall', from: wallWalk.atGate[back ? j : i], to: wallWalk.atGate[back ? i : j], until, night });
+      },
+      lookout(ag, e, until) {
+        // posted on a tower: up by the nearest gate's stairs and along the
+        // wall walk to it; there looking out over the country, now this way,
+        // now that, a while at a time, a spear on the shoulder (a torch by
+        // night); at the end of the watch back along the walk and down
+        const posts = wallWalk.posts, idx = all.filter(a => a.job === 'lookout').indexOf(ag);
+        if (!posts.length) return ACT.sentry(ag, e, until);
+        const night = clock.R > 11.8 || clock.R < 0, Pt = posts[(idx >> 1) % posts.length], G = gates[Pt.gate];
+        const kit = night ? { torch: true, carry: 'torch' } : { carry: 'spear' }, lit = night ? { torch: true } : {};
+        const there = Math.hypot(ag.x - Pt.x, ag.y - Pt.y) < 1 && Math.abs(ag.z - Pt.z) < 0.5;
+        const look = a => spot(Pt.x, Pt.y, Pt.z, a, 'stand', { anim: 'watch', cl: null });
+        const glance = () => Pt.out + (chance(0.3) ? (chance(0.5) ? 1 : -1) * range(1, 1.6) : range(-0.5, 0.5));
+        const below = spot(...G.inner, NaN, 0, 'stand', { cl: null });
+        const way = Pt.up.map(p => [p[0], p[1], p[2]]), ground = [G.inner[0], G.inner[1], groundZ(...G.inner)];
+        if (until - now < 400) {
+          // (the watch over: down, and a word with the guards at the gate)
+          if (!there) { go(ag, below); stay(ag, spot(...G.inner, NaN, G.g.angle, 'stand', { anim: 'talk', cl: null }), until); return; }
+          stay(ag, look(glance()), Math.max(now + 5, until - 300), lit);
+          ag.legs.push({ k: 'climb', pts: [...way.slice().reverse(), ground], torch: night });
+          return;
+        }
+        if (!there && !(warm && !ag.placed)) {
+          go(ag, below, kit);
+          ag.legs.push({ k: 'climb', pts: [ground, ...way], torch: night });
+        } else if (warm && !ag.placed) ag.carry = kit.carry;
+        stay(ag, look(glance()), short(until, 90, 360), lit);
       },
       river(ag, e, until) {
         if (!banks.length) return ACT.chores(ag, e, until);

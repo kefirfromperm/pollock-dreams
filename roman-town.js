@@ -48,6 +48,8 @@
 //   animals              [{ x, y, z0, angle, kind }] grazing, kind: sheep, goat, cow, horse
 //   rocks                [{ x, y, z0, r, h, angle }] boulders, r across, h high, sunk a little
 //   lamps                [{ x, y, z, power }] where a lamp or a fire burns at night, z its height
+//   jets                 [{ x, y, sx, sy, z, h }] water falling into a basin: where it falls in (x, y),
+//                        from a spout at (sx, sy) h above the water, its surface at z
 //   places               [{ kind, poly, x, y, angle }] the town's public places, their ground: forum,
 //                        market, baths, theatre, nymphaeum, temple
 //   (a pasture its gateway too, gateway { a, b, z, inside } the posts the gate hangs between and a
@@ -391,7 +393,7 @@ const RomanTown = (() => {
   }
 
   function town(rng, { W, H }) {
-    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], rocks: [], lamps: [], gates: [], places: [] };
+    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], rocks: [], lamps: [], jets: [], gates: [], places: [] };
 
     // ---- the site, as big as the world allows, turned by the augur ----
     const th = range(rng, -0.35, 0.35), ar = range(rng, 1.05, 1.45);
@@ -463,6 +465,11 @@ const RomanTown = (() => {
       if (within && !inTown(u, v)) return;
       const [x, y] = P(u, v);
       out.lamps.push({ x, y, z: hAt(x, y) + h, power });
+    }
+    // water falling from a spout h above it into a basin
+    function jet(u, v, su, sv, h, z) {
+      const [x, y] = P(u, v), [sx, sy] = P(su, sv);
+      out.jets.push({ x, y, sx, sy, z: z ?? hAt(x, y), h });
     }
     // a well: a round stone curb, the water dark down inside
     function well(u, v, within) {
@@ -557,7 +564,13 @@ const RomanTown = (() => {
       const hw = along ? 0.8 : 1.25, hd = along ? 1.25 : 0.8;
       const r = [u - hw, v - hd, u + hw, v + hd];
       if (box(r, { use: 'fountain', mat: 'stone', h: 0.85, roof: 'court', pitch: 0, hole: [r[0] + 0.25, r[1] + 0.25, r[2] - 0.25, r[3] - 0.25] }, true))
-        { ground([r[0] + 0.25, r[1] + 0.25, r[2] - 0.25, r[3] - 0.25], 'pool'); if (rng() < 0.4) lamp(u, v, 2.6, 0.8); }
+        {
+          ground([r[0] + 0.25, r[1] + 0.25, r[2] - 0.25, r[3] - 0.25], 'pool');
+          // the spout on the curb at the end by the corner, the water falling a little way in
+          const e = along ? [0, -sv] : [-su, 0], L = along ? hd : hw;
+          jet(u + e[0] * (L - 0.6), v + e[1] * (L - 0.6), u + e[0] * (L - 0.12), v + e[1] * (L - 0.12), 0.95);
+          if (rng() < 0.4) lamp(u, v, 2.6, 0.8);
+        }
     }
     const groups = [];
     let parts = 0;
@@ -779,6 +792,13 @@ const RomanTown = (() => {
       const bas = F.rect(sc - Wb / 2, tA - 5.5, sc + Wb / 2, tA - 0.3), hole = [bas[0] + 0.4, bas[1] + 0.4, bas[2] - 0.4, bas[3] - 0.4];
       box(bas, { use: 'fountain', mat: 'marble', h: 0.9, z0, roof: 'court', pitch: 0, hole }, true);
       ground(hole, 'pool', true);
+      // the water spouting from the apse's wall between the niches into the
+      // pool, and over the basin's back curb into it
+      for (let k = 1; k < nc; k += 2) {
+        const a = Math.PI * (k + 0.5) / nc, c = Math.cos(a), s = Math.sin(a);
+        jet(...F.pt(sc + (R - 1.0) * c, tA + (R - 1.0) * s), ...F.pt(sc + (R - 0.1) * c, tA + (R - 0.1) * s), 2.2, z0);
+      }
+      for (const f of [-0.3, 0, 0.3]) jet(...F.pt(sc + f * Wb, tA - 1.3), ...F.pt(sc + f * Wb, tA - 0.65), 1.0, z0);
       for (const sg of [-1, 1]) lamp(...F.pt(sc + sg * (Wb / 2 + 0.8), tA - 5.8), 2.4, 1);
       // cypresses either side, and benches of the square
       for (const sg of [-1, 1]) {

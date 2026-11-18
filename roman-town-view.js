@@ -12,7 +12,12 @@
 //     colour, the patterns of tiles, stones and furrows worked out there;
 //   - lit: the sun or the moon on whatever faces it unless something stands
 //     in the way, the sky's light, less of it in hollows and narrow streets
-//     (from the heights about, the whole world's, found once), lamps at night.
+//     (from the heights about, the whole world's, found once), lamps at night;
+//     on water the sun, the moon and the lamps glittering off its ripples,
+//     the sky mirrored in it, the light netted on a shallow pool's floor.
+// The water rippled as it is at that moment: the wind's ripples running
+// downwind, stronger under the gusts; the river running downstream, its
+// roughness carried along; rings running out where a fountain's jet falls in.
 //
 // And the living (roman-town-life.js), drawn afresh each frame as they are
 // at that moment: people, beasts and their things, each a few round bodies
@@ -40,7 +45,7 @@ const RomanTownView = (() => {
     wheat: 10, stubble: 11, fallow: 12, meadow: 13, hay: 14, pasture: 15, vines: 16, olives: 17, orchard: 18,
     via: 19, track: 20, river: 21, bank: 22,
   };
-  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15, fabric: 16, cushion: 17, dark: 18, hay: 19, terracotta: 20, door: 21 };
+  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15, fabric: 16, cushion: 17, dark: 18, hay: 19, terracotta: 20, door: 21, bronze: 22 };
   const TREES = {
     // colour; the crown's depth as a part of the height (or metres, if over 1)
     cypress: [[44, 62, 38], 1], poplar: [[92, 118, 56], 0.95], pine: [[62, 84, 46], 2.4], oak: [[58, 76, 42], 0.6],
@@ -136,24 +141,125 @@ const RomanTownView = (() => {
       float quiver = vnoise3(vec3(p / 0.8, uTime * 1.5), 44) - 0.5;
       return b * (0.6 + 0.5 * s) + 0.12 * s * quiver;
     }
+
+    // ---- water ----
+    // value noise and its slopes
+    vec3 vnoised(vec2 p, int s) {
+      vec2 i = floor(p), f = p - i;
+      ivec2 c = ivec2(i);
+      vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0), du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+      float a = hf(c, s), b = hf(c + ivec2(1, 0), s), d = hf(c + ivec2(0, 1), s), e = hf(c + ivec2(1, 1), s), k = a - b - d + e;
+      return vec3(a + (b - a) * u.x + (d - a) * u.y + k * u.x * u.y, du * vec2(b - a + k * u.y, d - a + k * u.x));
+    }
+    // how much of a ripple so long (metres) can be drawn at this scale
+    // without flickering; what cannot is left to roughen the water's sheen
+    uniform float uPx; // metres a pixel
+    float seen(float l) { return smoothstep(2.5, 6.0, l / uPx); }
+    // 3d value noise, and its slopes across the first two
+    vec3 vnoise3d(vec3 p, int s) {
+      vec3 i = floor(p), f = p - i;
+      ivec3 c = ivec3(i);
+      vec3 u = f * f * (3.0 - 2.0 * f), du = 6.0 * f * (1.0 - f);
+      int z0 = s + c.z * 7919, z1 = s + (c.z + 1) * 7919;
+      float a0 = hf(c.xy, z0), b0 = hf(c.xy + ivec2(1, 0), z0), d0 = hf(c.xy + ivec2(0, 1), z0), e0 = hf(c.xy + ivec2(1, 1), z0), k0 = a0 - b0 - d0 + e0;
+      float a1 = hf(c.xy, z1), b1 = hf(c.xy + ivec2(1, 0), z1), d1 = hf(c.xy + ivec2(0, 1), z1), e1 = hf(c.xy + ivec2(1, 1), z1), k1 = a1 - b1 - d1 + e1;
+      vec3 v0 = vec3(a0 + (b0 - a0) * u.x + (d0 - a0) * u.y + k0 * u.x * u.y, du.xy * vec2(b0 - a0 + k0 * u.y, d0 - a0 + k0 * u.x));
+      vec3 v1 = vec3(a1 + (b1 - a1) * u.x + (d1 - a1) * u.y + k1 * u.x * u.y, du.xy * vec2(b1 - a1 + k1 * u.y, d1 - a1 + k1 * u.x));
+      return mix(v0, v1, u.z);
+    }
+    // the wind on still water: short-crested ripples, their crests across
+    // it, running downwind, each length at its own speed (on water the
+    // short ones are the slower, down to the shortest, held up by the
+    // water's skin), changing as they go; stronger where a gust comes down
+    // on it, the same gusts as on the grass about (a cat's paw running
+    // over it), less of all where it is sheltered. Its slopes, and the
+    // spread of the slopes too fine to draw
+    vec3 windRipples(vec2 p, float t, float shelter) {
+      float s = length(uWind);
+      vec2 w = uWind / s, x = vec2(-w.y, w.x), q = vec2(dot(p, w), dot(p, x));
+      float gust = pressed(q, t, 4.0 * s);
+      float amp = shelter * (0.25 + 1.0 * gust) * (0.5 + 0.6 * s) * (0.6 + 0.8 * vnoise(p / 3.0, 60));
+      vec2 g = vec2(0.0);
+      float fine = 0.0;
+      for (int o = 0; o < 4; o++) {
+        float l = 0.6 * pow(0.5, float(o)), c = sqrt(9.81 * l / TAU + 4.6e-4 / l);
+        vec3 nd = vnoise3d(vec3((q.x - c * t) / l + float(o) * 3.1, q.y / (2.4 * l), t * (0.5 + 0.5 * float(o))), 61 + o);
+        // (ridged, so the crests are sharp)
+        vec2 dn = (nd.x > 0.5 ? -2.0 : 2.0) * nd.yz;
+        float st = 0.3 * amp, v = seen(l * 0.5);
+        g += st * v * (w * dn.x + x * dn.y / 2.4);
+        fine += 0.6 * st * st * (1.0 - v);
+      }
+      return vec3(g, fine);
+    }
+    // the light on a shallow floor, gathered by the ripples over it into a
+    // net of bright lines, wavering
+    float caustics(vec2 p, float t) {
+      float c = 0.0;
+      for (int L = 0; L < 2; L++) {
+        vec2 q = p / (L == 0 ? 0.42 : 0.3) + float(L) * 3.7, i = floor(q);
+        float f1 = 9.0, f2 = 9.0;
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+          ivec2 cc = ivec2(i) + ivec2(x, y);
+          float h1 = hf(cc, 81 + L), h2 = hf(cc, 83 + L);
+          vec2 m = vec2(cc) + 0.5 + 0.36 * vec2(sin(t * (0.7 + 0.6 * h1) + TAU * h1), cos(t * (0.6 + 0.7 * h2) + TAU * h2));
+          float d = length(q - m);
+          if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+        }
+        c += exp(-(f2 - f1) * 6.5);
+      }
+      return 0.5 * c * seen(0.3);
+    }
   `;
   const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
 
   // the ground and what is laid on it
   const GROUND_VS = `
     layout(location = 0) in vec2 aPos;
-    layout(location = 1) in vec4 aA; // what it is, an angle, across a road (-1…1), the water's level
+    layout(location = 1) in vec4 aA; // what it is, an angle (a river's, downstream), across a road (-1…1), the water's level
     layout(location = 2) in float aTint;
     uniform mat4 uMVP; uniform float uZmid;
-    out vec2 vP; out float vT, vLevel; flat out float vMat, vAngle, vTint;
+    out vec2 vP; out float vT, vLevel, vAngle; flat out float vMat, vTint;
     void main() {
       vP = aPos; vMat = aA.x; vAngle = aA.y; vT = aA.z; vLevel = aA.w; vTint = aTint;
       gl_Position = uMVP * vec4(aPos, uZmid, 1.0);
     }`;
   const GROUND_FS = NOISE + OUT + `
-    in vec2 vP; in float vT, vLevel; flat in float vMat, vAngle, vTint;
+    in vec2 vP; in float vT, vLevel, vAngle; flat in float vMat, vTint;
     uniform sampler2D uTer; uniform vec3 uTerDim; // the ground's heights and slopes; nx, ny, its cell
     uniform int uSeed; uniform float uTA, uZmin, uZmax, uRelief;
+    // where water falls into the pools about: where it strikes, the spout; how far it falls
+    uniform vec4 uJets[32]; uniform float uJetH[32]; uniform int uNJ;
+    // rings running out from where it strikes, uneven, dying away as they
+    // go; the water broken white there, churning; and the stream itself,
+    // seen from above as it falls from the spout. Slopes, the spread of
+    // those too fine to draw, and the foam
+    vec4 jetRipples(vec2 p, float t) {
+      vec2 g = vec2(0.0);
+      float fine = 0.0, foam = 0.0;
+      for (int j = 0; j < uNJ; j++) {
+        vec4 J = uJets[j];
+        float h = uJetH[j], fj = float(j) * 7.7;
+        vec2 d = p - J.xy;
+        float r = length(d);
+        if (r > 3.0) continue;
+        const float lam = 0.13, c = 0.3;
+        float u = r - c * t, env = 0.3 + 0.7 * vnoise(vec2(u / 0.4, fj), 67);
+        float st = (0.45 + 0.1 * h) * env * exp(-r / (0.55 + 0.25 * h)) * smoothstep(0.02, 0.15, r), v = seen(lam);
+        g += d / max(r, 1e-4) * (st * v * cos(TAU / lam * u));
+        fine += 0.5 * st * st * (1.0 - v);
+        float rs = 0.1 + 0.04 * h, boil = smoothstep(rs * 2.6, rs * 0.5, r);
+        vec3 ch = vnoised(d / 0.045 + vec2(fj, t * 5.0), 69);
+        g += boil * 0.25 * ch.yz * seen(0.09);
+        fine += boil * 0.08 * (1.0 - seen(0.09));
+        foam += smoothstep(rs, rs * 0.3, r + 0.05 * (vnoise(d / 0.035 + vec2(fj, t * 7.0), 70) - 0.5)) * 0.85;
+        // (the stream: from the spout to where it strikes, a few fingers wide)
+        vec2 sp = J.zw - J.xy;
+        float tt = clamp(dot(d, sp) / max(dot(sp, sp), 1e-4), 0.0, 1.0), ds = length(d - sp * tt), sw = max(0.03, 0.7 * uPx);
+        foam = max(foam, smoothstep(sw, sw * 0.4, ds) * (0.7 + 0.3 * sin(tt * 40.0 - t * 30.0 + fj)));
+      }
+      return vec4(g, fine, clamp(foam, 0.0, 1.0));
+    }
     vec3 terrain(vec2 p) {
       vec2 f = clamp(p / uTerDim.z, vec2(0.0), uTerDim.xy - 1.001);
       ivec2 i = ivec2(floor(f));
@@ -166,7 +272,7 @@ const RomanTownView = (() => {
     void main() {
       vec2 p = vP;
       vec3 t = terrain(p);
-      float z = t.x, flag = 0.0;
+      float z = t.x, flag = 0.0, fine = 0.0;
       vec2 g = uRelief * t.yz; // (its slopes shaded as if steeper, as relief maps do, so the hills show)
       vec3 n = normalize(vec3(-g, 1.0));
       int m = int(vMat + 0.5);
@@ -194,7 +300,18 @@ const RomanTownView = (() => {
       else if (m == 5) { c = rgb(92.0, 112.0, 58.0); f = (fract(pv / 1.6) < 0.35 ? 0.86 : 1.04) * (0.85 + 0.3 * nz); }
       else if (m == 6) { c = rgb(214.0, 194.0, 152.0); f = 0.94 + 0.12 * nz; }
       else if (m == 7) { c = rgb(196.0, 180.0, 156.0); f = 0.95 + 0.1 * nz; }
-      else if (m == 8) { c = rgb(72.0, 140.0, 148.0); f = 0.95 + 0.1 * nz; }
+      else if (m == 8) {
+        // a pool, a basin: shallow, clear, its floor seen through the
+        // water; rippled by what wind gets in, and where water falls in
+        vec3 wr = windRipples(p, uTime, 0.4);
+        vec4 jr = jetRipples(p, uTime);
+        vec2 sl = wr.xy + jr.xy;
+        fine = wr.z + jr.z;
+        n = normalize(vec3(-sl, 1.0));
+        c = mix(rgb(62.0, 130.0, 142.0) * (0.95 + 0.1 * nz), rgb(232.0, 240.0, 240.0), jr.w);
+        // (the light gathered on its floor the more, the more it is rippled)
+        flag = 0.5 + 0.5 * clamp(caustics(p, uTime) * (0.3 + 2.5 * length(sl)) * (1.0 - jr.w), 0.0, 1.0);
+      }
       else if (m == 9) { c = rgb(22.0, 34.0, 36.0); }
       else if (m == 10) { c = rgb(212.0, 186.0, 110.0); f = tint * (0.93 + 0.1 * sin(fract(across(p, vAngle) / 0.7) * TAU)) * (0.9 + 0.2 * fnoise(p / 15.0, uSeed + 5)); }
       else if (m == 11) { c = rgb(196.0, 176.0, 128.0); f = tint * (0.95 + 0.07 * sin(across(p, vAngle) / 0.5 * TAU)); }
@@ -220,9 +337,31 @@ const RomanTownView = (() => {
         f = (abs(a - 0.5) < 0.12 ? 0.86 : 1.0) * (0.9 + 0.2 * fnoise(p / 2.0, uSeed + 13)) * (a > 0.85 ? 0.97 : 1.0);
       }
       else if (m == 21) {
-        // the river: water at its level, flat
-        z = vLevel; n = vec3(0.0, 0.0, 1.0); flag = 1.0;
-        c = rgb(52.0, 82.0, 80.0); f = 0.92 + 0.12 * fnoise(p / 9.0, uSeed + 17);
+        // the river: water at its level, running downstream, fastest in the
+        // middle, slow by the banks; its own roughness swept along with it,
+        // drawn out along the current; seen as two layers each carried a
+        // little way and faded out as the other comes in, so it never
+        // stretches; the wind's ripples on it too
+        z = vLevel; flag = 0.5;
+        vec2 fd = vec2(cos(vAngle), sin(vAngle)), fn = vec2(-fd.y, fd.x);
+        float sp = 0.75 * (1.0 - 0.8 * vT * vT);
+        vec2 g = vec2(0.0);
+        for (int k = 0; k < 2; k++) {
+          float ph = fract(uTime / 3.5 + 0.5 * float(k)), wk = 1.0 - abs(2.0 * ph - 1.0);
+          vec2 q = p - fd * (sp * (ph - 0.5) * 3.5) + float(k) * vec2(17.3, 5.1);
+          float a = dot(q, fd), b = dot(q, fn);
+          for (int o = 0; o < 3; o++) {
+            float sa = o == 0 ? 2.6 : o == 1 ? 1.1 : 0.45, sb = sa * 0.36;
+            vec3 nd = vnoised(vec2(a / sa, b / sb), 71 + 3 * o + 11 * k);
+            float v = seen(sb * 2.0), A = 0.1 * sb;
+            g += wk * A * (fd * nd.y / sa + fn * nd.z / sb) * v;
+            fine += wk * 0.5 * pow(A / sb, 2.0) * (1.0 - v);
+          }
+        }
+        vec3 wr = windRipples(p, uTime, 0.75);
+        g += wr.xy; fine += wr.z;
+        n = normalize(vec3(-g, 1.0));
+        c = mix(rgb(40.0, 68.0, 64.0), rgb(92.0, 100.0, 80.0), 0.55 * smoothstep(0.65, 1.0, abs(vT))) * (0.92 + 0.12 * fnoise(p / 9.0, uSeed + 17));
       }
       else if (m == 22) { f = 0.75; }
       // and how tall it stands, so how much the wind shows on it: wheat most,
@@ -241,7 +380,7 @@ const RomanTownView = (() => {
         f *= 1.0 + min(grass, 1.0) * 0.14 * (fnoise(p / 0.35, uSeed + 47) - 0.5 + 0.5 * (fnoise(p / 0.12, uSeed + 49) - 0.5));
       }
       oAlb = vec4(clamp(c * f, 0.0, 1.0), flag);
-      oNrm = vec4(n, 0.0);
+      oNrm = vec4(n, fine);
       oH = z;
     }`;
 
@@ -283,7 +422,7 @@ const RomanTownView = (() => {
       else if (m == 7) { c = rgb(208.0, 200.0, 182.0); f = 0.95 + 0.08 * vnoise(p * 2.0, uSeed); }
       else if (m == 8) { c = rgb(156.0, 134.0, 104.0); f = 0.7; }
       else if (m == 9) { f *= 0.9 + 0.2 * vnoise(p * 1.5, uSeed + 29); }
-      float water = 0.0;
+      float water = 0.0, fine = 0.0;
       vec2 pl = vec2(along, p.y * cos(uTA) - p.x * sin(uTA)); // (in the town's own frame)
       if (m == 10) {
         // a mosaic: tesserae, white, black and a red, laid in a pattern of
@@ -303,7 +442,14 @@ const RomanTownView = (() => {
         if (hf(ivec2(floor(pl / 0.07)), uSeed + 105) > 0.95) c = mix(c, rgb(228.0, 222.0, 208.0), 0.6);
       }
       else if (m == 12) { c = rgb(142.0, 116.0, 86.0); f = 0.82 + 0.3 * fnoise(p * 1.5, uSeed + 107); }
-      else if (m == 13) { c = rgb(70.0, 142.0, 150.0); f = 0.95 + 0.08 * fnoise(p, uSeed + 109); water = 1.0; }
+      else if (m == 13) {
+        // a bath's pool, indoors: hardly a ripple
+        c = rgb(70.0, 142.0, 150.0); f = 0.95 + 0.08 * fnoise(p, uSeed + 109);
+        vec3 wr = windRipples(p, uTime, 0.12);
+        n = normalize(vec3(-wr.xy, 1.0)); fine = wr.z;
+        water = 0.5 + 0.5 * clamp(caustics(p, uTime) * (0.4 + 4.0 * length(wr.xy)), 0.0, 1.0);
+      }
+      else if (m == 22) { c = mix(rgb(118.0, 90.0, 52.0), rgb(92.0, 120.0, 98.0), 0.5 * vnoise(p * 12.0, uSeed + 123)); f = 0.95; }
       else if (m == 14) { c = rgb(206.0, 196.0, 176.0); f = 0.9 + 0.14 * vnoise(p * 3.0, uSeed + 111); }
       else if (m == 15) { c = rgb(232.0, 228.0, 218.0); f = 0.9 + 0.1 * n.z; }
       else if (m == 16) { c = rgb(222.0, 212.0, 188.0); f = 0.92 + 0.1 * vnoise(p * 6.0, uSeed + 113); }
@@ -313,7 +459,7 @@ const RomanTownView = (() => {
       else if (m == 20) { c = rgb(172.0, 96.0, 62.0); f = 0.88 + 0.16 * vMat.y; }
       else if (m == 21) { c = rgb(96.0, 64.0, 40.0); f = 0.9 + 0.15 * vnoise(p * 6.0, uSeed + 121); }
       oAlb = vec4(clamp(c * f, 0.0, 1.0), water);
-      oNrm = vec4(n, 0.0);
+      oNrm = vec4(n, fine);
       oH = vW.z;
     }`;
 
@@ -349,7 +495,6 @@ const RomanTownView = (() => {
     }`;
   const BODY_FS = NOISE + OUT + `
     in vec3 vW, vD; flat in vec4 vCol; flat in vec2 vSeedOff;
-    uniform float uPx; // metres a pixel
     void main() {
       vec3 n = normalize(vD);
       float tone = 1.0;
@@ -428,6 +573,12 @@ const RomanTownView = (() => {
                  mix(mix(hf(c + ivec3(0, 0, 1), s), hf(c + ivec3(1, 0, 1), s), u.x), mix(hf(c + ivec3(0, 1, 1), s), hf(c + ivec3(1, 1, 1), s), u.x), u.y), u.z);
     }
     float fbm(vec3 p, int s) { return 0.5 * vn3(p, s) + 0.27 * vn3(p * 2.07, s + 1) + 0.15 * vn3(p * 4.3, s + 2) + 0.08 * vn3(p * 8.9, s + 3); }
+    // how much of a surface so rough faces exactly between the light and us
+    float ggx(vec3 n, vec3 hh, float m2) {
+      float c = max(dot(n, hh), 0.0), d = c * c * (m2 - 1.0) + 1.0;
+      return m2 / (3.14159 * d * d);
+    }
+    const vec3 LAMP = vec3(1.0, 0.56, 0.22);
     float tone(float v) {
       float x = max(0.0, v * 0.9), y = x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14);
       return y <= 0.0031308 ? 12.92 * y : 1.055 * pow(min(1.0, y), 1.0 / 2.4) - 0.055;
@@ -436,7 +587,8 @@ const RomanTownView = (() => {
     void main() {
       ivec2 px = ivec2(gl_FragCoord.xy);
       vec4 A = texelFetch(uAlb, px, 0);
-      vec3 n = texelFetch(uNrm, px, 0).xyz;
+      vec4 N4 = texelFetch(uNrm, px, 0);
+      vec3 n = N4.xyz;
       float h = texelFetch(uHgt, px, 0).r;
       vec2 uv = gl_FragCoord.xy / uSize;
       vec2 w = vec2(uView.x + uView.z * uv.x, uView.y + uView.w * (1.0 - uv.y));
@@ -462,8 +614,10 @@ const RomanTownView = (() => {
       vec2 ta = vec2(w.x / uWorld.x, 1.0 - w.y / uWorld.y);
       float near = texture(uNear, ta).r + uZbase, far = texture(uFar, ta).r + uZbase;
       float ao = 1.0 - clamp((near - h) * 0.22, 0.0, 0.4) - clamp((far - h) * 0.06, 0.0, 0.25);
-      bool water = A.a > 0.5;
+      bool water = A.a > 0.25;
       if (water) ao = max(ao, 0.85);
+      // water: the slopes of its ripples too fine to draw, roughening it
+      float m2 = 0.005 + 2.0 * N4.w;
       float amb = ao * (0.55 + 0.45 * n.z);
       // lamps
       float glow = 0.0;
@@ -478,6 +632,8 @@ const RomanTownView = (() => {
         float flick = 0.78 + 0.22 * vn3(vec3(uTime * 7.0, fi, 0.0), 5) + 0.1 * vn3(vec3(uTime * 19.0, fi, 1.0), 6);
         float dd = sqrt(d2), f = 1.0 - dd / 16.0;
         glow += l.w * flick * 1.2 / (1.0 + d2 * 0.3) * f * f * max(0.2, dot(-d, n) / max(dd, 1e-3) * 0.8 + 0.2);
+        // on water the flame glittering, mirrored where the ripples tip to it
+        if (water) fire += LAMP * l.w * flick * 0.02 * ggx(n, normalize(normalize(-d) + vec3(0.0, 0.0, 1.0)), m2) * f * f;
         // the flame, seen from above as it rises towards us: its tip over its
         // root, rings of heat about it, white within, red without, its rim
         // ragged and licking; leaning only a little, the way the draught
@@ -505,9 +661,21 @@ const RomanTownView = (() => {
           fire += vec3(1.0, 0.45, 0.12) * 0.18 * exp(-dot(r, r) * 1.2) * flick * min(l.w, 1.5);
         }
       }
-      const vec3 LAMP = vec3(1.0, 0.56, 0.22);
       vec3 v = lin(A.rgb) * (uSky * amb + uSun * ndl + LAMP * glow) + fire;
-      if (water) v += 0.05 * uSky * ao;
+      if (water) {
+        // the floor or the depths seen through the surface, lit through it
+        // as if it were flat, but brighter where the ripples gather the
+        // light onto it and lean towards it; the sky mirrored, more of it
+        // and paler the more the ripples are tipped; and the sun (or the
+        // moon) glittering, as much as the ripples tip towards us
+        float cau = clamp(A.a * 2.0 - 1.0, 0.0, 1.0), up = max(uL.z, 0.0) * lit;
+        float lean = clamp(1.0 + 3.2 * dot(n.xy, uL.xy), 0.35, 2.0);
+        v = lin(A.rgb) * (uSky * ao * (0.6 + 0.3 * n.z) + uSun * up * lean * (0.7 + 1.1 * cau) + LAMP * glow) + fire;
+        float rz = 2.0 * n.z * n.z - 1.0, fr = 0.02 + 0.98 * pow(1.0 - n.z, 5.0);
+        v += (fr + 0.03) * uSky * ao * (1.3 + 3.0 * (1.0 - rz));
+        vec3 hh = normalize(uL + vec3(0.0, 0.0, 1.0));
+        v += uSun * lit * 0.02 * 0.25 * ggx(n, hh, m2) * smoothstep(0.0, 0.05, uL.z);
+      }
       // at night colours fade, as they do to eyes in the dark, but lamplight's
       float lum = dot(v, vec3(0.2126, 0.7152, 0.0722)), warm = v.r - v.b;
       v = mix(v, lum * vec3(0.9, 0.97, 1.15), uGrey * clamp(1.0 - warm * 4.0, 0.0, 1.0));
@@ -891,8 +1059,9 @@ const RomanTownView = (() => {
     function gpoly(pts, m, a = 0, tint = 0) {
       for (let i = 1; i + 1 < pts.length; i++) for (const q of [pts[0], pts[i], pts[i + 1]]) gvert(q[0], q[1], m, a, 0, 0, tint);
     }
-    // a line of a width: a strip, across it −1…1, mitred where it bends
-    function gline(pts, half, m, levels = null) {
+    // a line of a width: a strip, across it −1…1, mitred where it bends; a
+    // river's way downstream at each point too
+    function gline(pts, half, m, levels = null, ways = null) {
       const n = pts.length, side = [];
       for (let q = 0; q < n; q++) {
         const a = pts[Math.max(0, q - 1)], b = pts[Math.min(n - 1, q + 1)], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
@@ -907,9 +1076,9 @@ const RomanTownView = (() => {
       }
       for (let q = 0; q + 1 < n; q++) {
         const [ax, ay] = pts[q], [bx, by] = pts[q + 1], [anx, any] = side[q], [bnx, bny] = side[q + 1];
-        const la = levels ? levels[q] : 0, lb = levels ? levels[q + 1] : 0;
-        const A1 = [ax + anx, ay + any, 1, la], A2 = [ax - anx, ay - any, -1, la], B1 = [bx + bnx, by + bny, 1, lb], B2 = [bx - bnx, by - bny, -1, lb];
-        for (const v of [A1, B1, B2, A1, B2, A2]) gvert(v[0], v[1], m, 0, v[2], v[3]);
+        const la = levels ? levels[q] : 0, lb = levels ? levels[q + 1] : 0, wa = ways ? ways[q] : 0, wb = ways ? ways[q + 1] : 0;
+        const A1 = [ax + anx, ay + any, 1, la, wa], A2 = [ax - anx, ay - any, -1, la, wa], B1 = [bx + bnx, by + bny, 1, lb, wb], B2 = [bx - bnx, by - bny, -1, lb, wb];
+        for (const v of [A1, B1, B2, A1, B2, A2]) gvert(v[0], v[1], m, v[4], v[2], v[3]);
       }
     }
     gpoly([[0, 0], [W, 0], [W, H], [0, H]], GROUND.natural);
@@ -918,7 +1087,16 @@ const RomanTownView = (() => {
     if (town.river) {
       const R = town.river;
       gline(R.points, R.width / 2, GROUND.bank);
-      gline(R.points, R.width / 2 - 0.6, GROUND.river, R.level);
+      // (which way it runs: downhill; the angle carried on round the bends, not
+      // jumping a turn, so it can be blended between the points)
+      const RP = R.points, down = R.level[0] >= R.level[RP.length - 1] ? 0 : Math.PI, ways = [];
+      for (let q = 0; q < RP.length; q++) {
+        const a = RP[Math.max(0, q - 1)], b = RP[Math.min(RP.length - 1, q + 1)];
+        let w = Math.atan2(b[1] - a[1], b[0] - a[0]) + down;
+        if (q) w = ways[q - 1] + Math.atan2(Math.sin(w - ways[q - 1]), Math.cos(w - ways[q - 1]));
+        ways.push(w);
+      }
+      gline(RP, R.width / 2 - 0.6, GROUND.river, R.level, ways);
     }
     for (const g of town.grounds) gpoly(g.poly, GROUND[g.kind] ?? GROUND.yard, g.angle || 0);
     const groundVAO = gl.createVertexArray(), groundN = GV.length / 7;
@@ -1216,6 +1394,15 @@ const RomanTownView = (() => {
         else if (b.shape === 'round') round(b);
         else if (b.shape === 'cavea') cavea(b);
         else if (b.shape === 'arena') arena(b);
+      }
+      // the fountains' spouts, bronze, pointing where the water falls
+      mat = [SOLID.bronze, 0, 0, 0];
+      for (const j of town.jets || []) {
+        const a = Math.atan2(j.y - j.sy, j.x - j.sx), c = Math.cos(a), sn = Math.sin(a), zt = j.z + j.h + 0.08;
+        const q = (u, v) => [j.sx + u * c - v * sn, j.sy + u * sn + v * c, zt];
+        const top = [q(-0.12, -0.08), q(0.14, -0.08), q(0.14, 0.08), q(-0.12, 0.08)];
+        face(top);
+        walls(top, zt - 0.22);
       }
       const buf = gl.createBuffer(), n = SV.length / 10;
       gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -1561,6 +1748,7 @@ const RomanTownView = (() => {
     }
 
     // ---- passes ----
+    const jetData = new Float32Array(32 * 4), jetH = new Float32Array(32);
     function drawScene(g, mvp, rect, scale) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo);
       gl.viewport(0, 0, g.w, g.h);
@@ -1580,7 +1768,15 @@ const RomanTownView = (() => {
       gl.uniform3f(L.uTerDim, T.nx, T.ny, T.cell);
       gl.uniform1i(L.uSeed, iseed);
       gl.uniform1f(L.uTA, TA); gl.uniform1f(L.uZmin, zmin); gl.uniform1f(L.uZmax, zmax); gl.uniform1f(L.uRelief, 3);
+      gl.uniform1f(L.uPx, rect[2] / g.w);
       setWind(P.ground);
+      // the jets near enough to show
+      let nj = 0;
+      for (const j of town.jets || []) {
+        if (nj >= 32 || j.x < rect[0] - 4 || j.x > rect[0] + rect[2] + 4 || j.y < rect[1] - 4 || j.y > rect[1] + rect[3] + 4) continue;
+        jetData.set([j.x, j.y, j.sx, j.sy], 4 * nj); jetH[nj++] = j.h;
+      }
+      gl.uniform4fv(L.uJets, jetData); gl.uniform1fv(L.uJetH, jetH); gl.uniform1i(L.uNJ, nj);
       gl.bindVertexArray(groundVAO);
       gl.drawArrays(gl.TRIANGLES, 0, groundN);
       // what stands on it, the highest seen
@@ -1591,6 +1787,7 @@ const RomanTownView = (() => {
       gl.uniformMatrix4fv(P.solid.loc.uMVP, false, mvp);
       gl.uniform1i(P.solid.loc.uSeed, iseed);
       gl.uniform1f(P.solid.loc.uTA, TA);
+      gl.uniform1f(P.solid.loc.uPx, rect[2] / g.w);
       setWind(P.solid);
       gl.bindVertexArray(S.vao);
       gl.drawArrays(gl.TRIANGLES, 0, S.n);
