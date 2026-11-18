@@ -928,7 +928,7 @@ const RomanTown = (() => {
     }
 
     // the roads out of the gates, paved, wandering a little
-    const nRoad = perlin(rng);
+    const nRoad = perlin(rng), viaOcc = occupancy(W, H);
     out.gates.forEach((g, gi) => {
       const pts = [[g.x, g.y]];
       let x = g.x, y = g.y;
@@ -940,7 +940,10 @@ const RomanTown = (() => {
       }
       const width = range(rng, 6, 7.5);
       out.roads.push({ points: pts, width, kind: 'via' });
-      for (let k = 0; k + 1 < pts.length; k++) occ.seg(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1], width / 2 + 1.5, 2);
+      for (let k = 0; k + 1 < pts.length; k++) {
+        occ.seg(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1], width / 2 + 1.5, 2);
+        viaOcc.seg(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1], width / 2 + 1.5, 1);
+      }
       // a bridge where it crosses the river
       if (river) {
         const R2 = river.points;
@@ -1074,7 +1077,7 @@ const RomanTown = (() => {
     // further from the square's own edges: lanes along the surveyor's lines,
     // wide enough for a cart between two walls
     function parcel(r, depth, sq) {
-      const m = (a, b) => Math.abs(a - b) < 0.01 ? 2.8 : 1.2;
+      const m = (a, b) => Math.abs(a - b) < 0.01 ? 3.2 : 1.2;
       const pr = [r[0] + m(r[0], sq[0]), r[1] + m(r[1], sq[1]), r[2] - m(r[2], sq[2]), r[3] - m(r[3], sq[3])];
       let hard = 0, steep = 0, seen = 0;
       for (const fu of [0.1, 0.5, 0.9]) for (const fv of [0.1, 0.5, 0.9]) {
@@ -1086,13 +1089,13 @@ const RomanTown = (() => {
         else if (sl > 0.2) steep++;
       }
       if (!seen) return;
-      // anything already there, a tomb, a cypress, a farm, another field,
-      // looked for every few metres, not to be walled or ploughed over
+      // anything already there, a tomb, a cypress, a farm, another field, a
+      // road, looked for every few metres, not to be walled or ploughed over
       if (!hard) {
         const nu = Math.ceil((pr[2] - pr[0]) / 3), nv = Math.ceil((pr[3] - pr[1]) / 3);
         for (let i = 0; i <= nu && !hard; i++) for (let j = 0; j <= nv; j++) {
-          const o = occ.get(...P(lerp(pr[0], pr[2], i / nu), lerp(pr[1], pr[3], j / nv)));
-          if (o === 3 || o === 1) { hard++; break; }
+          const p = P(lerp(pr[0], pr[2], i / nu), lerp(pr[1], pr[3], j / nv)), o = occ.get(...p);
+          if (o === 3 || o === 1 || viaOcc.get(...p) === 1) { hard++; break; }
         }
       }
       if (hard) {
@@ -1158,7 +1161,7 @@ const RomanTown = (() => {
         const [a, b, c, d] = edges[gateEdge], gu = lerp(a, c, gateAt), gv = lerp(b, d, gateAt);
         const mu = (u1 + u2) / 2, mv = (v1 + v2) / 2;
         const n = gateEdge % 2 === 0 ? [0, Math.sign(gv - mv)] : [Math.sign(gu - mu), 0];
-        reach.push({ at: [1.5, 2.5, 3.5].map(o => P(gu + n[0] * o, gv + n[1] * o)), end: P(gu, gv), kind: 'gate' });
+        reach.push({ at: [2.5, 3.5, 4.5].map(o => P(gu + n[0] * o, gv + n[1] * o)), end: P(gu, gv), kind: 'gate' });
       }
       edges.forEach(([a, b, c, d], e) => {
         const L = Math.hypot(c - a, d - b), n = Math.max(1, Math.ceil(L / 6));
@@ -1208,14 +1211,35 @@ const RomanTown = (() => {
     // river but by the bridges; wandering a little where nothing steers
     // them, and joining one another where they can ----
     {
-      const C = 2, nx = Math.ceil(W / C), ny = Math.ceil(H / C), N = nx * ny;
+      const C = 1, nx = Math.ceil(W / C), ny = Math.ceil(H / C), N = nx * ny;
       const cost = new Float32Array(N), nTrack = perlin(rng);
       const cx2 = i => (i + 0.5) * C;
+      // the lie of the ground, and what steers a track, a few metres a cell
+      const G = 4, gx = Math.ceil(W / G) + 1, gy = Math.ceil(H / G) + 1, lie = new Float32Array(gx * gy);
+      for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) {
+        const x = (i + 0.5) * G, y = (j + 0.5) * G;
+        lie[j * gx + i] = 1 + 14 * slopeAt(x, y) + 1.2 * Math.max(0, fbm(nTrack, x / 70, y / 70, 2) + 0.5);
+      }
       for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
         const x = cx2(i), y = cx2(j), k = j * nx + i;
-        const o = occ.get(x, y);
         if (tsd(x, y) < 14) { cost[k] = Infinity; continue; }
-        cost[k] = (1 + 14 * slopeAt(x, y) + 1.2 * Math.max(0, fbm(nTrack, x / 70, y / 70, 2) + 0.5)) * (o === 1 ? 9 : 1);
+        cost[k] = lie[Math.floor(y / G) * gx + Math.floor(x / G)];
+      }
+      // a field dear to cross, and its edge (a track keeps off the crop)
+      for (const f of out.fields) {
+        const xs = f.poly.map(p => p[0]), ys = f.poly.map(p => p[1]), n = f.poly.length;
+        const ccw = Math.sign(area(f.poly)) || 1;
+        for (let j = Math.max(0, Math.floor((Math.min(...ys) - 1) / C)); j <= Math.min(ny - 1, (Math.max(...ys) + 1) / C); j++)
+          for (let i = Math.max(0, Math.floor((Math.min(...xs) - 1) / C)); i <= Math.min(nx - 1, (Math.max(...xs) + 1) / C); i++) {
+            const x = cx2(i), y = cx2(j);
+            let out2 = -Infinity;
+            for (let q = 0; q < n; q++) {
+              const a = f.poly[q], b = f.poly[(q + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+              out2 = Math.max(out2, ccw * ((x - a[0]) * (b[1] - a[1]) - (y - a[1]) * (b[0] - a[0])) / L);
+            }
+            const k = j * nx + i;
+            if (out2 < 1 && cost[k] !== Infinity && !(cost[k] > 8)) cost[k] *= 9;
+          }
       }
       // the river, and whatever is built out here (a field's wall too, but for its gate)
       if (river) for (let q = 0; q + 1 < river.points.length; q++) {
@@ -1230,48 +1254,38 @@ const RomanTown = (() => {
         if (tsd(b.x, b.y) < -R) continue;
         for (let j = Math.max(0, Math.floor((b.y - R - 1) / C)); j <= Math.min(ny - 1, (b.y + R + 1) / C); j++)
           for (let i = Math.max(0, Math.floor((b.x - R - 1) / C)); i <= Math.min(nx - 1, (b.x + R + 1) / C); i++)
-            if (onBuilding(b, cx2(i), cx2(j), b.use === 'drystone' ? 0.4 : 0.9)) cost[j * nx + i] = Infinity;
+            if (onBuilding(b, cx2(i), cx2(j), b.use === 'drystone' ? 2 : 1.6)) cost[j * nx + i] = Infinity;
       }
       // from the paved roads outwards, and from every track once it is made
-      const dist = new Float32Array(N).fill(Infinity), from = new Int32Array(N).fill(-1);
-      const heap = [], hk = [];
-      const push = (k, d) => {
-        let i = heap.length; heap.push(k); hk.push(d);
-        while (i > 0) { const p = (i - 1) >> 1; if (hk[p] <= d) break; heap[i] = heap[p]; hk[i] = hk[p]; i = p; }
-        heap[i] = k; hk[i] = d;
-      };
-      const pop = () => {
-        const k = heap[0], d = hk[0], lk = heap.pop(), ld = hk.pop();
-        if (heap.length) {
-          let i = 0;
-          for (;;) {
-            let c = 2 * i + 1;
-            if (c >= heap.length) break;
-            if (c + 1 < heap.length && hk[c + 1] < hk[c]) c++;
-            if (hk[c] >= ld) break;
-            heap[i] = heap[c]; hk[i] = hk[c]; i = c;
-          }
-          heap[i] = lk; hk[i] = ld;
-        }
-        return [k, d];
-      };
-      const STEPS = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
-      const spread = () => {
-        while (heap.length) {
-          const [k, d] = pop();
-          if (d > dist[k]) continue;
-          const i = k % nx, j = (k / nx) | 0;
-          for (const [di, dj, l] of STEPS) {
-            const i2 = i + di, j2 = j + dj;
-            if (i2 < 0 || j2 < 0 || i2 >= nx || j2 >= ny) continue;
-            const k2 = j2 * nx + i2, c = cost[k2];
+      const dist = new Float64Array(N).fill(Infinity), from = new Int32Array(N).fill(-1);
+      // the cells still to go on from, in buckets by how far they are, half a step each
+      const BW = 0.5, buckets = [];
+      let cur = 0, queued = 0;
+      const push = (k, d) => { const b = (d / BW) | 0; (buckets[b] || (buckets[b] = [])).push(k); queued++; if (b < cur) cur = b; };
+      const DI = [1, -1, 0, 0, 1, 1, -1, -1], DJ = [0, 0, 1, -1, 1, -1, 1, -1], DL = [1, 1, 1, 1, Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2];
+      const DK = DI.map((di, q) => di + DJ[q] * nx);
+      // (the world's edge not to be gone past)
+      for (let i = 0; i < nx; i++) cost[i] = cost[(ny - 1) * nx + i] = Infinity;
+      for (let j = 0; j < ny; j++) cost[j * nx] = cost[j * nx + nx - 1] = Infinity;
+      // outwards from the sources; but no further than reach from them, if given
+      const spread = (reach = Infinity) => {
+        while (queued) {
+          while (!buckets[cur] || !buckets[cur].length) cur++;
+          const k = buckets[cur].pop(), d = dist[k];
+          queued--;
+          if (((d / BW) | 0) !== cur) continue;
+          const ck = cost[k];
+          for (let q = 0; q < 8; q++) {
+            const k2 = k + DK[q], c = cost[k2];
             if (c === Infinity) continue;
-            const d2 = d + l * C * (cost[k] + c) / 2;
-            if (d2 < dist[k2]) { dist[k2] = d2; from[k2] = k; push(k2, d2); }
+            // not between two corners
+            if (q >= 4 && (cost[k + DI[q]] === Infinity || cost[k + DJ[q] * nx] === Infinity)) continue;
+            const d2 = d + DL[q] * C * (ck + c) / 2;
+            if (d2 < dist[k2] && d2 < reach) { dist[k2] = d2; from[k2] = k; push(k2, d2); }
           }
         }
       };
-      const source = k => { dist[k] = 0; from[k] = -1; push(k, 0); };
+      const source = k => { if (cost[k] !== Infinity) { dist[k] = 0; from[k] = -1; push(k, 0); } };
       for (const road of out.roads) for (let q = 0; q + 1 < road.points.length; q++) {
         const [a, b] = [road.points[q], road.points[q + 1]], n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / C);
         for (let m = 0; m <= n; m++) {
@@ -1288,7 +1302,7 @@ const RomanTown = (() => {
           const e = f.poly[(q + 1) % f.poly.length], L = Math.hypot(e[0] - p[0], e[1] - p[1]);
           let nxv = -(e[1] - p[1]) / L, nyv = (e[0] - p[0]) / L;
           if (nxv * ((p[0] + e[0]) / 2 - mx) + nyv * ((p[1] + e[1]) / 2 - my) < 0) { nxv = -nxv; nyv = -nyv; }
-          for (let t = 3; t < L - 3; t += 4) for (const o of [1.4, 2.6]) at.push([lerp(p[0], e[0], t / L) + nxv * o, lerp(p[1], e[1], t / L) + nyv * o]);
+          for (let t = 3; t < L - 3; t += 3) for (const o of [1.6, 2.6, 3.4]) at.push([lerp(p[0], e[0], t / L) + nxv * o, lerp(p[1], e[1], t / L) + nyv * o]);
         });
         reach.push({ at, kind: 'field' });
       }
@@ -1310,13 +1324,14 @@ const RomanTown = (() => {
         const path = [];
         for (let k = k0; k >= 0; k = from[k]) path.push(k);
         if (path.length < 3) continue;
+        // the ground about it now nearer a track than it was: the next ones near it join it
         for (const k of path) { onTrack[k] = 1; source(k); }
-        spread();
+        spread(90);
         tracks.push({ path: path.reverse(), kind: r.kind, end: r.end });
       }
       // each a line through its cells, rounded off, a little narrower out to a field
       for (const t of tracks) {
-        let pts = t.path.filter((_, q) => q % 2 === 0 || q === t.path.length - 1).map(k => [cx2(k % nx), cx2((k / nx) | 0)]);
+        let pts = t.path.filter((_, q) => q % 3 === 0 || q === t.path.length - 1).map(k => [cx2(k % nx), cx2((k / nx) | 0)]);
         for (let it = 0; it < 2; it++) {
           const sm = [pts[0]];
           for (let q = 0; q + 1 < pts.length; q++) {
@@ -1328,7 +1343,7 @@ const RomanTown = (() => {
         }
         // on through the gate
         if (t.end) pts.push(t.end);
-        const width = t.kind === 'field' ? range(rng, 2.6, 3) : range(rng, 3, 3.6);
+        const width = t.kind === 'field' ? range(rng, 2.4, 2.8) : range(rng, 2.8, 3.2);
         out.roads.push({ points: pts, width, kind: 'track' });
         for (let q = 0; q + 1 < pts.length; q++) occ.seg(pts[q][0], pts[q][1], pts[q + 1][0], pts[q + 1][1], width / 2 + 0.5, 2);
       }
@@ -1337,7 +1352,7 @@ const RomanTown = (() => {
         const k = cellAt([t.x, t.y]);
         if (k < 0) return true;
         const i = k % nx, j = (k / nx) | 0;
-        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
           const i2 = i + di, j2 = j + dj;
           if (i2 >= 0 && j2 >= 0 && i2 < nx && j2 < ny && onTrack[j2 * nx + i2]) return false;
         }
