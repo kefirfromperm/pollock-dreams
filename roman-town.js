@@ -920,6 +920,8 @@ const RomanTown = (() => {
 
     // ================= the country about =================
     const inWorld = (x, y, m = 0) => x >= -m && y >= -m && x <= W + m && y <= H + m;
+    // where the country's tracks are to go: the farms, the pastures' gates (the fields are added later)
+    const reach = [];
     if (river) {
       const P2 = river.points;
       for (let k = 0; k + 1 < P2.length; k++) occ.seg(P2[k][0], P2[k][1], P2[k + 1][0], P2[k + 1][1], river.width / 2 + 3, 3);
@@ -991,6 +993,9 @@ const RomanTown = (() => {
       lamp(u - A / 2 + k + 0.8, v, 2.2, 0.8);
       const bx = u + A / 2 + 8, barn = [bx, v - Bd / 2, bx + 9, v - Bd / 2 + range(rng, 16, 26)];
       box(barn, { use: 'barn', h: 6.5, z0: hAt(...P(bx + 4, v)), roof: 'gable', axis: 'v', front: '-u' });
+      reach.push({ at: [P(u + A / 2 + 4, v)], kind: 'farm' });
+      // the hay stacked by the barn
+      for (let q = 0, n = rng() * 4 | 0; q < n; q++) haystack(...P(bx + 9 + 4.5 + q * range(rng, 5.5, 7), barn[1] + range(rng, 3, barn[3] - barn[1] - 3)));
       const orch = [u - A / 2 - 6, v + Bd / 2 + 2, u + A / 2, v + Bd / 2 + 16];
       ground(orch, 'garden');
       for (let q = 0; q < 6; q++) tree(u - A / 2 - 6 + range(rng, 2, A + 4), v + Bd / 2 + range(rng, 4, 14), 'fruit', range(rng, 2, 3), range(rng, 4, 6));
@@ -1033,31 +1038,20 @@ const RomanTown = (() => {
       }
     }
 
-    // the centuriation: earth tracks and fields on the town's own grid
+    // a haystack, a beehive of hay on the ground
+    function haystack(x, y) {
+      const r = range(rng, 1.7, 2.6);
+      B.push({ shape: 'round', use: 'haystack', mat: 'hay', x, y, r, z0: hAt(x, y) - 0.15, h: 0.45, roof: 'dome', pitch: range(rng, 1.15, 1.55) });
+      occ.disc(x, y, r + 0.5, 3);
+    }
+
+    // the centuriation: fields on the town's own grid
     const Gu = range(rng, 60, 95), Gv = range(rng, 60, 95);
     const corners = [[0, 0], [W, 0], [W, H], [0, H]].map(([x, y]) => T.loc(x, y));
     const uMin = Math.min(...corners.map(c => c[0])), uMax = Math.max(...corners.map(c => c[0]));
     const vMin = Math.min(...corners.map(c => c[1])), vMax = Math.max(...corners.map(c => c[1]));
     const kU0 = Math.floor((uMin - u0) / Gu), kU1 = Math.ceil((uMax - u0) / Gu);
     const kV0 = Math.floor((vMin - v0) / Gv), kV1 = Math.ceil((vMax - v0) / Gv);
-    const trackOk = (x, y) => inWorld(x, y, 15) && tsd(x, y) > 20 && riverD(x, y) > 3 && occ.get(x, y) < 3;
-    const track = (a, b, fixed, alongU) => {
-      let run = [];
-      const flush = () => {
-        if (run.length > 3) {
-          out.roads.push({ points: run, width: 3.4, kind: 'track' });
-          for (let k = 0; k + 1 < run.length; k++) occ.seg(run[k][0], run[k][1], run[k + 1][0], run[k + 1][1], 2, 2);
-        }
-        run = [];
-      };
-      for (let t = a; t <= b; t += 5) {
-        const p = alongU ? P(t, fixed) : P(fixed, t);
-        if (trackOk(...p)) run.push(p); else flush();
-      }
-      flush();
-    };
-    for (let k = kU0; k <= kU1; k++) if (k !== 0 && rng() < 0.45) track(vMin, vMax, u0 + k * Gu, false);
-    for (let k = kV0; k <= kV1; k++) if (k !== 0 && rng() < 0.45) track(uMin, uMax, v0 + k * Gv, true);
 
     const slopeAt = (x, y) => Math.hypot(hAt(x + 3, y) - hAt(x - 3, y), hAt(x, y + 3) - hAt(x, y - 3)) / 6;
     const nCrop = perlin(rng);
@@ -1073,12 +1067,15 @@ const RomanTown = (() => {
           else parcels.push([r[0], r[1], lerp(r[0], r[2], m), r[3]], [lerp(r[0], r[2], m), r[1], r[2], r[3]]);
         } else parcels.push(r);
       }
-      for (const r of parcels) parcel(r, 0);
+      for (const r of parcels) parcel(r, 0, [cu1, cv1, cu1 + Gu, cv1 + Gv]);
     }
     // A parcel: tilled where it is level enough, grazed where it is steeper,
-    // halved and halved again to fit round what is in its way.
-    function parcel(r, depth) {
-      const pr = [r[0] + 1.2, r[1] + 1.2, r[2] - 1.2, r[3] - 1.2];
+    // halved and halved again to fit round what is in its way. Set back
+    // further from the square's own edges: lanes along the surveyor's lines,
+    // wide enough for a cart between two walls
+    function parcel(r, depth, sq) {
+      const m = (a, b) => Math.abs(a - b) < 0.01 ? 2.8 : 1.2;
+      const pr = [r[0] + m(r[0], sq[0]), r[1] + m(r[1], sq[1]), r[2] - m(r[2], sq[2]), r[3] - m(r[3], sq[3])];
       let hard = 0, steep = 0, seen = 0;
       for (const fu of [0.1, 0.5, 0.9]) for (const fv of [0.1, 0.5, 0.9]) {
         const [x, y] = P(lerp(pr[0], pr[2], fu), lerp(pr[1], pr[3], fv));
@@ -1101,7 +1098,7 @@ const RomanTown = (() => {
       if (hard) {
         if (depth < 2 && Math.min(r[2] - r[0], r[3] - r[1]) > 22) {
           const mu = lerp(r[0], r[2], range(rng, 0.4, 0.6)), mv = lerp(r[1], r[3], range(rng, 0.4, 0.6));
-          for (const q of [[r[0], r[1], mu, mv], [mu, r[1], r[2], mv], [r[0], mv, mu, r[3]], [mu, mv, r[2], r[3]]]) parcel(q, depth + 1);
+          for (const q of [[r[0], r[1], mu, mv], [mu, r[1], r[2], mv], [r[0], mv, mu, r[3]], [mu, mv, r[2], r[3]]]) parcel(q, depth + 1, sq);
         }
         return;
       }
@@ -1126,13 +1123,43 @@ const RomanTown = (() => {
           out.trees.push({ x, y, z0: hAt(x, y), r: crop === 'olives' ? range(rng, 2.2, 3.3) : range(rng, 1.8, 2.6), h: range(rng, 4, 6.5), kind: crop === 'olives' ? 'olive' : 'fruit' });
         }
       }
+      // haystacks: the hay where it was mown, in a loose row down the field;
+      // one or a few in a meadow, the straw in a stubble field, the winter's
+      // feed in a pasture now and then
+      const stacks = crop === 'hay' ? 3 + (rng() * 6 | 0) : (crop === 'meadow' || crop === 'stubble') && rng() < 0.6 ? 1 + (rng() * 3 | 0)
+        : crop === 'pasture' && rng() < 0.25 ? 1 + (rng() * 2 | 0) : 0;
+      if (stacks && Math.min(pr[2] - pr[0], pr[3] - pr[1]) > 9) {
+        const S = longU ? pr[3] - pr[1] : pr[2] - pr[0], row = range(rng, 0.3, 0.7) * S, put = [];
+        for (let q = 0, tries = 0; q < stacks && tries < 40; tries++) {
+          let u = range(rng, pr[0] + 4, pr[2] - 4), v = range(rng, pr[1] + 4, pr[3] - 4);
+          if (crop === 'hay') { if (longU) v = pr[1] + row + range(rng, -2, 2); else u = pr[0] + row + range(rng, -2, 2); }
+          const [x, y] = P(u, v);
+          if (!inWorld(x, y, -3) || !occ.free(x, y, 3, 1) || put.some(([a, b]) => Math.hypot(a - x, b - y) < 8)) continue;
+          haystack(x, y);
+          put.push([x, y]);
+          q++;
+        }
+      }
       if (crop === 'pasture') pasture(pr);
     }
     // a pasture: a dry-stone wall about it, a gap for a gate, a shade tree, a
     // trough's well maybe, and a flock or a herd
     function pasture(pr) {
       const [u1, v1, u2, v2] = pr, edges = [[u1, v1, u2, v1], [u2, v1, u2, v2], [u2, v2, u1, v2], [u1, v2, u1, v1]];
-      const gateEdge = rng() * 4 | 0, gateAt = range(rng, 0.2, 0.8);
+      // its gate on a side open to the country or a road, not on the next field, if it can be
+      const outside = e => {
+        const [a, b, c, d] = edges[e], n = e % 2 === 0 ? [0, e === 0 ? -1 : 1] : [e === 1 ? 1 : -1, 0];
+        return occ.get(...P((a + c) / 2 + n[0] * 4, (b + d) / 2 + n[1] * 4));
+      };
+      const first = rng() * 4 | 0, gateAt = range(rng, 0.2, 0.8);
+      const gateEdge = [0, 1, 2, 3].map(k => (first + k) % 4).find(e => outside(e) === 0 || outside(e) === 2) ?? first;
+      {
+        // a track to the gate, from outside it
+        const [a, b, c, d] = edges[gateEdge], gu = lerp(a, c, gateAt), gv = lerp(b, d, gateAt);
+        const mu = (u1 + u2) / 2, mv = (v1 + v2) / 2;
+        const n = gateEdge % 2 === 0 ? [0, Math.sign(gv - mv)] : [Math.sign(gu - mu), 0];
+        reach.push({ at: [1.5, 2.5, 3.5].map(o => P(gu + n[0] * o, gv + n[1] * o)), end: P(gu, gv), kind: 'gate' });
+      }
       edges.forEach(([a, b, c, d], e) => {
         const L = Math.hypot(c - a, d - b), n = Math.max(1, Math.ceil(L / 6));
         for (let k = 0; k < n; k++) {
@@ -1155,7 +1182,7 @@ const RomanTown = (() => {
       }
       if (rng() < 0.35) {
         const u = range(rng, u1 + 3, u2 - 3), v = range(rng, v1 + 3, v2 - 3);
-        if (!shade || Math.hypot(u - shade[0], v - shade[1]) > 5) well(u, v);
+        if ((!shade || Math.hypot(u - shade[0], v - shade[1]) > 5) && occ.free(...P(u, v), 2, 1)) well(u, v);
       }
       if (!GRAZING || rng() < 0.25) return;
       const kind = pick(rng, { sheep: 4, goat: 1.5, cow: 2, horse: 0.7 });
@@ -1172,6 +1199,150 @@ const RomanTown = (() => {
           out.animals.push({ x, y, z0: hAt(x, y), angle: heading + gauss(rng) * (kind === 'sheep' ? 0.6 : 1.2), kind });
         }
       }
+    }
+
+    // ---- the tracks: earth, worn from the roads out to the farms, the
+    // pastures' gates and the fields, the cheapest way over the ground: along
+    // the strips between the fields rather than over them, round the hills
+    // rather than up them, round the walls and the tombs, never over the
+    // river but by the bridges; wandering a little where nothing steers
+    // them, and joining one another where they can ----
+    {
+      const C = 2, nx = Math.ceil(W / C), ny = Math.ceil(H / C), N = nx * ny;
+      const cost = new Float32Array(N), nTrack = perlin(rng);
+      const cx2 = i => (i + 0.5) * C;
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const x = cx2(i), y = cx2(j), k = j * nx + i;
+        const o = occ.get(x, y);
+        if (tsd(x, y) < 14) { cost[k] = Infinity; continue; }
+        cost[k] = (1 + 14 * slopeAt(x, y) + 1.2 * Math.max(0, fbm(nTrack, x / 70, y / 70, 2) + 0.5)) * (o === 1 ? 9 : 1);
+      }
+      // the river, and whatever is built out here (a field's wall too, but for its gate)
+      if (river) for (let q = 0; q + 1 < river.points.length; q++) {
+        const [a, e] = [river.points[q], river.points[q + 1]], m = river.width / 2 + 2;
+        for (let j = Math.max(0, Math.floor((Math.min(a[1], e[1]) - m) / C)); j <= Math.min(ny - 1, (Math.max(a[1], e[1]) + m) / C); j++)
+          for (let i = Math.max(0, Math.floor((Math.min(a[0], e[0]) - m) / C)); i <= Math.min(nx - 1, (Math.max(a[0], e[0]) + m) / C); i++)
+            if (distSeg(cx2(i), cx2(j), a[0], a[1], e[0], e[1])[0] < m) cost[j * nx + i] = Infinity;
+      }
+      for (const b of B) {
+        if (b.shape === 'box' && b.use === 'bridge') continue;
+        const R = b.shape === 'box' ? Math.hypot(b.w, b.d) / 2 : b.shape === 'round' ? b.r : b.shape === 'cavea' ? b.r1 : Math.max(b.a, b.b);
+        if (tsd(b.x, b.y) < -R) continue;
+        for (let j = Math.max(0, Math.floor((b.y - R - 1) / C)); j <= Math.min(ny - 1, (b.y + R + 1) / C); j++)
+          for (let i = Math.max(0, Math.floor((b.x - R - 1) / C)); i <= Math.min(nx - 1, (b.x + R + 1) / C); i++)
+            if (onBuilding(b, cx2(i), cx2(j), b.use === 'drystone' ? 0.4 : 0.9)) cost[j * nx + i] = Infinity;
+      }
+      // from the paved roads outwards, and from every track once it is made
+      const dist = new Float32Array(N).fill(Infinity), from = new Int32Array(N).fill(-1);
+      const heap = [], hk = [];
+      const push = (k, d) => {
+        let i = heap.length; heap.push(k); hk.push(d);
+        while (i > 0) { const p = (i - 1) >> 1; if (hk[p] <= d) break; heap[i] = heap[p]; hk[i] = hk[p]; i = p; }
+        heap[i] = k; hk[i] = d;
+      };
+      const pop = () => {
+        const k = heap[0], d = hk[0], lk = heap.pop(), ld = hk.pop();
+        if (heap.length) {
+          let i = 0;
+          for (;;) {
+            let c = 2 * i + 1;
+            if (c >= heap.length) break;
+            if (c + 1 < heap.length && hk[c + 1] < hk[c]) c++;
+            if (hk[c] >= ld) break;
+            heap[i] = heap[c]; hk[i] = hk[c]; i = c;
+          }
+          heap[i] = lk; hk[i] = ld;
+        }
+        return [k, d];
+      };
+      const STEPS = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
+      const spread = () => {
+        while (heap.length) {
+          const [k, d] = pop();
+          if (d > dist[k]) continue;
+          const i = k % nx, j = (k / nx) | 0;
+          for (const [di, dj, l] of STEPS) {
+            const i2 = i + di, j2 = j + dj;
+            if (i2 < 0 || j2 < 0 || i2 >= nx || j2 >= ny) continue;
+            const k2 = j2 * nx + i2, c = cost[k2];
+            if (c === Infinity) continue;
+            const d2 = d + l * C * (cost[k] + c) / 2;
+            if (d2 < dist[k2]) { dist[k2] = d2; from[k2] = k; push(k2, d2); }
+          }
+        }
+      };
+      const source = k => { dist[k] = 0; from[k] = -1; push(k, 0); };
+      for (const road of out.roads) for (let q = 0; q + 1 < road.points.length; q++) {
+        const [a, b] = [road.points[q], road.points[q + 1]], n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / C);
+        for (let m = 0; m <= n; m++) {
+          const x = lerp(a[0], b[0], m / n), y = lerp(a[1], b[1], m / n), i = Math.floor(x / C), j = Math.floor(y / C);
+          if (i >= 0 && j >= 0 && i < nx && j < ny && tsd(x, y) > 14) source(j * nx + i);
+        }
+      }
+      spread();
+      // the fields too, from wherever along their edges is nearest
+      for (const f of out.fields) {
+        if (f.crop === 'pasture') continue;
+        const mx = f.poly.reduce((a, p) => a + p[0], 0) / f.poly.length, my = f.poly.reduce((a, p) => a + p[1], 0) / f.poly.length, at = [];
+        f.poly.forEach((p, q) => {
+          const e = f.poly[(q + 1) % f.poly.length], L = Math.hypot(e[0] - p[0], e[1] - p[1]);
+          let nxv = -(e[1] - p[1]) / L, nyv = (e[0] - p[0]) / L;
+          if (nxv * ((p[0] + e[0]) / 2 - mx) + nyv * ((p[1] + e[1]) / 2 - my) < 0) { nxv = -nxv; nyv = -nyv; }
+          for (let t = 3; t < L - 3; t += 4) for (const o of [1.4, 2.6]) at.push([lerp(p[0], e[0], t / L) + nxv * o, lerp(p[1], e[1], t / L) + nyv * o]);
+        });
+        reach.push({ at, kind: 'field' });
+      }
+      const cellAt = ([x, y]) => { const i = Math.floor(x / C), j = Math.floor(y / C); return i < 0 || j < 0 || i >= nx || j >= ny ? -1 : j * nx + i; };
+      const best = r => {
+        let k0 = -1;
+        for (const p of r.at) {
+          const k = cellAt(p);
+          if (k >= 0 && dist[k] < (k0 < 0 ? Infinity : dist[k0])) k0 = k;
+        }
+        return k0;
+      };
+      const tracks = [], onTrack = new Uint8Array(N);
+      for (const r of reach.map(r => [r, dist[best(r)] ?? Infinity]).sort((p, q) => p[1] - q[1]).map(p => p[0])) {
+        const k0 = best(r);
+        if (k0 < 0 || dist[k0] === Infinity) continue;
+        // a field by a track already, or a road, needs none of its own
+        if (dist[k0] < (r.kind === 'field' ? 40 : 3)) continue;
+        const path = [];
+        for (let k = k0; k >= 0; k = from[k]) path.push(k);
+        if (path.length < 3) continue;
+        for (const k of path) { onTrack[k] = 1; source(k); }
+        spread();
+        tracks.push({ path: path.reverse(), kind: r.kind, end: r.end });
+      }
+      // each a line through its cells, rounded off, a little narrower out to a field
+      for (const t of tracks) {
+        let pts = t.path.filter((_, q) => q % 2 === 0 || q === t.path.length - 1).map(k => [cx2(k % nx), cx2((k / nx) | 0)]);
+        for (let it = 0; it < 2; it++) {
+          const sm = [pts[0]];
+          for (let q = 0; q + 1 < pts.length; q++) {
+            const [a, b] = [pts[q], pts[q + 1]];
+            sm.push([lerp(a[0], b[0], 0.25), lerp(a[1], b[1], 0.25)], [lerp(a[0], b[0], 0.75), lerp(a[1], b[1], 0.75)]);
+          }
+          sm.push(pts[pts.length - 1]);
+          pts = sm;
+        }
+        // on through the gate
+        if (t.end) pts.push(t.end);
+        const width = t.kind === 'field' ? range(rng, 2.6, 3) : range(rng, 3, 3.6);
+        out.roads.push({ points: pts, width, kind: 'track' });
+        for (let q = 0; q + 1 < pts.length; q++) occ.seg(pts[q][0], pts[q][1], pts[q + 1][0], pts[q + 1][1], width / 2 + 0.5, 2);
+      }
+      // nothing left growing in a track
+      out.trees = out.trees.filter(t => {
+        const k = cellAt([t.x, t.y]);
+        if (k < 0) return true;
+        const i = k % nx, j = (k / nx) | 0;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const i2 = i + di, j2 = j + dj;
+          if (i2 >= 0 && j2 >= 0 && i2 < nx && j2 < ny && onTrack[j2 * nx + i2]) return false;
+        }
+        return true;
+      });
     }
 
     // and the wild: rocks where the hills are steep or the ground is stony,
