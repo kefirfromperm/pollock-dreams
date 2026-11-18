@@ -2174,6 +2174,9 @@ const RomanTown = (() => {
         case 'scaena': if (rng() < 0.5) r.against('chest', 1.2, 0.7); break;
       }
     });
+    // (a house without a bed in it: one put in the smallest room it fits)
+    if ((b.use === 'domus' || b.use === 'house' || b.use === 'insula' || b.use === 'villa') && !furniture.some(f => f.k === 'bed'))
+      for (const room of byArea.slice().reverse()) if (furnish(room).against('bed', 2.0, 1.0)) break;
     return { floors, walls, columns, doors, windows, furniture, gaps };
   }
 

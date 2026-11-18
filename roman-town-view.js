@@ -880,6 +880,8 @@ const RomanTownView = (() => {
       case 'stone': E(0, 0, 0.32, 0.5, 0.32, 0.32, C(204, 196, 178), 0, 0); E(-0.2, 0.15, 0.03, 0.3, 0.25, 0.02, C(220, 214, 200)); return;
       case 'log': E(0, 0, 0.17, 0.62, 0.17, 0.16, BARK[id % BARK.length], 0, 2); E(0.6, 0, 0.17, 0.03, 0.16, 0.15, SPLIT); E(0.3, 0.35, 0.05, 0.2, 0.07, 0.05, SPLIT, 0.7); return;
       case 'desk': E(0, 0, 0.7, 0.28, 0.24, 0.025, WOOD); E(0, 0, 0.35, 0.035, 0.035, 0.34, DARKWOOD); return;
+      // the day's split wood, stacked, higher as the day goes
+      case 'woodpile': for (let k = 0; k < (f.n || 2); k++) { const row = k % 4, layer = k >> 2; E(0, (row - 1.5) * 0.17 + (layer % 2) * 0.08, 0.09 + layer * 0.15, 0.45, 0.075, 0.075, k % 3 ? BARK[(id + k) % BARK.length] : SPLIT, 0, 2); } return;
       // a beast's cage: a floor of boards, posts at its corners, bars round it, a roof of planks over
       case 'cage': {
         const L = f.big ? 3.2 : 1.9, D = f.big ? 2.2 : 1.3, h = f.big ? 3.3 : 1.8;
@@ -1134,12 +1136,16 @@ const RomanTownView = (() => {
       else if (carry === 'sack') E(-0.02 * k, -0.1 * k, 1.58 * k, 0.4 * k, 0.24 * k, 0.17 * k, SACK, 0.15, 4);
       else if (carry === 'wood') for (const [o, z] of [[-0.09, 1.08], [0.09, 1.08], [0, 1.2]]) E(0.24 * k, o * k, z * k, 0.07 * k, 0.32 * k, 0.07 * k, BARK[0], 0, 2);
       else if (carry === 'hay') E(-0.18 * k, 0, 1.55 * k, 0.32 * k, 0.4 * k, 0.32 * k, HAY, 0, 1);
+      // a timber on the shoulder, its length along the way he goes
+      else if (carry === 'timber') E(0.1 * k, 0.2 * k, 1.58 * k, 1.5 * k, 0.08 * k, 0.08 * k, SPLIT, 0, 2);
       else if (carry) S(-0.05, 0.18, 1.45, 0.7, 0.025, 0.025, WOOD, 0.12); // a tool on the shoulder
     };
     switch (pose) {
       case 'lie': {
         // the length of it, a blanket over, the head on the pillow
-        const cov = f.z > 0.3 ? pick(STOLA, id, 14).map(v => v * 0.8) : cl;
+        const cov = f.z > 0.3 || f.mat ? pick(STOLA, id, 14).map(v => v * 0.8) : cl;
+        // (on the floor, a straw pallet under them, a rolled cloak for a pillow)
+        if (f.mat) { E(0.05, 0, -0.03, 1.0, 0.4, 0.05, STRAW.map(v => v * 0.85), 0, 1); E(0.82, 0, 0.04, 0.12, 0.3, 0.06, pick(CLOAK, id, 16)); }
         S(0.72, 0, 0.13, 0.12, 0.1, 0.1, hair); S(0.28, 0, 0.13, 0.36, 0.21, 0.12, cov); S(-0.42, 0, 0.11, 0.5, 0.18, 0.1, cov);
         return;
       }
