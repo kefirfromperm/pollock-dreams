@@ -50,7 +50,10 @@
 //   lamps                [{ x, y, z, power }] where a lamp or a fire burns at night, z its height
 //   places               [{ kind, poly, x, y, angle }] the town's public places, their ground: forum,
 //                        market, baths, theatre, nymphaeum, temple
-//   (a box with rooms says too where it is gone into from outside, entrances [{ s, t, nx, ny, w,
+//   (a pasture its gateway too, gateway { a, b, z, inside } the posts the gate hangs between and a
+//   point inside; a gate's box the width of its passage, passage; a door, [s, t, angle, width, shut] its
+//   angle as it stands, shut its angle closed;
+//   a box with rooms says too where it is gone into from outside, entrances [{ s, t, nx, ny, w,
 //   kind }] from its corner, nx, ny pointing out, kind front, back or open; its interior, every
 //   doorway in its walls, gaps [[s, t, w, ux, uy]], ux, uy along the wall; a pasture its gate,
 //   gate [x, y], where the gap is left in its wall)
@@ -949,7 +952,19 @@ const RomanTown = (() => {
         for (let it = 0; it < 30; it++) { const m = (a + b) / 2; if (psd(u0 + nu * m, v0 + nv * m) < 0) a = m; else b = m; }
         return [u0 + nu * a, v0 + nv * a, nu, nv];
       });
-      const inGate = ([u, v]) => gates.some(([gu, gv]) => Math.hypot(u - gu, v - gv) < gw / 2 + 0.5);
+      // each set along the wall where it is: the wall's way there, and out
+      const ts = range(rng, 5.5, 7.5), roofed = rng() < 0.6, half = gw / 2 + 1, gs = ts * 1.25, towerD = half + gs / 2 - 0.7;
+      const along = gates.map(([gu, gv]) => {
+        let kg = 0, bd = Infinity;
+        ring.forEach(([u, v], k) => { const d = Math.hypot(u - gu, v - gv); if (d < bd) { bd = d; kg = k; } });
+        const p0 = ring[(kg - 4 + n) % n], p1 = ring[(kg + 4) % n], l = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+        const tu = (p1[0] - p0[0]) / l, tv = (p1[1] - p0[1]) / l;
+        let ou = tv, ov = -tu;
+        if (psd(gu + ou, gv + ov) < psd(gu - ou, gv - ov)) { ou = -ou; ov = -ov; }
+        return { tu, tv, ou, ov };
+      });
+      // (the wall running right into the towers either side of a gate)
+      const inGate = ([u, v]) => gates.some(([gu, gv]) => Math.hypot(u - gu, v - gv) < towerD);
       const z = ([u, v]) => hAt(...P(u, v));
       // the curtain wall, in pieces of up to 8 m between the gates
       let run = [];
@@ -968,7 +983,6 @@ const RomanTown = (() => {
       }
       flush();
       // towers every forty metres or so, round at the corners
-      const ts = range(rng, 5.5, 7.5), roofed = rng() < 0.6;
       const tower = (u, v, nu, nv, size, round) => {
         const [x, y] = P(u + nu * (size / 2 - wallT / 2 - 0.5), v + nv * (size / 2 - wallT / 2 - 0.5));
         const h = wallH + range(rng, 2.5, 4);
@@ -981,7 +995,7 @@ const RomanTown = (() => {
         const a = ring[k], b = ring[(k + 1) % n];
         acc += Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (acc < step) continue;
-        const nearGate = gates.some(([gu, gv]) => Math.hypot(a[0] - gu, a[1] - gv) < gw / 2 + 14);
+        const nearGate = gates.some(([gu, gv]) => Math.hypot(a[0] - gu, a[1] - gv) < towerD + gs / 2 + 8);
         if (nearGate) continue;
         acc = 0;
         // facing out, square to the wall; round where it turns
@@ -993,19 +1007,16 @@ const RomanTown = (() => {
         const corner = turn > 0.3;
         tower(a[0], a[1], nu, nv, corner ? ts * 1.2 : ts, corner);
       }
-      // the gates: an arch over the street, a tower either side
+      // the gates: an arch over the street, set along the wall, the passage
+      // under it as wide as the street, a tower either side against it
       const roundG = rng() < 0.5;
-      for (const [gu, gv, nu, nv] of gates) {
-        const tu = -nv, tv = nu, half = gw / 2 + 1;
-        const r = [gu - Math.abs(tu) * half - Math.abs(nu) * (wallT / 2 + 1.5), gv - Math.abs(tv) * half - Math.abs(nv) * (wallT / 2 + 1.5),
-          gu + Math.abs(tu) * half + Math.abs(nu) * (wallT / 2 + 1.5), gv + Math.abs(tv) * half + Math.abs(nv) * (wallT / 2 + 1.5)];
-        box(r, { use: 'gate', mat: 'stone', h: wallH + 1, roof: 'flat', pitch: 0 });
-        for (const sg of [-1, 1]) for (const io of [-1, 1]) lamp(gu + tu * sg * (half - 0.8) + nu * io * (wallT / 2 + 2), gv + tv * sg * (half - 0.8) + nv * io * (wallT / 2 + 2), 3.5, 1);
-        const gs = ts * 1.25;
-        for (const sg of [-1, 1]) tower(gu + tu * sg * (half + gs / 2), gv + tv * sg * (half + gs / 2), nu, nv, gs, roundG);
-        const [x, y] = P(gu, gv);
+      gates.forEach(([gu, gv, nu, nv], gi) => {
+        const { tu, tv, ou, ov } = along[gi], [x, y] = P(gu, gv);
+        B.push({ shape: 'box', use: 'gate', mat: 'stone', x, y, angle: th + Math.atan2(tv, tu), w: 2 * half, d: wallT + 3, z0: hAt(x, y), h: wallH + 1, roof: 'flat', pitch: 0, passage: mainW + 1 });
+        for (const sg of [-1, 1]) for (const io of [-1, 1]) lamp(gu + tu * sg * (half - 0.8) + ou * io * (wallT / 2 + 2), gv + tv * sg * (half - 0.8) + ov * io * (wallT / 2 + 2), 3.5, 1);
+        for (const sg of [-1, 1]) tower(gu + tu * sg * towerD, gv + tv * sg * towerD, ou, ov, gs, roundG);
         out.gates.push({ x, y, angle: th + Math.atan2(nv, nu) });
-      }
+      });
     }
 
     // ================= the country about =================
@@ -1147,7 +1158,7 @@ const RomanTown = (() => {
     const kV0 = Math.floor((vMin - v0) / Gv), kV1 = Math.ceil((vMax - v0) / Gv);
 
     const slopeAt = (x, y) => Math.hypot(hAt(x + 3, y) - hAt(x - 3, y), hAt(x, y + 3) - hAt(x, y - 3)) / 6;
-    const nCrop = perlin(rng);
+    const nCrop = perlin(rng), pastureList = [];
     for (let ku = kU0; ku < kU1; ku++) for (let kv = kV0; kv < kV1; kv++) {
       const cu1 = u0 + ku * Gu, cv1 = v0 + kv * Gv;
       // strips across the square, some of them halved
@@ -1162,6 +1173,9 @@ const RomanTown = (() => {
       }
       for (const r of parcels) parcel(r, 0, [cu1, cv1, cu1 + Gu, cv1 + Gv]);
     }
+    // the pastures walled once all the fields are laid out, so each gate
+    // can face open ground or a road, not the next field
+    for (const [pr, f] of pastureList) pasture(pr, f);
     // A parcel: tilled where it is level enough, grazed where it is steeper,
     // halved and halved again to fit round what is in its way. Set back
     // further from the square's own edges: lanes along the surveyor's lines,
@@ -1233,32 +1247,44 @@ const RomanTown = (() => {
           q++;
         }
       }
-      if (crop === 'pasture') pasture(pr, out.fields[out.fields.length - 1]);
+      if (crop === 'pasture') pastureList.push([pr, out.fields[out.fields.length - 1]]);
     }
     // a pasture: a dry-stone wall about it, a gap for a gate, a shade tree, a
     // trough's well maybe, and a flock or a herd
     function pasture(pr, field) {
       const [u1, v1, u2, v2] = pr, edges = [[u1, v1, u2, v1], [u2, v1, u2, v2], [u2, v2, u1, v2], [u1, v2, u1, v1]];
       // its gate on a side open to the country or a road, not on the next field, if it can be
-      const outside = e => {
-        const [a, b, c, d] = edges[e], n = e % 2 === 0 ? [0, e === 0 ? -1 : 1] : [e === 1 ? 1 : -1, 0];
-        return occ.get(...P((a + c) / 2 + n[0] * 4, (b + d) / 2 + n[1] * 4));
-      };
+      // how far out from where the gate would be it is clear of fields and walls
       const first = rng() * 4 | 0, gateAt = range(rng, 0.2, 0.8);
-      const gateEdge = [0, 1, 2, 3].map(k => (first + k) % 4).find(e => outside(e) === 0 || outside(e) === 2) ?? first;
+      const clear = e => {
+        const [a, b, c, d] = edges[e], n = e % 2 === 0 ? [0, e === 0 ? -1 : 1] : [e === 1 ? 1 : -1, 0], gu = lerp(a, c, gateAt), gv = lerp(b, d, gateAt);
+        let o = 1.5;
+        for (; o <= 12; o += 1.5) { const q = occ.get(...P(gu + n[0] * o, gv + n[1] * o)); if (q === 1 || q === 3) break; }
+        return o;
+      };
+      const order = [0, 1, 2, 3].map(k => (first + k) % 4);
+      const gateEdge = order.find(e => clear(e) > 12) ?? order.reduce((p, q) => clear(q) > clear(p) ? q : p);
+      // the gate in the middle of the stretch of wall it falls in, that stretch left out
+      const gL = Math.hypot(edges[gateEdge][2] - edges[gateEdge][0], edges[gateEdge][3] - edges[gateEdge][1]), gn = Math.max(1, Math.ceil(gL / 6));
+      const gk = Math.min(gn - 1, Math.floor(gateAt * gn)), gateMid = (gk + 0.5) / gn;
       {
         // a track to the gate, from outside it
-        const [a, b, c, d] = edges[gateEdge], gu = lerp(a, c, gateAt), gv = lerp(b, d, gateAt);
+        const [a, b, c, d] = edges[gateEdge], gu = lerp(a, c, gateMid), gv = lerp(b, d, gateMid);
         const mu = (u1 + u2) / 2, mv = (v1 + v2) / 2;
         const n = gateEdge % 2 === 0 ? [0, Math.sign(gv - mv)] : [Math.sign(gu - mu), 0];
-        reach.push({ at: [2.5, 3.5, 4.5].map(o => P(gu + n[0] * o, gv + n[1] * o)), end: P(gu, gv), kind: 'gate' });
+        reach.push({ at: [1.5, 2.5, 3.5].map(o => P(gu + n[0] * o, gv + n[1] * o)), end: P(gu, gv), kind: 'gate' });
         field.gate = P(gu, gv);
       }
+      let gap = null;
       edges.forEach(([a, b, c, d], e) => {
         const L = Math.hypot(c - a, d - b), n = Math.max(1, Math.ceil(L / 6));
         for (let k = 0; k < n; k++) {
           const t1 = k / n, t2 = (k + 1) / n;
-          if (e === gateEdge && Math.abs((t1 + t2) / 2 - gateAt) < 2.5 / L) continue;
+          if (e === gateEdge && k === gk) {
+            // (the gap left for the gate)
+            gap = gap ? [Math.min(gap[0], t1), Math.max(gap[1], t2), e] : [t1, t2, e];
+            continue;
+          }
           const p1 = [lerp(a, c, t1), lerp(b, d, t1)], p2 = [lerp(a, c, t2), lerp(b, d, t2)];
           const [x1, y1] = P(...p1), [x2, y2] = P(...p2);
           if (!inWorld(x1, y1, 2) && !inWorld(x2, y2, 2)) continue;
@@ -1268,6 +1294,15 @@ const RomanTown = (() => {
           occ.seg(x1, y1, x2, y2, 1.5, 2);
         }
       });
+      // the gate: two wooden posts either side of the gap, the gate between,
+      // a leaf, or two if it is wide, hung on them
+      if (gap) {
+        const [a, b, c, d] = edges[gap[2]], g1 = P(lerp(a, c, gap[0]), lerp(b, d, gap[0])), g2 = P(lerp(a, c, gap[1]), lerp(b, d, gap[1]));
+        const ang = Math.atan2(g2[1] - g1[1], g2[0] - g1[0]);
+        for (const [x, y] of [g1, g2]) B.push({ shape: 'box', use: 'gatepost', mat: 'timber', x, y, angle: ang, w: 0.28, d: 0.28, z0: hAt(x, y), h: 1.35, roof: 'flat', pitch: 0 });
+        const [mu, mv] = [(u1 + u2) / 2, (v1 + v2) / 2];
+        field.gateway = { a: g1, b: g2, z: Math.min(hAt(...g1), hAt(...g2)), inside: P(mu, mv) };
+      }
       // the shade tree well inside, on open grass, and the well clear of it
       let shade = null;
       if (rng() < 0.5) {
@@ -1329,7 +1364,9 @@ const RomanTown = (() => {
               out2 = Math.max(out2, ccw * ((x - a[0]) * (b[1] - a[1]) - (y - a[1]) * (b[0] - a[0])) / L);
             }
             const k = j * nx + i;
-            if (out2 < 1 && cost[k] !== Infinity && !(cost[k] > 8)) cost[k] *= 9;
+            // (no track over a pasture's wall or across it)
+            if (f.crop === 'pasture' && out2 < 0.6) cost[k] = Infinity;
+            else if (out2 < 1 && cost[k] !== Infinity && !(cost[k] > 8)) cost[k] *= 9;
           }
       }
       // the river, and whatever is built out here (a field's wall too, but for its gate)
@@ -1605,7 +1642,7 @@ const RomanTown = (() => {
     // what stands about, by cells
     const cell = 16, grid = new Map(), key = (i, j) => i * 4099 + j;
     for (const o of B) {
-      if (!solid(o)) continue;
+      if (!solid(o) && o.use !== 'fountain' && o.use !== 'well') continue; // (nor a door onto a fountain or a well)
       const R = o.shape === 'box' ? Math.hypot(o.w, o.d) / 2 : o.shape === 'round' ? o.r : o.shape === 'cavea' ? o.r1 : Math.max(o.a, o.b);
       for (let i = Math.floor((o.x - R - 1) / cell); i <= Math.floor((o.x + R + 1) / cell); i++)
         for (let j = Math.floor((o.y - R - 1) / cell); j <= Math.floor((o.y + R + 1) / cell); j++) {
@@ -1621,7 +1658,9 @@ const RomanTown = (() => {
       const [s, t] = sidePt(b, side, p, 0);
       b.entrances.push({ s, t, nx: NRM[side][0], ny: NRM[side][1], w, kind });
     };
-    const blocked = (self, x, y) => (grid.get(key(Math.floor(x / cell), Math.floor(y / cell))) || []).some(o => o !== self && onBuilding(o, x, y, 0));
+    // (a fountain or a well whole, its basin too)
+    const whole = o => o.use === 'fountain' || o.use === 'well' ? { ...o, hole: null } : o;
+    const blocked = (self, x, y) => (grid.get(key(Math.floor(x / cell), Math.floor(y / cell))) || []).some(o => o !== self && onBuilding(whole(o), x, y, 0.2));
     // along each side, where it is clear just outside
     for (const [b, P] of walled) for (const side of SIDES) {
       const L = sideLen(b, side), iv = [];
@@ -1745,7 +1784,7 @@ const RomanTown = (() => {
           if (leaf) {
             const flip = rng() < 0.5, hinge = flip ? g2 : g1, dir = Math.atan2(uy, ux) + (flip ? Math.PI : 0);
             const open = (rng() < 0.5 ? 1 : -1) * (leaf === 2 ? (rng() < 0.7 ? 0 : range(rng, 0.3, 1.2)) : range(rng, 0.3, 1.6));
-            doors.push([hinge[0], hinge[1], dir + open, w]);
+            doors.push([hinge[0], hinge[1], dir + open, w, dir]);
           }
         }
         t0 = Math.max(t0, t + w / 2);

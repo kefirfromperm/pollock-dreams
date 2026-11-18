@@ -536,7 +536,8 @@ const RomanTownView = (() => {
     const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
     const mixc = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
     const dir = (az, el) => { const e = Math.max(el, 0.07); return [Math.cos(e) * Math.sin(az), -Math.cos(e) * Math.cos(az), Math.sin(e)]; };
-    const { sun, moon } = sky, day = sm(-0.12, 0.06, sun.el), high = sm(0, 0.45, sun.el), up = sm(-0.015, 0.04, sun.el);
+    // (civil twilight, the sun up to 6° under, still light enough to see by)
+    const { sun, moon } = sky, day = sm(-0.12, 0.0, sun.el), high = sm(0, 0.45, sun.el), up = sm(-0.015, 0.04, sun.el);
     const sunC = mixc([1.0, 0.42, 0.16], [1.0, 0.93, 0.8], high).map(v => v * 2.6 * up);
     const dusk = mixc([0.42, 0.36, 0.5], [0.69, 0.78, 0.92], high).map(v => v * (0.3 + 0.7 * sm(-0.12, 0.2, sun.el)));
     const mUp = sm(-0.015, 0.06, moon.el) * moon.lit * (1 - day);
@@ -545,7 +546,7 @@ const RomanTownView = (() => {
     const bySun = sunC[1] >= moonC[1];
     return {
       L: bySun ? dir(sun.az, sun.el) : dir(moon.az, moon.el), col: bySun ? sunC : moonC,
-      sky: mixc(night, dusk, day), grey: 0.75 * (1 - day), lamps: 1 - sm(-0.1, 0.03, sun.el),
+      sky: mixc(night, dusk, day), grey: 0.75 * (1 - day), lamps: 1 - sm(-0.09, 0.0, sun.el),
     };
   }
 
@@ -603,8 +604,41 @@ const RomanTownView = (() => {
         if (rowing) E(-2.3, 0.4, 1.1 + 0.3 * sw, 1.6, 0.03, 0.03, WOOD, 0.4 + 0.3 * cw);
         return;
       }
+      case 'meal': return mealBodies(f, E);
       case 'basket': E(0, 0, 0.18, 0.26, 0.26, 0.18, WICKER); E(0, 0, 0.33, 0.2, 0.2, 0.07, pick(rgbs([[150, 40, 40], [110, 140, 60], [200, 160, 60], [90, 60, 110], [170, 170, 160]]), id, 9)); return;
       default: return beastBodies(f, E, lod);
+    }
+  }
+  // a table laid: bread, a bowl of puls, olives, cheese, eggs, figs, a
+  // jug of wine and a cup for each at it; in an atrium house a fish,
+  // a fowl and grapes too
+  const BREAD = C(196, 142, 70), CHEESE = C(232, 214, 160), OLIVE = C(52, 56, 34), FIG = C(96, 52, 70), EGG = C(238, 232, 214), PULS = C(214, 196, 150), GRAPE = C(92, 44, 86), FISH = C(170, 170, 160), FOWL = C(176, 110, 56), PLATE = C(196, 112, 74), WINE = C(70, 20, 30);
+  function mealBodies(f, E) {
+    const id = f.id, R = k => hash(id, k, 991), hw = (f.round ? f.w * 0.42 : f.w / 2 - 0.1), hd = (f.round ? f.d * 0.42 : f.d / 2 - 0.1);
+    const at = (u, v) => [u * hw, v * hd];
+    const dish = (u, v, r, food, n, s = 0.035) => {
+      const [a, b] = at(u, v);
+      E(a, b, 0.012, r, r, 0.012, PLATE);
+      for (let k = 0; k < n; k++) { const t = k / n * Math.PI * 2 + R(k + 40) * 3, q = n > 1 ? r * 0.55 : 0; E(a + Math.cos(t) * q, b + Math.sin(t) * q, 0.03, s, s, s * 0.8, food); }
+    };
+    // the bread: a round loaf scored in eight
+    { const [a, b] = at(-0.3, -0.35); E(a, b, 0.04, 0.1, 0.1, 0.045, BREAD); E(a, b, 0.07, 0.07, 0.07, 0.02, BREAD.map(v => v * 0.85)); }
+    // the bowl of puls, the jug
+    { const [a, b] = at(0.3, 0.35); E(a, b, 0.035, 0.085, 0.085, 0.035, PLATE); E(a, b, 0.065, 0.065, 0.065, 0.008, PULS); }
+    { const [a, b] = at(0.62, -0.5); E(a, b, 0.11, 0.06, 0.06, 0.11, CLAY); E(a, b, 0.22, 0.03, 0.03, 0.02, WINE); }
+    dish(-0.35, 0.4, 0.075, OLIVE, 7, 0.016);
+    if (R(1) < 0.7) { const [a, b] = at(0.05, -0.05); E(a, b, 0.03, 0.06, 0.045, 0.03, CHEESE, 0.4); }
+    if (R(2) < 0.5) dish(0.1, 0.45, 0.06, EGG, 3, 0.022);
+    if (R(3) < 0.6) dish(-0.6, 0.0, 0.065, FIG, 4, 0.022);
+    if (f.rich) {
+      { const [a, b] = at(0, 0); E(a, b, 0.012, 0.16, 0.11, 0.012, PLATE); E(a, b, 0.04, 0.13, 0.04, 0.03, FISH); E(a + 0.12, b, 0.04, 0.03, 0.035, 0.012, FISH); }
+      if (R(4) < 0.6) { const [a, b] = at(0.45, 0.05); E(a, b, 0.012, 0.11, 0.11, 0.012, PLATE); E(a, b, 0.06, 0.08, 0.06, 0.05, FOWL); }
+      dish(-0.1, -0.5, 0.07, GRAPE, 9, 0.018);
+    }
+    // a cup for each at it, about the edge
+    for (let k = 0, n = Math.max(1, Math.min(6, f.n || 2)); k < n; k++) {
+      const t = k / n * Math.PI * 2 + 0.4, [a, b] = [Math.cos(t) * hw * 0.85, Math.sin(t) * hd * 0.85];
+      E(a, b, 0.04, 0.035, 0.035, 0.04, CLAY); E(a, b, 0.08, 0.026, 0.026, 0.004, WINE);
     }
   }
   function personBodies(f, E, lod) {
@@ -727,7 +761,8 @@ const RomanTownView = (() => {
           if (anim === 'ball' && sg > 0) { ax = 0.1; az = 1.5 + 0.2 * Math.max(0, sw); arx = 0.06; arz = 0.25; }
           if (anim === 'beat' || anim === 'prune' || anim === 'pole') { ax = 0.15; az = 1.55; arx = 0.07; arz = 0.25; }
           if (anim === 'scythe') { ax = 0.32; az = 0.95; arx = 0.2; arz = 0.06; }
-          if (anim === 'sow' && sg > 0) { ax = 0.22 * sw; az = 1.05; arx = 0.15; arz = 0.07; }
+          if ((anim === 'sow' || anim === 'scatter') && sg > 0) { ax = 0.22 * sw; az = 1.05; arx = 0.15; arz = 0.07; }
+          if (anim === 'shoo') { ax = 0.12; az = 1.25 + 0.12 * sg * sw; arx = 0.08; arz = 0.2; }
           if (anim === 'plough') { ax = 0.32; az = 0.95; arx = 0.2; arz = 0.06; }
           if (anim === 'fish' && sg > 0) { ax = 0.2; az = 1.2; arx = 0.17; arz = 0.07; }
           if (!(carry === 'torch' && sg > 0) && !(carry === 'jar-full' && sg > 0)) S(lean + ax, sg * 0.25, az + bob, arx, 0.055, arz, cl === under || dress === 'tunic' || dress === 'work' || dress === 'slave' ? skin : cl);
@@ -739,7 +774,7 @@ const RomanTownView = (() => {
         if (anim === 'fish') S(1.9, 0.12, 1.45, 1.6, 0.015, 0.015, WOOD, 0.08);
         if (anim === 'plough') { S(0.75, 0, 0.75, 0.32, 0.25, 0.04, WOOD); S(1.2, 0, 0.45, 0.4, 0.06, 0.25, DARKWOOD); S(2.1, 0, 0.6, 0.9, 0.04, 0.04, WOOD); }
         if (!walking && f.carry === 'jar-full') S(0, 0, 1.76, 0.15, 0.15, 0.19, CLAY);
-        if (walking || !anim) carried(1.52 + bob);
+        if (walking || !anim || anim === 'watch' || anim === 'shoo' || anim === 'talk' || anim === 'scatter' || anim === 'pray') carried(1.52 + bob);
       }
     }
   }
@@ -1111,14 +1146,7 @@ const RomanTownView = (() => {
           block(h ? mx + o - 0.025 : mx - T, h ? my - T : my + o - 0.025, h ? mx + o + 0.025 : mx + T, h ? my + T : my + o + 0.025, 1.0, 1.72, SOLID.timber);
         }
       }
-      // doors: a wooden leaf from its hinge, ajar or shut
-      for (const [ha, hc, ang, wd] of I.doors || []) {
-        const ux = Math.cos(ang), uy = Math.sin(ang), nx = -uy * 0.06, ny = ux * 0.06;
-        mat = [SOLID.door, t1, t2, 0];
-        const top = [Q(ha + nx, hc + ny, zf + 2.1), Q(ha + ux * wd + nx, hc + uy * wd + ny, zf + 2.1), Q(ha + ux * wd - nx, hc + uy * wd - ny, zf + 2.1), Q(ha - nx, hc - ny, zf + 2.1)];
-        face(top);
-        walls(top, b.z0);
-      }
+      // (the doors are drawn apart, each moment, swinging as people go through)
       // furniture
       for (const f of I.furniture || []) {
         const a1 = f.a - (f.w || 0) / 2, c1 = f.c - (f.d || 0) / 2, a2 = f.a + (f.w || 0) / 2, c2 = f.c + (f.d || 0) / 2;
@@ -1177,7 +1205,14 @@ const RomanTownView = (() => {
       for (const b of town.buildings) {
         const [t1, t2] = tints(b);
         mat = [matOf(b), t1, t2, 0];
-        if (b.shape === 'box') { if (cut && b.interior) cutaway(b, t1, t2); else box(b); }
+        if (b.shape === 'box') {
+          if (cut && b.interior) cutaway(b, t1, t2);
+          else if (cut && b.use === 'gate' && b.passage) {
+            // a gate cut through: its two piers, the passage between them open
+            const pw = (b.w - b.passage) / 2, c = Math.cos(b.angle), sn = Math.sin(b.angle);
+            for (const sg of [-1, 1]) { const o = sg * (b.passage / 2 + pw / 2); box({ ...b, x: b.x + c * o, y: b.y + sn * o, w: pw, h: Math.min(CUT, b.h) }); }
+          } else box(b);
+        }
         else if (b.shape === 'round') round(b);
         else if (b.shape === 'cavea') cavea(b);
         else if (b.shape === 'arena') arena(b);
@@ -1197,6 +1232,75 @@ const RomanTownView = (() => {
       return { vao, dvao, n };
     }
     const ROOFED = solids(false), CUTAWAY = solids(true);
+    // ---- the doors: each leaf on its hinge, standing as it was left, swung
+    // open as someone comes to it, easing back once they have gone ----
+    const DOORS = [];
+    for (const b of town.buildings) for (const d of (b.interior && b.interior.doors) || []) {
+      const [ha, hc, rest, wd, shut = rest] = d, ca = Math.cos(b.angle), sa = Math.sin(b.angle);
+      const L = (a, c) => [b.x + (a - b.w / 2) * ca - (c - b.d / 2) * sa, b.y + (a - b.w / 2) * sa + (c - b.d / 2) * ca];
+      const [mx, my] = L(ha + Math.cos(shut) * wd / 2, hc + Math.sin(shut) * wd / 2);
+      const sg = Math.sign(Math.sin(rest - shut)) || 1;
+      DOORS.push({ b, ha, hc, wd, rest, open: shut + sg * 1.5, cur: rest, mx, my, z: b.z0, t: tints(b), h: 2.1 });
+    }
+    // and the pastures' wooden gates, shut, a leaf or two, swinging in to let the shepherd through
+    for (const f of town.fields) {
+      const G = f.gateway;
+      if (!G) continue;
+      const L = Math.hypot(G.b[0] - G.a[0], G.b[1] - G.a[1]), two = L > 3.2, wd = (two ? L / 2 : L) - 0.2;
+      for (const [hx, hy, ox, oy] of two ? [[...G.a, ...G.b], [...G.b, ...G.a]] : [[...G.a, ...G.b]]) {
+        const shut = Math.atan2(oy - hy, ox - hx), nx = -Math.sin(shut), ny = Math.cos(shut);
+        const sg = nx * (G.inside[0] - hx) + ny * (G.inside[1] - hy) > 0 ? 1 : -1;
+        const b = { x: hx, y: hy, angle: 0, w: 0, d: 0, z0: G.z };
+        DOORS.push({ b, ha: 0, hc: 0, wd, rest: shut, open: shut + sg * 1.55, cur: shut, mx: hx + Math.cos(shut) * wd / 2, my: hy + Math.sin(shut) * wd / 2, z: G.z, t: [0.5, 0.5], h: 1.1, field: true, reach: Math.max(1.6, wd * 0.7) });
+      }
+    }
+    const doorBuf = gl.createBuffer(), doorVAO = gl.createVertexArray(), doorDVAO = gl.createVertexArray();
+    gl.bindVertexArray(doorVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, doorBuf);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 40, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 40, 24);
+    gl.bindVertexArray(doorDVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, doorBuf);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+    gl.bindVertexArray(null);
+    let doorN = 0, doorT = null;
+    function doorsIn(rect, life, t) {
+      const dt = doorT === null ? 0 : clamp(t - doorT, 0, 0.2);
+      doorT = t;
+      // who is about the doors in view (people, dogs), a couple of metres a cell
+      const near = new Map(), x0 = rect[0] - 3, y0 = rect[1] - 3, x1 = rect[0] + rect[2] + 3, y1 = rect[1] + rect[3] + 3;
+      if (life) for (const f of life.figures) {
+        if ((f.kind !== 'person' && f.kind !== 'dog') || f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
+        const k = Math.floor(f.x / 2) * 65536 + Math.floor(f.y / 2);
+        (near.get(k) || near.set(k, []).get(k)).push(f);
+      }
+      SV.length = 0;
+      for (const D of DOORS) {
+        if ((S !== CUTAWAY && !D.field) || D.mx < x0 || D.mx > x1 || D.my < y0 || D.my > y1) continue;
+        let by = false;
+        const rr = D.reach || 1.4;
+        for (let i = Math.floor((D.mx - rr) / 2); i <= Math.floor((D.mx + rr) / 2) && !by; i++)
+          for (let j = Math.floor((D.my - rr) / 2); j <= Math.floor((D.my + rr) / 2) && !by; j++)
+            for (const f of near.get(i * 65536 + j) || []) if (Math.hypot(f.x - D.mx, f.y - D.my) < (D.reach || 1.4) && Math.abs((f.z || 0) - D.z) < 1.6) { by = true; break; }
+        const want = by ? D.open : D.rest;
+        let d = (want - D.cur) % (Math.PI * 2);
+        if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2;
+        D.cur += clamp(d, -(by ? 3.2 : 1.1) * dt, (by ? 3.2 : 1.1) * dt);
+        const b = D.b, ca = Math.cos(b.angle), sa = Math.sin(b.angle), hw = b.w / 2, hd = b.d / 2;
+        const Q = (a, c, z) => [b.x + (a - hw) * ca - (c - hd) * sa, b.y + (a - hw) * sa + (c - hd) * ca, z];
+        const ux = Math.cos(D.cur), uy = Math.sin(D.cur), nx = -uy * 0.06, ny = ux * 0.06, zt = b.z0 + 0.08 + D.h;
+        mat = [D.field ? SOLID.timber : SOLID.door, D.t[0], D.t[1], 0];
+        const top = [Q(D.ha + nx, D.hc + ny, zt), Q(D.ha + ux * D.wd + nx, D.hc + uy * D.wd + ny, zt), Q(D.ha + ux * D.wd - nx, D.hc + uy * D.wd - ny, zt), Q(D.ha - nx, D.hc - ny, zt)];
+        face(top);
+        walls(top, b.z0);
+        if (D.z < movZ[0]) movZ[0] = D.z;
+        if (D.z > movZ[1]) movZ[1] = D.z;
+      }
+      doorN = SV.length / 10;
+      if (doorN) { gl.bindBuffer(gl.ARRAY_BUFFER, doorBuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SV), gl.DYNAMIC_DRAW); }
+      SV.length = 0;
+    }
     SV.length = 0;
     // close enough (less than this many metres across) to look inside
     const INSIDE = 200;
@@ -1490,6 +1594,7 @@ const RomanTownView = (() => {
       setWind(P.solid);
       gl.bindVertexArray(S.vao);
       gl.drawArrays(gl.TRIANGLES, 0, S.n);
+      if (doorN && g === liveG) { gl.bindVertexArray(doorVAO); gl.drawArrays(gl.TRIANGLES, 0, doorN); }
       const nb = bodiesIn(rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]);
       if (nb) {
         gl.useProgram(P.body.p);
@@ -1556,8 +1661,13 @@ const RomanTownView = (() => {
       gl.useProgram(P.bodyDepth.p);
       gl.uniformMatrix4fv(P.bodyDepth.loc.uMVP, false, lv.m);
       setWind(P.bodyDepth);
-      gl.bindVertexArray(movVAOs[1]);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[1].n, movN);
+      if (movN) { gl.bindVertexArray(movVAOs[1]); gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[1].n, movN); }
+      if (doorN) {
+        gl.useProgram(P.depth.p);
+        gl.uniformMatrix4fv(P.depth.loc.uMVP, false, lv.m);
+        gl.bindVertexArray(doorDVAO);
+        gl.drawArrays(gl.TRIANGLES, 0, doorN);
+      }
       gl.disable(gl.POLYGON_OFFSET_FILL);
       gl.bindVertexArray(null);
     }
@@ -1594,7 +1704,7 @@ const RomanTownView = (() => {
 
     // ---- each frame ----
     const ss = canvas.width * canvas.height * 4 <= 10e6 ? 2 : 1; // drawn finer, then averaged
-    const G = gbuffer(canvas.width * ss, canvas.height * ss);
+    const G = gbuffer(canvas.width * ss, canvas.height * ss), liveG = G;
     const litTex = ss > 1 ? tex(G.w, G.h, gl.RGBA8, gl.LINEAR) : null, litFBO = litTex ? target(litTex) : null;
     const lampData = new Float32Array(128 * 4);
 
@@ -1612,7 +1722,9 @@ const RomanTownView = (() => {
       else if (S === CUTAWAY && rect[2] > INSIDE * 1.05) S = ROOFED;
       const key = rect.join() + lt.L.join() + (S === CUTAWAY);
       if (key !== shadowKey) { lv = lightView(lt.L, ...rect); drawShadows(lv, rect); shadowKey = key; }
-      if (movN) drawMoverShadows(lt.L, rect);
+      doorsIn(rect, life, t);
+      const shade = movN || doorN;
+      if (shade) drawMoverShadows(lt.L, rect);
       drawScene(G, topDown(...rect), rect, scale);
       // the light
       gl.disable(gl.DEPTH_TEST);
@@ -1630,8 +1742,8 @@ const RomanTownView = (() => {
       gl.uniform1f(L.uTexel, lv.texel);
       gl.uniform1f(L.uShTexel, 1 / SH);
       gl.uniform1f(L.uBias, (0.04 + lv.texel * 0.5) / lv.depth);
-      gl.uniform1i(L.uMov, movN ? 1 : 0);
-      if (movN) {
+      gl.uniform1i(L.uMov, shade ? 1 : 0);
+      if (shade) {
         gl.uniformMatrix4fv(L.uLightM, false, mlv.m);
         gl.uniform1f(L.uBiasM, (0.02 + mlv.texel * SH / MSH * 0.6) / mlv.depth);
       }

@@ -34,13 +34,10 @@ const RomanTownSky = (() => {
     return { sun, moon };
   }
 
-  // The sky over a Roman town at a moment, its clock the visitor's: the
-  // town as far north as Rome, as far east as the middle of the visitor's
-  // time zone, so the sun is highest about noon by their clock.
+  // The sky over a Roman town at a moment: over Rome itself, 41.9° north,
+  // 12.5° east, as it is there at that very moment.
   function local(date = new Date()) {
-    const y = date.getFullYear();
-    const std = Math.max(new Date(y, 0, 1).getTimezoneOffset(), new Date(y, 6, 1).getTimezoneOffset());
-    return at(date, 41.9, -std / 4);
+    return at(date, 41.9, 12.48);
   }
 
   return { at, local };

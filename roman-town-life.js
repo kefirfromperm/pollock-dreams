@@ -305,7 +305,7 @@ const RomanTownLife = (() => {
       const gx = Math.ceil((u1 - u0) / R), gy = Math.ceil((v1 - v0) / R), free = new Uint8Array(gx * gy);
       const wx = (i, j) => { const u = u0 + (i + 0.5) * R, v = v0 + (j + 0.5) * R; return [u * c - v * s, u * s + v * c]; };
       const loc = (x, y) => [(x * c + y * s - u0) / R - 0.5, (-x * s + y * c - v0) / R - 0.5];
-      const inside = new Uint8Array(gx * gy), walled = new Uint8Array(gx * gy);
+      const inside = new Uint8Array(gx * gy), walled = new Uint8Array(gx * gy), doorways = [];
       // what else stands about, close enough to matter (not what is up on a roof: a dome)
       const others = [...near(b0.x, b0.y, Math.max(u1 - u0, v1 - v0))].filter(o => !C.bs.includes(o) && !walkable(o) && o.z0 <= b0.z0 + 2);
       for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) {
@@ -362,8 +362,10 @@ const RomanTownLife = (() => {
         }
         // the doorways cleared again, and outside the doors
         const cb = Math.cos(b.angle), sb = Math.sin(b.angle);
+        // (as narrow as the opening is drawn, its jambs a quarter metre into it, a body's half-breadth clear of them)
         const carve = (a, cc, ux, uy, w, back, out) => {
-          const [x0, y0] = toWorld(b, a, cc), wx_ = ux * cb - uy * sb, wy_ = ux * sb + uy * cb, nx_ = -wy_, ny_ = wx_, hw = Math.max(0.3, w / 2 - 0.12);
+          const [x0, y0] = toWorld(b, a, cc), wx_ = ux * cb - uy * sb, wy_ = ux * sb + uy * cb, nx_ = -wy_, ny_ = wx_, hw = Math.max(0.16, w / 2 - 0.4);
+          doorways.push({ x: x0, y: y0, ux: wx_, uy: wy_, nx: nx_, ny: ny_, hw: w / 2 });
           const r = hw + Math.max(back, out) + 0.5;
           mark(x0 - r, y0 - r, x0 + r, y0 + r, (x, y) => {
             const al = (x - x0) * wx_ + (y - y0) * wy_, ac = (x - x0) * nx_ + (y - y0) * ny_;
@@ -375,7 +377,7 @@ const RomanTownLife = (() => {
       }
       // free: 1 open floor; 2 furniture, squeezed past only if there is no other way
       for (let k = 0; k < walled.length; k++) if (free[k]) walled[k] = 0;
-      return { gx, gy, free, walled, wx, loc, R };
+      return { gx, gy, free, walled, wx, loc, R, doorways };
     };
   }
 
@@ -435,6 +437,36 @@ const RomanTownLife = (() => {
       for (const o of bs) clusters.set(o, C);
       return C;
     }
+    // a house's plan close up, made when first wanted; and each door's step
+    // outside found from the door itself: the nearest open ground of the
+    // streets that can be walked to out through it
+    function gridOf(C) {
+      const G = C.grid = buildRoom(C), { gx, gy, free } = G;
+      for (const e of C.ents) {
+        const [fi, fj] = G.loc(...e.inn), s0 = Math.round(fj) * gx + Math.round(fi);
+        if (s0 < 0 || s0 >= free.length || !free[s0]) continue;
+        const seen = new Map([[s0, 0]]), q = [s0];
+        let best = null, bd = Infinity;
+        for (let h = 0; h < q.length && q.length < 3000; h++) {
+          const k = q[h], i = k % gx, j = (k / gx) | 0, [x, y] = G.wx(i, j), steps = seen.get(k);
+          if (!C.bs.some(b => inBox(b, x, y, 0.3))) {
+            const kc = way.cellOf(x, y);
+            if (kc >= 0 && way.cost[kc] < Infinity && way.comp[kc] === mainComp) {
+              const d = Math.hypot(x - e.out[0], y - e.out[1]) + steps * 0.05;
+              if (d < bd) { bd = d; best = [x, y]; }
+            }
+          }
+          if (steps > 24) continue;
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const i2 = i + di, j2 = j + dj, k2 = j2 * gx + i2;
+            if (i2 < 0 || j2 < 0 || i2 >= gx || j2 >= gy || seen.has(k2) || free[k2] !== 1) continue;
+            seen.set(k2, steps + 1); q.push(k2);
+          }
+        }
+        if (best) { e.out = best; e.ok = true; } else e.ok = false;
+      }
+      return G;
+    }
     // the building with rooms at a point, if there is one
     // whether a point of open ground can be walked to from the gates
     const reachable = (x, y) => { const k = way.snap(x, y, 2); return k >= 0 && way.comp[k] === mainComp; };
@@ -443,7 +475,7 @@ const RomanTownLife = (() => {
     // the way from a to b in it, through its doors
     let bfsSeen = new Uint32Array(1), bfsPrev = new Int32Array(1), bfsQ = new Int32Array(1), bfsStamp = 0;
     function inside(C, A, Bp) {
-      if (!C.grid) C.grid = buildRoom(C);
+      if (!C.grid) gridOf(C);
       return search(C.grid, A, Bp, 1) || search(C.grid, A, Bp, 2);
     }
     function search(G, A, Bp, worst) {
@@ -513,7 +545,29 @@ const RomanTownLife = (() => {
         }
         return true;
       };
-      return way.pull(pts, ok);
+      return thread(G, way.pull(pts, ok));
+    }
+    // through every doorway on the way squarely, by its middle (or, a wide
+    // one, away from its sides): a step before it, a step after
+    function thread(G, pts) {
+      const out = [pts[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const a = out[out.length - 1], b = pts[i], hits = [];
+        for (const D of G.doorways) {
+          const da = (a[0] - D.x) * D.nx + (a[1] - D.y) * D.ny, db = (b[0] - D.x) * D.nx + (b[1] - D.y) * D.ny;
+          if (da * db >= 0 || Math.abs(da) < 0.05 && Math.abs(db) < 0.05) continue;
+          const t = da / (da - db), px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t, al = (px - D.x) * D.ux + (py - D.y) * D.uy;
+          if (Math.abs(al) > D.hw + 0.35) continue;
+          hits.push([t, D, Math.sign(db - da), al]);
+        }
+        hits.sort((p, q) => p[0] - q[0]);
+        for (const [, D, sg, al] of hits) {
+          const keep = D.hw > 0.9 ? clamp(al, -(D.hw - 0.55), D.hw - 0.55) : 0, cx = D.x + D.ux * keep, cy = D.y + D.uy * keep;
+          out.push([cx - D.nx * sg * 0.45, cy - D.ny * sg * 0.45], [cx + D.nx * sg * 0.45, cy + D.ny * sg * 0.45]);
+        }
+        out.push(b);
+      }
+      return out;
     }
     // the doors of a house to go out by, towards somewhere, the likeliest
     // first (the front door, the nearest; none that has led nowhere)
@@ -536,7 +590,7 @@ const RomanTownLife = (() => {
     // through the streets, into the one the spot is in; each point [x, y, z],
     // z NaN on the open ground
     function route(x, y, cl, sp) {
-      const zs = (C, pts) => pts.map(p => [p[0], p[1], C ? floorAt(C, p[0], p[1]) : NaN]);
+      const zs = (C, pts) => pts.map(p => [p[0], p[1], C ? floorAt(C, p[0], p[1]) : NaN, C]);
       if (cl && cl === sp.cl) { const p = inside(cl, [x, y], [sp.x, sp.y]); return p && zs(cl, p); }
       let A = [x, y], Bp = [sp.x, sp.y], pre = [], post = [];
       if (cl) { const t = through(cl, A, Bp, true); if (t) { pre = zs(cl, t.p); A = t.e.out; } }
@@ -562,9 +616,16 @@ const RomanTownLife = (() => {
       }
       return null;
     }
+    // a table, as the view is to lay it: where, how big, its top's height; laid, till when
+    const tables = new Map();
+    function tableOf(b, f, x, y) {
+      const key = b.x * 1e4 + b.y + f.a * 7 + f.c * 13;
+      if (!tables.has(key)) tables.set(key, { kind: 'meal', id: tables.size + 1, x, y, z: b.z0 + (f.round ? 0.72 : 0.75), a: b.angle, w: f.w, d: f.d, round: !!f.round, rich: b.use === 'domus', vis: true, laid: 0, n: 0 });
+      return tables.get(key);
+    }
     // where to stand, sit or lie at a piece of furniture
     function furnitureSpots(b) {
-      const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], tribunal: null, rooms: [] };
+      const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], tribunal: null, rooms: [], tables: [] };
       const I = b.interior, z = fz(b);
       for (const f of I.furniture) {
         const longW = (f.w || 0) >= (f.d || 0);
@@ -575,10 +636,12 @@ const RomanTownLife = (() => {
           const list = f.k === 'bed' ? S.beds : S.couches;
           list.push({ b, x, y, z: b.z0 + 0.58, a: ang(b, la), lat, side: f.side, used: 0 });
         } else if (f.k === 'table') {
-          const [x0, y0] = toWorld(b, f.a, f.c);
+          // the table, to be laid when someone eats at it
+          const [x0, y0] = toWorld(b, f.a, f.c), T = tableOf(b, f, x0, y0);
+          S.tables.push(T);
           for (const [da, dc, la] of [[f.w / 2 + 0.38, 0, Math.PI], [-f.w / 2 - 0.38, 0, 0], [0, f.d / 2 + 0.38, -Math.PI / 2], [0, -f.d / 2 - 0.38, Math.PI / 2]]) {
             const [x, y] = toWorld(b, f.a + da, f.c + dc);
-            S.seats.push({ b, x, y, z, a: ang(b, la), table: [x0, y0] });
+            S.seats.push({ b, x, y, z, a: ang(b, la), table: T });
           }
         } else if (f.k === 'bench' && facing !== undefined) {
           const L = longW ? f.w : f.d, n = Math.max(1, Math.floor(L / 0.65));
@@ -606,6 +669,8 @@ const RomanTownLife = (() => {
         }
       }
       for (const f of I.floors) if (f[4] !== 'pool') S.rooms.push(f);
+      // the couches round the table they are about
+      for (const c of S.couches) { let best = null, bd = 4; for (const T of S.tables) { const d = Math.hypot(T.x - c.x, T.y - c.y); if (d < bd) { bd = d; best = T; } } c.table = best; }
       return S;
     }
     const roomSpot = (b, r, pose = 'stand') => { const p = roomPoint(b, r); if (!p) return null; const [x, y] = toWorld(b, ...p); return spot(x, y, fz(b), range(0, TAU), pose, { cl: clusterOf(b) }); };
@@ -709,7 +774,14 @@ const RomanTownLife = (() => {
       });
       for (let i = 0; i < pts.length; i++) if (pts[i][2] === -Infinity) { const p = pts[(i + pts.length - 1) % pts.length]; pts[i][2] = p[2] === -Infinity ? hAt(pts[i][0], pts[i][1]) + town.town.wall.height : p[2]; }
       const atGate = gates.map(G => { let best = 0, bd = Infinity; pts.forEach((p, i) => { const d = Math.hypot(p[0] - G.g.x, p[1] - G.g.y); if (d < bd) { bd = d; best = i; } }); return best; });
-      return { pts, atGate };
+      // the towers along it (a point of the walk in each)
+      const towerAt = new Set();
+      for (const t of byUse('tower')) {
+        let best = -1, bd = 7;
+        pts.forEach((p, i) => { const d = Math.hypot(p[0] - t.x, p[1] - t.y); if (d < bd) { bd = d; best = i; } });
+        if (best >= 0) towerAt.add(best);
+      }
+      return { pts, atGate, towerAt };
     })();
     // the river's banks, a step from the water
     const banks = [];
@@ -759,7 +831,7 @@ const RomanTownLife = (() => {
         const C = clusterOf(b);
         if (!C) continue;
         for (const o of C.bs) seen.add(o);
-        const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], rooms: [] };
+        const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], rooms: [], tables: [] };
         for (const o of C.bs) {
           const s = furnitureSpots(o);
           for (const k in S) S[k].push(...s[k].map(v => Array.isArray(v) ? { b: o, r: v } : v));
@@ -838,8 +910,8 @@ const RomanTownLife = (() => {
         const pool = pref ? free.slice().sort((a, b) => pref(b) - pref(a)) : free.slice();
         for (const m of pool.slice(0, n)) { m.job = job; free.splice(free.indexOf(m), 1); }
       };
-      take(gates.length, 'guard');
-      take(wallWalk.pts.length ? Math.min(gates.length, 2) : 0, 'sentry');
+      take(gates.length * 2, 'guard');
+      take(wallWalk.pts.length ? gates.length * 2 : 0, 'sentry');
       take(2, 'watch');
       for (const al of altars.slice(0, 2)) take(1, 'priest', m => -m.home.outer);
       if (forum) take(1, 'teacher');
@@ -914,6 +986,7 @@ const RomanTownLife = (() => {
     for (const h of homes) if ((h.kind === 'house') && chance(0.25)) {
       const e = h.C.ents.find(e => e.kind === 'back');
       if (!e) continue;
+      h.coop = e;
       for (let k = 0, n = 2 + (rng() * 4 | 0); k < n; k++) being('hen', { coop: e, speed: 0.4, look: rng() });
     }
     // dogs and cats about the streets
@@ -952,6 +1025,7 @@ const RomanTownLife = (() => {
       const t = type === 'rider' ? being('rider', { speed: range(1.5, 1.9), look: rng(), dress: 'tunic', sex: 'm', age: 'adult' })
         : person(null, chance(0.85) ? 'm' : 'f', 'adult', { job: 'traveller', dress: chance(0.3) ? 'cloak' : 'tunic' });
       t.traveller = type; t.vis = false; t.torchy = true;
+      if (type === 'rider') t.man = person(null, 'm', 'adult', { ride: t, dress: chance(0.4) ? 'cloak' : 'tunic', vis: false, job: 'rider' });
       if (type === 'donkeys') t.train = Array.from({ length: 1 + (rng() * 3 | 0) }, () => being('donkey', { follow: t, speed: 1.1, look: rng(), laden: true, vis: false }));
       if (type === 'cart') {
         t.train = [being('ox', { follow: t, speed: 0.9, look: rng(), yoke: -1, vis: false }), being('ox', { follow: t, speed: 0.9, look: rng(), yoke: 1, vis: false })];
@@ -1030,11 +1104,12 @@ const RomanTownLife = (() => {
           break;
         }
         case 'wife': {
-          at(wake - 0.2, 'cook'); at(wake + 0.4, 'water'); at(1.2, 'chores');
+          at(wake - 0.2, 'cook'); at(wake + 0.4, 'water');
+          if (ag.home.coop || ag.home.kind === 'villa') { at(0.9, 'feed'); at(1.3, 'chores'); } else at(1.2, 'chores');
           at(2.4, wpick({ market: 2, temple: 0.7, river: town.river && banks.length ? 0.8 : 0, home: 1.2, forum: 0.4 }), { how: 'wash' });
           at(4.4, 'chores'); at(5.2, 'cook'); at(6, 'eat'); at(6.6, 'rest');
           afternoon(() => at(7.5, chance(0.35) ? 'baths' : 'chores'));
-          at(8.8, 'cook'); at(9.6, 'eat'); if (chance(0.5)) at(10.5, 'water'); at(11.2, 'home'); at(bed, 'sleep');
+          at(8.8, 'cook'); at(9.6, 'eat'); if (ag.home.coop || ag.home.kind === 'villa') at(10.4, 'feed'); else if (chance(0.5)) at(10.5, 'water'); at(11.2, 'home'); at(bed, 'sleep');
           break;
         }
         case 'child': {
@@ -1051,7 +1126,11 @@ const RomanTownLife = (() => {
         case 'teacher': at(wake, 'eat'); at(0.3, 'teach'); at(5.8, 'eat'); at(6.4, 'rest'); afternoon(() => at(7.8, 'baths')); at(10.2, 'home'); at(10.5, 'eat'); at(bed, 'sleep'); break;
         case 'attendant': at(wake, 'eat'); at(0.2, 'attend'); at(11, 'home'); at(11.3, 'eat'); at(bed, 'sleep'); break;
         case 'guard': at(wake, 'eat'); at(0, 'guard'); at(12, 'home'); at(12.3, 'eat'); at(bed, 'sleep'); break;
-        case 'watch': case 'sentry':
+        case 'sentry':
+          // half of them on the walls by day, half by night
+          if (all.filter(a => a.job === 'sentry').indexOf(ag) % 2 === 0) { at(wake, 'eat'); at(0, 'sentry'); at(12, 'home'); at(12.3, 'eat'); at(bed, 'sleep'); break; }
+          // falls through
+        case 'watch':
           P.length = 0;
           at(-6, ag.job === 'watch' ? 'patrol' : 'sentry'); at(-0.3, 'home'); at(0.2, 'sleep'); at(7.5, 'home'); at(9.5, 'eat'); at(11, 'home');
           at(12.3, ag.job === 'watch' ? 'patrol' : 'sentry');
@@ -1099,13 +1178,21 @@ const RomanTownLife = (() => {
       }
       return ag.bed;
     };
-    const homeSpot = (ag, what) => {
+    // a place nobody else has taken (for as long as one is to be there)
+    function take(list, ag, till = now + 900) {
+      const ok = list.filter(s => !s.by || s.by === ag || now > s.till);
+      if (!ok.length) return null;
+      const s = choice(ok);
+      s.by = ag; s.till = till;
+      return s;
+    }
+    const homeSpot = (ag, what, till) => {
       const h = H(ag), S = h.S;
       if (h.upstairs || !S) return null;
       const C = h.C;
-      if (what === 'seat' && S.seats.length) { const s = choice(S.seats); return spot(s.x, s.y, s.z, s.a, 'sit', { seat: 0.42, stool: true, cl: C }); }
-      if (what === 'bench' && S.benches.length) { const s = choice(S.benches); return spot(s.x, s.y, s.z, s.a, 'sit', { seat: s.seat, cl: C }); }
-      if (what === 'hearth' && S.hearths.length) { const s = choice(S.hearths); return spot(s.x, s.y, s.z, s.a, 'stand', { anim: 'cook', cl: C }); }
+      if (what === 'seat') { const s = take(S.seats, ag, till); return s && spot(s.x, s.y, s.z, s.a, 'sit', { seat: 0.42, stool: true, cl: C, table: s.table }); }
+      if (what === 'bench') { const s = take(S.benches, ag, till); return s && spot(s.x, s.y, s.z, s.a, 'sit', { seat: s.seat, cl: C }); }
+      if (what === 'hearth') { const s = take(S.hearths, ag, till); return s && spot(s.x, s.y, s.z, s.a, 'stand', { anim: 'cook', cl: C }); }
       if (what === 'room' && S.rooms.length) { const r = choice(S.rooms); return roomSpot(r.b, r.r); }
       if (what === 'store' && S.stores.length) { const s = choice(S.stores); return spot(s.x, s.y, s.z, s.a, 'stand', { cl: C }); }
       return null;
@@ -1113,13 +1200,19 @@ const RomanTownLife = (() => {
     // by the front door, outside, on a stool
     const doorSpot = h => {
       const e = h.front, [ox, oy] = e.out, [ix, iy] = e.inn, a = Math.atan2(oy - iy, ox - ix), side = chance(0.5) ? 1 : -1;
-      const x = ox - Math.cos(a) * 0.5 - Math.sin(a) * side * 1.1, y = oy - Math.sin(a) * 0.5 + Math.cos(a) * side * 1.1;
-      return way.costAt(x, y) < Infinity ? spot(x, y, NaN, a, 'sit', { seat: 0.4, stool: true, cl: null }) : spot(ox, oy, NaN, a, 'stand', { cl: null });
+      // (either side of the door, whichever is free)
+      for (const sg of [side, -side, side * 2, -side * 2]) {
+        const x = ox - Math.cos(a) * 0.5 - Math.sin(a) * sg * 1.1, y = oy - Math.sin(a) * 0.5 + Math.cos(a) * sg * 1.1;
+        let busy = false;
+        around(x, y, 1, o => { if (o.kind === 'person' && Math.hypot(o.x - x, o.y - y) < 0.7) busy = true; });
+        if (!busy && way.costAt(x, y) < Infinity) return spot(x, y, NaN, a, 'sit', { seat: 0.4, stool: true, cl: null });
+      }
+      return spot(ox, oy, NaN, a, 'stand', { cl: null });
     };
     function atHome(ag, until, what) {
       const h = H(ag);
       if (h.upstairs || !h.S) { go(ag, homeIn(h)); hide(ag, until); return; }
-      const sp = homeSpot(ag, what) || homeSpot(ag, 'room') || homeSpot(ag, 'seat');
+      const sp = homeSpot(ag, what, until) || homeSpot(ag, 'room') || homeSpot(ag, 'seat', until) || homeSpot(ag, 'bench', until);
       if (!sp) { go(ag, homeIn(h)); hide(ag, until); return; }
       go(ag, sp); stay(ag, sp, until);
     }
@@ -1139,7 +1232,53 @@ const RomanTownLife = (() => {
     const leaveGroup = ag => { const G = ag.group; if (G) { G.n--; if (G.n <= 0) { const l = groups.get(G.key); l.splice(l.indexOf(G), 1); } ag.group = null; } };
 
     // ---- the acts ----
+    // the long things people do that they break off from now and then
+    const BREAKS = new Set(['craft', 'shopkeep', 'field', 'chores', 'home', 'attend', 'precinct', 'door', 'porter', 'river']);
+    // over to someone, to talk a while; they turn to whoever comes
+    function meet(ag, o, dur, then = []) {
+      const C = ag.cl;
+      const ch = o.chat && now < o.chat.until && o.chat.n < 5 ? o.chat : null;
+      let x, y;
+      if (ch) { const a = rng() * TAU; x = ch.x + Math.cos(a) * 0.8; y = ch.y + Math.sin(a) * 0.8; }
+      else { const d = Math.hypot(ag.x - o.x, ag.y - o.y) || 1, r = o.pose === 'sit' ? 0.95 : 0.8; x = o.x + (ag.x - o.x) / d * r; y = o.y + (ag.y - o.y) / d * r; }
+      const OC = o.cl || null;
+      if (!(OC ? standable({ cl: OC }, x, y) : way.costAt(x, y) < Infinity)) return false;
+      const until = now + dur, chat = ch || { x: (x + o.x) / 2, y: (y + o.y) / 2, n: 1, until };
+      chat.n++;
+      ag.chat = o.chat = chat;
+      const t = spot(x, y, OC ? floorAt(OC, x, y) : NaN, Math.atan2(o.y - y, o.x - x), 'stand', { cl: OC });
+      if (o.leg && o.leg.k === 'stay') { o.leg.talk = { until: Math.max(o.leg.talk && o.leg.talk.until || 0, until + 60), with: ag }; o.leg.idle = 0; o.leg.until = Math.max(o.leg.until, now + 30); }
+      drop(ag);
+      ag.legs.unshift({ k: 'go', sp: t }, { k: 'stay', sp: t, until, talk: { until, with: o } }, ...then);
+      void C;
+      return true;
+    }
     const ACT = {
+      interlude(ag, e, until) {
+        // a break: a word with someone about, a bite at a counter, a drink at
+        // the fountain, a turn about; in the fields, a rest in the shade
+        const dur = until - now;
+        if (e.act === 'field' && ag.field) return ACT.lunch(ag, e, until);
+        const r = rng();
+        if (r < 0.45) {
+          const o = personNear(ag, 40, o => o.vis && o.leg && o.leg.k === 'stay' && o.leg.sp && (o.pose === 'stand' || o.pose === 'sit') && (!o.anim || o.anim === 'craft' || o.anim === 'talk')
+            && !o.leg.drift && !o.leg.run && !o.leg.play && (o.age === 'child') === (ag.age === 'child') && Math.abs(o.z - ag.z) < 1.5 && (!o.cl || o.cl === ag.cl || (o.home && o.cl === o.home.C && chance(0.5))));
+          if (o && meet(ag, o, dur)) return;
+        }
+        if (r < 0.7 && counters.length) {
+          const near = counters.filter(c => Math.hypot(c.buy.x - ag.x, c.buy.y - ag.y) < 150), c = near.length ? choice(near) : null;
+          if (c) { const sp = spot(c.buy.x + range(-0.4, 0.4), c.buy.y + range(-0.4, 0.4), c.buy.z, c.buy.a, 'stand', { anim: 'eat', cl: clusterOf(c.b) }); go(ag, sp); stay(ag, sp, until, { atCounter: c }); return; }
+        }
+        if (r < 0.85 && fountains.length) {
+          const f = fountains.slice().sort((p, q) => Math.hypot(p.b.x - ag.x, p.b.y - ag.y) - Math.hypot(q.b.x - ag.x, q.b.y - ag.y))[0], s = choice(f.spots);
+          const sp = spot(s.x, s.y, NaN, s.a, 'bend', { anim: 'fill', cl: null });
+          go(ag, sp); stay(ag, sp, now + range(20, 50));
+          const a = rng() * TAU, x = s.x + Math.cos(a) * 1.5, y = s.y + Math.sin(a) * 1.5;
+          if (way.costAt(x, y) < Infinity) { const t = spot(x, y, NaN, Math.atan2(s.y - y, s.x - x), 'stand', { cl: null }); go(ag, t); stay(ag, t, until); }
+          return;
+        }
+        ACT.stroll(ag, e, until);
+      },
       sleep(ag, e, until) {
         const b = bedOf(ag);
         if (b === 'up') { go(ag, homeIn(H(ag))); hide(ag, until); return; }
@@ -1184,7 +1323,7 @@ const RomanTownLife = (() => {
           const c = market && stalls.length && chance(0.6) ? choice(stalls) : counters.length ? choice(counters) : null;
           if (!c) break;
           const sp = spot(c.buy.x + range(-0.3, 0.3), c.buy.y + range(-0.3, 0.3), c.buy.z, c.buy.a, 'stand', { anim: 'talk', cl: clusterOf(c.b) });
-          go(ag, sp); stay(ag, sp, now + range(60, 240));
+          go(ag, sp); stay(ag, sp, now + range(60, 240), { atCounter: c });
         }
         const back = homeSpot(ag, 'store') || homeIn(H(ag));
         go(ag, back); stay(ag, back, now + 15); call(ag, () => { ag.carry = null; });
@@ -1197,7 +1336,7 @@ const RomanTownLife = (() => {
           const x = t.x + Math.cos(t.a) * d - Math.sin(t.a) * o, y = t.y + Math.sin(t.a) * d + Math.cos(t.a) * o;
           if (way.costAt(x, y) < Infinity) { const sp = spot(x, y, NaN, t.a + Math.PI + range(-0.3, 0.3), 'stand', { cl: null }); go(ag, sp); stay(ag, sp, short(until, 300, 1200)); return; }
         }
-        if (r < 0.3 && counters.length) { const c = choice(counters), sp = spot(c.buy.x, c.buy.y, c.buy.z, c.buy.a, 'stand', { anim: 'talk', cl: clusterOf(c.b) }); go(ag, sp); stay(ag, sp, short(until, 60, 300)); return; }
+        if (r < 0.3 && counters.length) { const c = choice(counters), sp = spot(c.buy.x, c.buy.y, c.buy.z, c.buy.a, 'stand', { anim: 'talk', cl: clusterOf(c.b) }); go(ag, sp); stay(ag, sp, short(until, 60, 300), { atCounter: c }); return; }
         const sp = talkSpot('forum', forumPts);
         if (!sp) return atHome(ag, until, 'seat');
         ag.group = sp.group;
@@ -1216,9 +1355,10 @@ const RomanTownLife = (() => {
         go(ag, sp); stay(ag, sp, until);
       },
       receive(ag, e, until) {
-        // in his atrium, beyond the pool, facing the door the clients come in by
+        // in his chair in his atrium, beyond the pool, facing the door the clients come in by
         const sp = atriumSpot(H(ag), true);
         if (!sp) return atHome(ag, until, 'seat');
+        sp.pose = 'sit'; sp.seat = 0.45; sp.stool = true;
         go(ag, sp); stay(ag, sp, until);
       },
       salutatio(ag, e, until) {
@@ -1230,11 +1370,19 @@ const RomanTownLife = (() => {
         const host = e.guest || ag, h = host.home;
         const couches = h.S ? h.S.couches : [];
         if (!couches.length) return ACT.eat(ag, e, until);
-        const c = couches[(ag === host ? 0 : 1 + (ag.id % Math.max(1, couches.length - 1))) % couches.length];
-        const o = ag === host ? -0.45 : ag.job === 'domina' ? 0.45 : 0;
-        // along the couch, slanting, the head towards the table
-        const toward = c.a + Math.PI / 2 * (c.side === 0 || c.side === 1 ? 1 : -1), end = chance(0.5) ? 0 : Math.PI;
-        const sp = spot(c.x + Math.cos(c.a) * o, c.y + Math.sin(c.a) * o, c.z, c.a + end + turn(c.a + end, toward) * range(0.35, 0.5), 'recline', { cl: h.C });
+        // three to a couch, side by side, all lying the same way along it,
+        // slanting, the heads towards the table; the host first
+        let c = null, slot = -1;
+        for (const q of couches) {
+          q.slots = q.slots || [null, null, null];
+          for (let k = 0; k < 3 && slot < 0; k++) { const o = q.slots[k]; if (!o || o.by === ag || now > o.till) { c = q; slot = k; } }
+          if (c) break;
+        }
+        if (!c) return ACT.eat(ag, e, until);
+        c.slots[slot] = { by: ag, till: until };
+        if (c.end === undefined) c.end = chance(0.5) ? 0 : Math.PI;
+        const o = (slot - 1) * 0.58, toward = c.a + Math.PI / 2 * (c.side === 0 || c.side === 1 ? 1 : -1);
+        const sp = spot(c.x + Math.cos(c.a) * o, c.y + Math.sin(c.a) * o, c.z, c.a + c.end + turn(c.a + c.end, toward) * 0.42, 'recline', { cl: h.C, table: c.table });
         go(ag, sp); stay(ag, sp, until);
       },
       serve(ag, e, until) {
@@ -1253,15 +1401,17 @@ const RomanTownLife = (() => {
         if (ag.legs.length) ag.legs[ag.legs.length - 1].sp.anim = 'craft';
       },
       shopkeep(ag, e, until) {
-        const h = H(ag), S = h.kind === 'shop' ? furnitureSpots(h.b) : null, c = S && S.counters[0];
+        // on a stool by the counter, up to serve whoever comes to it
+        const h = H(ag), c = counters.find(c => c.b === h.b);
         if (!c) return ACT.craft(ag, e, until);
-        const sp = spot(c.sell.x, c.sell.y, c.sell.z, c.sell.a, 'stand', { anim: 'sell', cl: h.C });
-        go(ag, sp); stay(ag, sp, until);
+        const sp = spot(c.sell.x, c.sell.y, c.sell.z, c.sell.a, 'sit', { seat: 0.42, stool: true, cl: h.C });
+        c.keeper = ag;
+        go(ag, sp); stay(ag, sp, until, { counter: c });
       },
       eatout(ag, e, until) {
         if (!counters.length) return ACT.eat(ag, e, until);
         const c = choice(counters), sp = spot(c.buy.x + range(-0.4, 0.4), c.buy.y + range(-0.4, 0.4), c.buy.z, c.buy.a, 'stand', { anim: 'eat', cl: clusterOf(c.b) });
-        go(ag, sp); stay(ag, sp, short(until, 600, 1500));
+        go(ag, sp); stay(ag, sp, short(until, 600, 1500), { atCounter: c });
       },
       porter(ag, e, until) {
         // from a gate to a shop, the market or the forum, a jar on his shoulder, and back
@@ -1296,15 +1446,51 @@ const RomanTownLife = (() => {
         go(ag, sp); stay(ag, sp, until);
       },
       pasture(ag, e, until) {
+        // out to the flock; then sitting by it, or in the shade, watching it,
+        // and now and then round to a stray, from beyond it, to turn it back
         const Hd = ag.herd;
         if (!Hd) return ACT.craft(ag, e, until);
-        const [x, y] = Hd.pt(...Hd.clampU(Hd.mx + range(-6, 6), Hd.my + range(-6, 6)));
-        const sp = spot(x, y, NaN, range(0, TAU), chance(0.5) ? 'sit' : 'stand', { seat: 0, cl: null });
-        go(ag, sp, { carry: 'staff' });
-        stay(ag, sp, short(until, 600, 2400), { watch: Hd });
+        const [cx, cy] = Hd.pt(Hd.mx, Hd.my), local = (x, y) => [(x - Hd.cx) * Hd.c + (y - Hd.cy) * Hd.s, -(x - Hd.cx) * Hd.s + (y - Hd.cy) * Hd.c];
+        const [au, av] = local(ag.x, ag.y), there = !ag.cl && Math.abs(au) < Hd.hu + 1 && Math.abs(av) < Hd.hv + 1;
+        const seat = () => {
+          const t = clock.R > 5 && clock.R < 8 && Hd.shade && shadeOf(Hd.shade);
+          let p = t && Math.abs(local(...t)[0]) < Hd.hu && Math.abs(local(...t)[1]) < Hd.hv ? t : null;
+          if (!p) { const a = rng() * TAU, r = Hd.spread * 1.6 + 2; p = Hd.pt(...Hd.clampU(...local(cx + Math.cos(a) * r, cy + Math.sin(a) * r))); }
+          return spot(p[0], p[1], NaN, Math.atan2(cy - p[1], cx - p[0]), 'sit', { seat: 0, cl: null });
+        };
+        ag.carry = 'staff';
+        if (!there || warm) { const sp = seat(); go(ag, sp, { carry: 'staff' }); stay(ag, sp, short(until, 300, 900)); return; }
+        let far = null, fd = 0;
+        for (const b of Hd.beasts) { const d = Math.hypot(b.x - cx, b.y - cy); if (d > fd) { fd = d; far = b; } }
+        if (far && fd > Hd.spread * 1.4 && chance(0.6)) {
+          const [x, y] = Hd.pt(...Hd.clampU(...local(far.x + (far.x - cx) / fd * 2, far.y + (far.y - cy) / fd * 2)));
+          ag.legs.push({ k: 'trot', x, y, speed: 1.15, pose: 'walk' });
+          ag.legs.push({ k: 'stay', sp: spot(x, y, NaN, Math.atan2(cy - y, cx - x), 'stand', { anim: 'shoo', cl: null }), until: now + range(6, 15) });
+          return;
+        }
+        const sp = seat();
+        ag.legs.push({ k: 'trot', x: sp.x, y: sp.y, speed: 1, pose: 'walk' });
+        stay(ag, sp, short(until, 240, 900));
+      },
+      feed(ag, e, until) {
+        // the hens fed, grain scattered from a basket; they come running
+        const h = H(ag);
+        let sp;
+        if (h.kind === 'villa' && h.yard) { const [s1, t1, s2, t2] = h.yard, [x, y] = toWorld(h.b, (s1 + s2) / 2 + range(-2, 2), (t1 + t2) / 2 + range(-2, 2)); sp = spot(x, y, fz(h.b), range(0, TAU), 'stand', { anim: 'scatter', cl: h.C }); }
+        else if (h.coop) { const [x, y] = h.coop.out; sp = spot(x, y, NaN, range(0, TAU), 'stand', { anim: 'scatter', cl: null }); }
+        else return ACT.chores(ag, e, until);
+        go(ag, sp, { carry: 'basket' }); stay(ag, sp, short(until, 150, 360)); call(ag, () => { ag.carry = null; });
       },
       sell(ag, e, until) {
-        // sitting on the ground with a basket of what he grew or caught
+        // at a stall of the market, if one is free; or sitting on the ground
+        // with a basket of what he grew or caught
+        const st = stalls.find(c => !c.keeper);
+        if (st) {
+          st.keeper = ag;
+          const sp = spot(st.sell.x, st.sell.y, st.sell.z, st.sell.a, 'sit', { seat: 0.42, stool: true, cl: clusterOf(st.b) });
+          go(ag, sp, { carry: 'basket' }); call(ag, () => { ag.carry = null; }); stay(ag, sp, until, { counter: st });
+          return;
+        }
         const pts = market ? market.pts : forumPts;
         if (!pts.length) return ACT.craft(ag, e, until);
         const [x, y] = choice(pts), C = market ? market.C : null;
@@ -1323,9 +1509,12 @@ const RomanTownLife = (() => {
         go(ag, s); stay(ag, s, until);
       },
       play(ag, e, until) {
-        const h = H(ag), [x, y] = h.front.out;
-        const sp = spot(x, y, NaN, 0, 'stand', { cl: null });
-        go(ag, sp); stay(ag, sp, short(until, 600, 2400), { play: { x, y, r: 12, next: 0 } });
+        // with the other children of the street: chasing one another, crouched together over a game
+        const h = H(ag), [hx, hy] = h.front.out;
+        let P = plays.find(p => p.kids.size < 7 && Math.hypot(p.x - hx, p.y - hy) < 35 && way.los([p.x, p.y], [hx, hy]));
+        if (!P) { P = { x: hx, y: hy, kids: new Set() }; plays.push(P); }
+        const sp = spot(P.x + range(-2, 2), P.y + range(-2, 2), NaN, 0, 'stand', { cl: null });
+        go(ag, sp); stay(ag, sp, short(until, 600, 2400), { play: { x: P.x, y: P.y, r: 9, next: 0, P } });
       },
       baths(ag, e, until) {
         if (!bath) return ACT.home(ag, e, until);
@@ -1334,7 +1523,8 @@ const RomanTownLife = (() => {
         const r = rng(), [x, y] = choice(bath.court.length ? bath.court : [[bath.pal.x, bath.pal.y]]);
         const ex = spot(x, y, fz(bath.pal), range(0, TAU), 'stand', { cl: bath.C, anim: r < 0.4 ? 'exercise' : r < 0.7 ? 'ball' : 'talk' });
         go(ag, ex); stay(ag, ex, now + range(600, 1500), r < 0.4 ? { run: { x, y, r: range(2.2, 3.5) } } : {});
-        if (bath.benches.length) { const b = choice(bath.benches); go(ag, b); stay(ag, b, now + range(300, 700)); }
+        const bench = take(bath.benches, ag, now + 1800);
+        if (bench) { go(ag, bench); stay(ag, bench, now + range(300, 700)); }
         if (bath.pools.length) { const p = choice(bath.pools); go(ag, p); stay(ag, p, now + range(400, 900)); }
         if (bath.pool && chance(0.4)) {
           const [px, py] = bath.pool.poly.reduce((a, p) => [a[0] + p[0] / bath.pool.poly.length, a[1] + p[1] / bath.pool.poly.length], [0, 0]);
@@ -1370,10 +1560,13 @@ const RomanTownLife = (() => {
         go(ag, sp); stay(ag, sp, short(until, 300, 1200));
       },
       guard(ag, e, until) {
-        const idx = all.filter(a => a.job === 'guard').indexOf(ag), G = gates[(idx >> 1) % gates.length];
+        // two to a gate, by one side of it: talking as they watch the road, or sitting a while
+        const idx = all.filter(a => a.job === 'guard').indexOf(ag), gi = (idx >> 1) % Math.max(1, gates.length), G = gates[gi];
         if (!G) return ACT.craft(ag, e, until);
-        const g = G.guards[idx % 2], sp = spot(g.x, g.y, NaN, g.a + range(-0.3, 0.3), 'stand', { cl: null });
-        go(ag, sp, { carry: 'spear' }); stay(ag, sp, until);
+        const g = G.guards[gi % 2], o = idx % 2 ? 0.45 : -0.45, x = g.x + G.ux * o, y = g.y + G.uy * o;
+        ag.sitting = !ag.sitting;
+        const sp = spot(x, y, NaN, g.a + (idx % 2 ? -0.9 : 0.9), ag.sitting ? 'sit' : 'stand', ag.sitting ? { seat: 0.42, stool: true, cl: null } : { anim: 'talk', cl: null });
+        go(ag, sp, { carry: 'spear' }); stay(ag, sp, short(until, 480, 1200));
       },
       patrol(ag, e, until) {
         // the watch, two by two, from place to place with their torches
@@ -1383,11 +1576,13 @@ const RomanTownLife = (() => {
         go(ag, sp, { torch: true, carry: 'torch' }); stay(ag, sp, now + range(60, 240), { torch: true });
       },
       sentry(ag, e, until) {
+        // up at a gate and along the wall walk to the next gate and back, a
+        // spear on the shoulder (a torch by night), stopping at the towers to look out
         const idx = all.filter(a => a.job === 'sentry').indexOf(ag), n = gates.length;
         if (!n || !wallWalk.pts.length) return ACT.patrol(ag, e, until);
-        const i = idx % n, G = gates[i], [ix, iy] = G.inner;
-        go(ag, spot(ix, iy, NaN, 0, 'stand', { cl: null }), { torch: true, carry: 'torch' });
-        ag.legs.push({ k: 'wall', from: wallWalk.atGate[i], to: wallWalk.atGate[(i + 1) % n], until });
+        const night = clock.R > 11.8 || clock.R < 0, i = (idx >> 1) % n, G = gates[i], [ix, iy] = G.inner;
+        go(ag, spot(ix, iy, NaN, 0, 'stand', { cl: null }), night ? { torch: true, carry: 'torch' } : { carry: 'spear' });
+        ag.legs.push({ k: 'wall', from: wallWalk.atGate[i], to: wallWalk.atGate[(i + 1) % n], until, night });
       },
       river(ag, e, until) {
         if (!banks.length) return ACT.chores(ag, e, until);
@@ -1519,8 +1714,8 @@ const RomanTownLife = (() => {
         if (G && ag.traveller === 'cart' && !night) {
           // carts wait outside by day: none may go through the streets till dark
           const [ox, oy] = G.outer, d = range(8, 16), o = (ag.id % 2 ? 1 : -1) * range(5.5, 8);
-          let sp = spot(ox + G.ux * d - G.uy * o, oy + G.uy * d + G.ux * o, NaN, G.g.angle + Math.PI, 'stand', { cl: null });
-          if (!reachable(sp.x, sp.y)) sp = spot(ox + G.ux * d, oy + G.uy * d, NaN, G.g.angle + Math.PI, 'stand', { cl: null });
+          let sp = spot(ox + G.ux * d - G.uy * o, oy + G.uy * d + G.ux * o, NaN, G.g.angle + Math.PI, 'sit', { seat: 0, cl: null });
+          if (!reachable(sp.x, sp.y)) sp = spot(ox + G.ux * d, oy + G.uy * d, NaN, G.g.angle + Math.PI, 'sit', { seat: 0, cl: null });
           go(ag, sp); stay(ag, sp, now + range(900, 2400));
           return;
         }
@@ -1532,9 +1727,22 @@ const RomanTownLife = (() => {
         } else if (G) {
           if (chance(0.5) && forumPts.length) { dest = talkSpot('forum', forumPts); ag.group = dest && dest.group; }
           else if (chance(0.3) && altars.length) { const A = choice(altars), d = range(2.5, 6), o = range(-3, 3); dest = spot(A.b.x + A.ux * d - A.uy * o, A.b.y + A.uy * d + A.ux * o, NaN, A.out + Math.PI, 'stand', { anim: 'pray' }); }
-          else if ((counters.length || stalls.length)) { const c = stalls.length && chance(0.5) ? choice(stalls) : choice(counters.length ? counters : stalls); dest = spot(c.buy.x, c.buy.y, c.buy.z, c.buy.a, 'stand', { cl: clusterOf(c.b), anim: 'talk' }); }
+          else if ((counters.length || stalls.length)) { const c = stalls.length && chance(0.5) ? choice(stalls) : choice(counters.length ? counters : stalls); dest = spot(c.buy.x, c.buy.y, c.buy.z, c.buy.a, 'stand', { cl: clusterOf(c.b), anim: 'talk' }); dest.counter = c; }
         }
-        if (dest) { go(ag, dest); stay(ag, dest, now + range(400, 1800)); }
+        if (dest && ag.man) {
+          // the horse tied up; the rider on foot to the forum, a shop or a stall, and back to it
+          go(ag, dest);
+          call(ag, () => {
+            ag.kind = 'horse'; ag.tied = true;
+            const m = ag.man, a = ag.a;
+            m.x = ag.x - Math.sin(a) * 0.9; m.y = ag.y + Math.cos(a) * 0.9; m.z = groundZ(m.x, m.y); m.a = a; m.cl = null; m.vis = true; m.legs.length = 0; m.leg = null;
+            const there = forumPts.length && chance(0.5) ? talkSpot('forum', forumPts) : counters.length ? (() => { const c = choice(counters); const s = spot(c.buy.x, c.buy.y, c.buy.z, c.buy.a, 'stand', { cl: clusterOf(c.b), anim: 'talk' }); s.counter = c; return s; })() : null;
+            if (there) { m.legs.push({ k: 'go', sp: there }, { k: 'stay', sp: there, until: now + range(400, 1500), atCounter: there.counter }); m.group = there.group; }
+            const back = spot(m.x, m.y, NaN, a, 'stand', { cl: null });
+            m.legs.push({ k: 'call', fn: () => leaveGroup(m) }, { k: 'go', sp: back }, { k: 'call', fn: () => { m.vis = false; ag.kind = 'rider'; ag.tied = false; if (ag.leg && ag.leg.k === 'stay') ag.leg.until = now; } });
+          });
+          ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + 7200, tether: true });
+        } else if (dest) { go(ag, dest); stay(ag, dest, now + range(400, 1800), dest.counter ? { atCounter: dest.counter } : {}); }
         // and maybe somewhere else before going
         if (dest && !dest.cl && forumPts.length && chance(0.4) && ag.traveller === 'walker') { const d2 = talkSpot('forum', forumPts); go(ag, d2); stay(ag, d2, now + range(300, 1200)); call(ag, () => { ag.group = d2.group; leaveGroup(ag); }); }
         T.stage = 'leave';
@@ -1562,7 +1770,15 @@ const RomanTownLife = (() => {
           const p = shadeOf(Hd.shade);
           if (p) { const u = (p[0] - Hd.cx) * Hd.c + (p[1] - Hd.cy) * Hd.s, v = -(p[0] - Hd.cx) * Hd.s + (p[1] - Hd.cy) * Hd.c; if (Math.abs(u) < Hd.hu && Math.abs(v) < Hd.hv) [tx, ty] = p; }
         }
-        if (tx === undefined) { const [u, v] = Hd.clampU(Hd.mx + gauss() * Hd.spread * (night ? 0.6 : 1), Hd.my + gauss() * Hd.spread * (night ? 0.4 : 0.7)); [tx, ty] = Hd.pt(u, v); }
+        // (somewhere not taken by another of them)
+        const room = ag.kind === 'sheep' || ag.kind === 'goat' ? 1.1 : 2.2;
+        for (let k = 0; k < 5 && tx === undefined; k++) {
+          const [u, v] = Hd.clampU(Hd.mx + gauss() * Hd.spread * (night ? 0.6 : 1), Hd.my + gauss() * Hd.spread * (night ? 0.4 : 0.7)), [x, y] = Hd.pt(u, v);
+          // (open ground, got to straight, round a haystack, a tree, a well rather than through them)
+          const ok = way.costAt(x, y) < Infinity && way.costAt(x + 0.7, y) < Infinity && way.costAt(x - 0.7, y) < Infinity && way.costAt(x, y + 0.7) < Infinity && way.costAt(x, y - 0.7) < Infinity && way.los([ag.x, ag.y], [x, y]);
+          if (ok && (k === 4 || !Hd.beasts.some(b => b !== ag && Math.hypot(b.x - x, b.y - y) < room))) [tx, ty] = [x, y];
+        }
+        if (tx === undefined) [tx, ty] = [ag.x, ag.y];
         const d = Math.hypot(tx - ag.x, ty - ag.y);
         if (warm && !ag.placed) { ag.x = tx; ag.y = ty; ag.z = groundZ(tx, ty); ag.placed = true; }
         else if (d > 0.4) ag.legs.push({ k: 'trot', x: tx, y: ty, speed: d > 15 ? ag.speed * 1.6 : ag.speed * 0.6, pose: 'walk' });
@@ -1605,6 +1821,10 @@ const RomanTownLife = (() => {
           if (ag.kind === 'dog' && chance(0.6)) { [x, y] = h.front.out; x += range(-1.5, 1.5); y += range(-1.5, 1.5); }
           else { const [s1, t1, s2, t2] = h.yard;[x, y] = toWorld(V, range(s1, s2), range(t1, t2)); z = fz(V); cl = h.C; }
         }
+        // (the hens to whoever is scattering grain for them)
+        if (ag.kind === 'hen' && !warm) { const f = feederNear(ag, 30); if (f) { const a = rng() * TAU, r = range(0.6, 2); x = f.x + Math.cos(a) * r; y = f.y + Math.sin(a) * r; z = f.cl ? fz(V) : NaN; cl = f.cl; } }
+        // (the dog to anyone coming by)
+        if (ag.kind === 'dog' && !warm && chance(0.5)) { const p = personNear(ag, 18, o => o.pose === 'walk' && !o.cl); if (p) { ag.legs.push({ k: 'chase', who: p, until: now + range(6, 14) }); ag.legs.push({ k: 'stay', sp: null, pose: 'sit', until: now + range(5, 20) }); return; } }
         const sp = spot(x, y, z, range(0, TAU), 'stand', { cl });
         if (warm && !ag.placed) { place(ag, sp); ag.placed = true; }
         else if (Math.hypot(x - ag.x, y - ag.y) > 0.5) {
@@ -1620,15 +1840,31 @@ const RomanTownLife = (() => {
         const e = ag.coop, [ox, oy] = e.out;
         if (night) { ag.vis = false; ag.legs.push({ k: 'stay', sp: null, until: now + 600, pose: 'stand' }); return; }
         ag.vis = true;
-        const x = ox + range(-3, 3), y = oy + range(-3, 3);
+        let x = ox + range(-3, 3), y = oy + range(-3, 3), speed = 0.5;
+        const f = !warm && feederNear(ag, 12);
+        if (f) { const a = rng() * TAU, r = range(0.6, 1.8); x = f.x + Math.cos(a) * r; y = f.y + Math.sin(a) * r; speed = 1.3; }
         if (warm && !ag.placed) { ag.x = ox; ag.y = oy; ag.z = groundZ(ox, oy); ag.placed = true; }
-        if (way.costAt(x, y) < Infinity && way.los([ag.x, ag.y], [x, y])) ag.legs.push({ k: 'trot', x, y, speed: 0.5, pose: 'walk' });
+        if (way.costAt(x, y) < Infinity && way.los([ag.x, ag.y], [x, y])) ag.legs.push({ k: 'trot', x, y, speed, pose: 'walk' });
         ag.legs.push({ k: 'stay', sp: null, pose: 'graze', until: now + range(3, 20) });
         return;
       }
       if (ag.stray) {
         // a dog or a cat about the streets: off somewhere, then lying down a while
         const sleepy = ag.kind === 'dog' ? night : !night && chance(0.7);
+        if (!sleepy && !warm && ag.kind === 'dog') {
+          // up to someone about in the street, to be made a fuss of or to beg; or to another dog, to sniff
+          if (chance(0.35)) { const p = personNear(ag, 22, o => !o.cl && o.pose !== 'lie'); if (p) { ag.legs.push({ k: 'chase', who: p, until: now + range(8, 25) }); ag.legs.push({ k: 'stay', sp: null, pose: 'sit', until: now + range(10, 40), face: p }); return; } }
+          if (chance(0.25)) {
+            let o = null, od = 25;
+            around(ag.x, ag.y, 25, b => { if (b !== ag && b.kind === 'dog' && b.vis && !b.cl) { const d = Math.hypot(b.x - ag.x, b.y - ag.y); if (d < od) { od = d; o = b; } } });
+            if (o) {
+              ag.legs.push({ k: 'chase', who: o, until: now + 12, near: 0.9 });
+              ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + range(6, 14), face: o });
+              if (o.leg && o.leg.k === 'stay') { o.leg.pose = 'stand'; o.leg.face = ag; o.leg.until = Math.max(o.leg.until, now + 16); }
+              return;
+            }
+          }
+        }
         if (sleepy || chance(0.4)) { ag.legs.push({ k: 'stay', sp: null, pose: ag.kind === 'cat' ? (chance(0.5) ? 'sit' : 'lie') : 'lie', until: now + range(120, 1200) }); return; }
         const [x, y] = choice(streetPts.filter(p => Math.hypot(p[0] - ag.x, p[1] - ag.y) < 80).concat([choice(streetPts)]));
         ag.legs.push({ k: 'go', sp: spot(x, y, NaN, 0, 'stand', { cl: null }) });
@@ -1645,14 +1881,27 @@ const RomanTownLife = (() => {
     };
     const bridges = byUse('bridge');
     function think(ag) {
-      if (ag.kind === 'person' || ag.kind === 'rider') {
+      if (ag.ride) { ag.legs.push({ k: 'hide', until: now + 60 }); return; }
+      if (ag.kind === 'person' || ag.kind === 'rider' || ag.traveller === 'rider') {
         if (ag.job === 'traveller' || ag.traveller) { travel(ag); return; }
         if (ag.planDay !== clock.day) { ag.plan = plan(ag); ag.planDay = clock.day; }
         const P = ag.plan, R = clock.R;
         let e = P[0], next = P[1];
         for (let q = 0; q < P.length; q++) if (P[q].at <= R) { e = P[q]; next = P[q + 1]; }
-        const until = now + Math.max(20, secs(clock, R, next ? next.at : 18));
+        let until = now + Math.max(20, secs(clock, R, next ? next.at : 18));
         leaveGroup(ag);
+        // long work a stretch at a time, and between, now and then, a break
+        if (BREAKS.has(e.act) && !warm) {
+          if (until - now > 1500 && now - (ag.rested || -Infinity) > range(1500, 3600) && ag.lastAct === e && chance(0.6)) {
+            ag.rested = now; ag.lastAct = e;
+            ACT.interlude(ag, e, Math.min(until, now + range(300, 1000)));
+            if (!ag.legs.length) ag.legs.push({ k: 'stay', sp: null, until: now + 30 });
+            return;
+          }
+          until = Math.min(until, now + range(900, 2700));
+        }
+        ag.lastAct = e;
+        ag.meal = e.act === 'eat' || e.act === 'cena';
         (ACT[e.act] || ACT.home)(ag, e, until);
         if (!ag.legs.length) ag.legs.push({ k: 'stay', sp: null, until: now + 30 });
         return;
@@ -1682,9 +1931,12 @@ const RomanTownLife = (() => {
         const P = wallWalk.pts, n = P.length, pts = [];
         let i = L.from;
         const dir = ((L.to - L.from + n) % n) <= n / 2 ? 1 : -1;
-        for (let k = 0; k < n && i !== L.to; k++, i = (i + dir + n) % n) pts.push(P[i].slice());
-        pts.push(P[L.to].slice());
-        L.pts = pts.concat(pts.slice().reverse()); L.i = 0; L.d = 0; L.k = 'climb'; L.loop = L.until; L.torch = true;
+        const cp = q => { const p = P[q].slice(); p.key = q; return p; };
+        for (let k = 0; k < n && i !== L.to; k++, i = (i + dir + n) % n) pts.push(cp(i));
+        pts.push(cp(L.to));
+        L.pts = pts.concat(pts.slice().reverse()); L.i = 0; L.d = 0; L.k = 'climb'; L.loop = L.until; L.torch = L.night;
+        // (where the towers are along it, to stop at)
+        L.stops = new Set(L.pts.map((p, q) => wallWalk.towerAt.has(p.key) ? q : -1).filter(q => q >= 0));
       }
     }
     function walkAlong(ag, L, dt, speed) {
@@ -1698,6 +1950,13 @@ const RomanTownLife = (() => {
       if (L.i >= P.length - 1) { const p = P[P.length - 1]; ag.x = p[0]; ag.y = p[1]; ag.z = Number.isFinite(p[2]) ? p[2] : groundZ(p[0], p[1]); return true; }
       const a = P[L.i], b = P[L.i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, f = L.d / len;
       ag.x = lerp(a[0], b[0], f); ag.y = lerp(a[1], b[1], f);
+      ag.inCl = Number.isFinite(a[2]) && Number.isFinite(b[2]) ? a[3] || b[3] || null : null;
+      // (stepped aside for someone, back onto the line little by little)
+      if (L.off) {
+        const o = L.off, k = Math.exp(-dt * 0.7);
+        o[0] *= k; o[1] *= k;
+        if (standable(ag, ag.x + o[0], ag.y + o[1])) { ag.x += o[0]; ag.y += o[1]; } else o[0] = o[1] = 0;
+      }
       ag.z = Number.isFinite(a[2]) && Number.isFinite(b[2]) ? lerp(a[2], b[2], f) : Number.isFinite(a[2]) && len < 2.6 ? a[2] : Number.isFinite(b[2]) && len < 2.6 ? b[2] : groundZ(ag.x, ag.y);
       const want = Math.atan2(b[1] - a[1], b[0] - a[0]);
       ag.a += clamp(turn(ag.a, want), -7 * dt, 7 * dt);
@@ -1721,6 +1980,11 @@ const RomanTownLife = (() => {
       switch (L.k) {
         case 'go': case 'climb': {
           ag.vis = true;
+          // a sentry stopped at a tower, looking out over the country
+          if (L.stops) {
+            if (L.pause && now < L.pause) { ag.pose = 'stand'; ag.anim = 'watch'; ag.torch = !!L.torch; ag.a += clamp(turn(ag.a, Math.atan2(ag.y - town.town.y, ag.x - town.town.x)), -2 * dt, 2 * dt); break; }
+            if (L.stops.has(L.i) && L.stopped !== L.i) { L.stopped = L.i; L.pause = now + range(20, 70); break; }
+          }
           const sp = L.k === 'climb' ? 0.6 : ag.speed;
           ag.pose = L.k === 'climb' ? 'walk' : (ag.speed > 2 ? 'run' : 'walk'); ag.anim = null; ag.seat = 0;
           ag.torch = (L.torch || (night && ag.torchy && !ag.cl)) && ag.kind === 'person';
@@ -1731,6 +1995,7 @@ const RomanTownLife = (() => {
           if (done) {
             if (L.loop && now < L.loop) { L.i = 0; L.d = 0; break; }
             if (L.k === 'go') ag.cl = L.sp.cl || null;
+            ag.inCl = null;
             if (ag.carry === 'torch' && !L.torch) ag.carry = null;
             ag.torch = !!L.torch && ag.torch;
             ag.leg = null;
@@ -1740,17 +2005,25 @@ const RomanTownLife = (() => {
         case 'trot': {
           const d = Math.hypot(L.x - ag.x, L.y - ag.y), v = L.speed * dt;
           ag.pose = L.pose || 'walk';
+          if (d > v && !standable(ag, ag.x + (L.x - ag.x) / d * v, ag.y + (L.y - ag.y) / d * v)) { ag.leg = null; break; }
           if (d <= v) { ag.x = L.x; ag.y = L.y; ag.leg = null; }
-          else { ag.x += (L.x - ag.x) / d * v; ag.y += (L.y - ag.y) / d * v; ag.a += clamp(turn(ag.a, Math.atan2(L.y - ag.y, L.x - ag.x)), -5 * dt, 5 * dt); }
+          else { ag.x += (L.x - ag.x) / d * v; ag.y += (L.y - ag.y) / d * v; ag.a += clamp(turn(ag.a, Math.atan2(L.y - ag.y, L.x - ag.x)), -(L.flee ? 9 : 5) * dt, (L.flee ? 9 : 5) * dt); }
+          if (L.until && now > L.until) ag.leg = null;
           ag.z = ag.cl ? floorAt(ag.cl, ag.x, ag.y) : NaN;
           if (!Number.isFinite(ag.z)) ag.z = groundZ(ag.x, ag.y);
           ag.ph += v / stride;
           break;
         }
         case 'chase': {
-          const m = L.who, d = Math.hypot(m.x - ag.x, m.y - ag.y);
-          if (d > 2.2) { const v = Math.min(d - 1.6, (d > 8 ? 3.5 : m.speed * 1.1) * dt); ag.x += (m.x - ag.x) / d * v; ag.y += (m.y - ag.y) / d * v; ag.a += clamp(turn(ag.a, Math.atan2(m.y - ag.y, m.x - ag.x)), -6 * dt, 6 * dt); ag.ph += v / stride; ag.pose = d > 8 ? 'run' : 'walk'; }
-          else ag.pose = 'stand';
+          // after someone, straight, as long as the way is open
+          const m = L.who, d = Math.hypot(m.x - ag.x, m.y - ag.y), near = L.near || 1.6;
+          if (!m.vis || m.cl) { ag.leg = null; break; }
+          if (d > near + 0.6) {
+            const v = Math.min(d - near, (d > 8 ? 3.5 : Math.max(1.2, m.speed * 1.1)) * dt), nx = ag.x + (m.x - ag.x) / d * v, ny = ag.y + (m.y - ag.y) / d * v;
+            if (!standable(ag, nx, ny)) { ag.leg = null; break; }
+            ag.x = nx; ag.y = ny; ag.ph += v / stride; ag.pose = d > 8 ? 'run' : 'walk';
+          } else ag.pose = 'stand';
+          ag.a += clamp(turn(ag.a, Math.atan2(m.y - ag.y, m.x - ag.x)), -6 * dt, 6 * dt);
           ag.z = groundZ(ag.x, ag.y);
           if (now > L.until) ag.leg = null;
           break;
@@ -1760,13 +2033,34 @@ const RomanTownLife = (() => {
           ag.vis = true;
           if (sp) { ag.pose = sp.pose; ag.anim = sp.anim || null; ag.seat = sp.seat || 0; ag.stool = !!sp.stool; }
           else { ag.pose = L.pose || 'stand'; ag.anim = null; ag.stool = false; }
+          if (L.tether) ag.pose = Math.sin(now / 37 + ag.id) > 0.3 ? 'graze' : 'stand';
+          if (sp && sp.table && ag.meal) { const T = sp.table; if (T.laid < now) T.n = 0; T.laid = now + 2; T.n = Math.min(6, Math.max(T.n, 1) + (L.atTable ? 0 : 1)); L.atTable = true; }
+          // a customer at the counter: up from the stool to serve
+          if (L.atCounter && !L.counted) { L.atCounter.busy = (L.atCounter.busy || 0) + 1; L.counted = true; }
+          if (L.counter) {
+            if (L.counter.busy > 0) { ag.pose = 'stand'; ag.anim = 'sell'; ag.seat = 0; ag.stool = false; }
+            L.counter.keeper = ag;
+          }
+          if (L.play && !L.joined) { L.play.P.kids.add(ag); L.joined = true; }
+          // talking with someone, turned to them
+          if (L.talk && now < L.talk.until) {
+            ag.anim = 'talk';
+            const w = L.talk.with;
+            if (w && w.vis && Math.hypot(w.x - ag.x, w.y - ag.y) < 4) ag.a += clamp(turn(ag.a, Math.atan2(w.y - ag.y, w.x - ag.x)), -3 * dt, 3 * dt);
+          }
+          if (L.face && L.face.vis) ag.a += clamp(turn(ag.a, Math.atan2(L.face.y - ag.y, L.face.x - ag.x)), -3 * dt, 3 * dt);
+          // nobody stands about long alone
+          if (ag.kind === 'person' && sp && ag.pose === 'stand' && !ag.anim && !ag.group && !L.run && !L.play && !L.drift && !L.counter && !warm) {
+            L.idle = (L.idle || 0) + dt;
+            if (L.idle > (L.patience || (L.patience = range(25, 60)))) { L.idle = 0; L.patience = range(40, 90); if (restless(ag, L)) break; }
+          }
           ag.torch = !!L.torch;
           if (!ag.torch && ag.carry === 'torch') ag.carry = null;
           ag.ph += dt * (ag.anim ? 0.9 : 0.25);
           if (L.drift) drift(ag, L.drift, dt);
           if (L.play) play(ag, L.play, dt);
           if (L.run) { const r = L.run; r.t = (r.t || 0) + dt * ag.speed * 1.6 / r.r; ag.x = r.x + Math.cos(r.t) * r.r; ag.y = r.y + Math.sin(r.t) * r.r; ag.a = r.t + Math.PI / 2; ag.pose = 'run'; ag.ph += dt * ag.speed * 1.6 / 2.2; }
-          if (now >= L.until) { if ((L.run || L.play) && sp) place(ag, sp); ag.leg = null; }
+          if (now >= L.until) { if ((L.run || L.play) && sp) place(ag, sp); drop(ag); }
           break;
         }
         case 'hide':
@@ -1795,13 +2089,21 @@ const RomanTownLife = (() => {
       if (warm) return;
       if (P.to) {
         const d = Math.hypot(P.to[0] - ag.x, P.to[1] - ag.y), v = 2.6 * dt;
+        if (!standable(ag, ag.x + (P.to[0] - ag.x) / (d || 1) * v, ag.y + (P.to[1] - ag.y) / (d || 1) * v)) { P.to = null; P.next = now + 2; return; }
         if (d <= v) { P.to = null; P.next = now + range(4, 30); ag.pose = 'squat'; }
         else { ag.x += (P.to[0] - ag.x) / d * v; ag.y += (P.to[1] - ag.y) / d * v; ag.a = Math.atan2(P.to[1] - ag.y, P.to[0] - ag.x); ag.pose = 'run'; ag.ph += v / 1.6; }
         ag.z = groundZ(ag.x, ag.y);
       } else {
         ag.pose = P.pose || 'squat';
+        // (crouched, turned to whoever is crouched by)
+        const mate = [...P.P.kids].find(k => k !== ag && k.vis && Math.hypot(k.x - ag.x, k.y - ag.y) < 2);
+        if (mate) ag.a += clamp(turn(ag.a, Math.atan2(mate.y - ag.y, mate.x - ag.x)), -3 * dt, 3 * dt);
         if (now > P.next) {
-          const x = P.x + range(-P.r, P.r), y = P.y + range(-P.r, P.r);
+          // off after another of them, or somewhere about
+          const kids = [...P.P.kids].filter(k => k !== ag && k.vis);
+          let x, y;
+          if (kids.length && chance(0.45)) { const k = choice(kids); x = k.x + range(-0.6, 0.6); y = k.y + range(-0.6, 0.6); }
+          else { x = P.x + range(-P.r, P.r); y = P.y + range(-P.r, P.r); }
           if (way.costAt(x, y) <= 1.35 && way.los([ag.x, ag.y], [x, y])) P.to = [x, y];
           else P.next = now + 1;
           P.pose = chance(0.5) ? 'squat' : 'stand';
@@ -1847,26 +2149,292 @@ const RomanTownLife = (() => {
       ag.vis = true;
     }
 
+    // ================= together =================
+    // who is where, 2.5 m a cell, each moment
+    const HC = 2.5, hash = new Map();
+    function reindex() {
+      hash.clear();
+      for (const ag of all) {
+        if (!ag.vis || ag.kind === 'boat') continue;
+        const k = Math.floor(ag.x / HC) * 8192 + Math.floor(ag.y / HC);
+        let l = hash.get(k);
+        if (!l) hash.set(k, l = []);
+        l.push(ag);
+      }
+    }
+    function around(x, y, r, fn) {
+      for (let i = Math.floor((x - r) / HC); i <= Math.floor((x + r) / HC); i++)
+        for (let j = Math.floor((y - r) / HC); j <= Math.floor((y + r) / HC); j++) for (const o of hash.get(i * 8192 + j) || []) fn(o);
+    }
+    const spaceOf = ag => ag.cl || ag.inCl || null;
+    function personNear(ag, r, ok) {
+      let best = null, bd = r;
+      around(ag.x, ag.y, r, o => { if (o.kind !== 'person' || !o.vis || o === ag || !ok(o)) return; const d = Math.hypot(o.x - ag.x, o.y - ag.y); if (d < bd) { bd = d; best = o; } });
+      return best;
+    }
+    let feeders = [];
+    const feederNear = (ag, r) => { let best = null, bd = r; for (const f of feeders) { const d = Math.hypot(f.x - ag.x, f.y - ag.y); if (d < bd) { bd = d; best = f; } } return best; };
+    const plays = [];
+    // whether one can stand at a point: on open ground, or on the floor of the house one is in
+    function standable(ag, x, y) {
+      const C = ag.cl || ag.inCl;
+      if (C) {
+        if (!C.grid) gridOf(C);
+        const G = C.grid, [fi, fj] = G.loc(x, y), i = Math.round(fi), j = Math.round(fj);
+        return i >= 0 && j >= 0 && i < G.gx && j < G.gy && G.free[j * G.gx + i] === 1;
+      }
+      if (ag.herd) {
+        const Hd = ag.herd, u = (x - Hd.cx) * Hd.c + (y - Hd.cy) * Hd.s, v = -(x - Hd.cx) * Hd.s + (y - Hd.cy) * Hd.c;
+        if (Math.abs(u) > Hd.hu + 0.8 || Math.abs(v) > Hd.hv + 0.8) return false;
+      }
+      return way.costAt(x, y) < Infinity;
+    }
+    // the end of what one was about (a customer gone from the counter, a child from the game)
+    function drop(ag) {
+      const L = ag.leg;
+      if (L) {
+        if (L.counted) { L.atCounter.busy--; L.counted = false; }
+        if (L.counter && L.counter.keeper === ag) L.counter.keeper = null;
+        if (L.joined) { const P = L.play.P; P.kids.delete(ag); if (!P.kids.size && plays.includes(P)) plays.splice(plays.indexOf(P), 1); L.joined = false; }
+      }
+      ag.leg = null;
+    }
+
+    // ---- standing about alone a while: over to someone to talk to; or to
+    // a dog or a cat to make a fuss of; or, at home, a seat or a job;
+    // or a few steps elsewhere ----
+    function restless(ag, L) {
+      const rem = L.until - now;
+      // (somewhere one can get to from here: in a house, through its rooms)
+      const reach = (x, y) => standable(ag, x, y) && (ag.cl ? !!inside(ag.cl, [ag.x, ag.y], [x, y]) : true);
+      if (rem < 25) return false;
+      const sp = L.sp, back = [{ k: 'go', sp }, { k: 'stay', sp, until: L.until }];
+      const C = ag.cl;
+      // someone free to talk: standing about, or sitting at nothing in particular
+      const o = personNear(ag, 10, o => spaceOf(o) === C && Math.abs(o.z - ag.z) < 1 && o.leg && o.leg.k === 'stay' && o.leg.sp && !o.leg.counter && !o.leg.drift && !o.leg.run && !o.leg.play
+        && (o.pose === 'stand' || o.pose === 'sit') && (!o.anim || o.anim === 'talk' || o.anim === 'craft') && (o.age === 'child') === (ag.age === 'child'));
+      if (o) {
+        const dur = Math.min(rem - 10, o.leg.until - now - 5, range(60, 300));
+        if (dur > 20) {
+          // beside them, facing them; or into their circle, if they are talking already
+          const ch = o.chat && now < o.chat.until && o.chat.n < 5 ? o.chat : null;
+          let x, y;
+          if (ch) { const a = rng() * TAU; x = ch.x + Math.cos(a) * 0.8; y = ch.y + Math.sin(a) * 0.8; }
+          else { const d = Math.hypot(ag.x - o.x, ag.y - o.y) || 1, r = o.pose === 'sit' ? 0.95 : 0.8; x = o.x + (ag.x - o.x) / d * r; y = o.y + (ag.y - o.y) / d * r; }
+          if (reach(x, y) && meet(ag, o, dur, back)) return true;
+        }
+      }
+      // a dog or a cat close by
+      let pet = null, pd = 7;
+      around(ag.x, ag.y, 7, b => { if ((b.kind === 'dog' || b.kind === 'cat') && b.vis && b.leg && b.leg.k === 'stay' && spaceOf(b) === C) { const d = Math.hypot(b.x - ag.x, b.y - ag.y); if (d < pd) { pd = d; pet = b; } } });
+      if (pet && chance(0.6) && ag.age !== 'old') {
+        const d = pd || 1, x = pet.x + (ag.x - pet.x) / d * 0.55, y = pet.y + (ag.y - pet.y) / d * 0.55, dur = Math.min(rem - 10, range(15, 45));
+        if (dur > 8 && reach(x, y)) {
+          const t = spot(x, y, C ? floorAt(C, x, y) : NaN, Math.atan2(pet.y - y, pet.x - x), 'squat', { anim: 'pet', cl: C });
+          pet.leg.pose = 'sit'; pet.leg.face = ag; pet.leg.until = Math.max(pet.leg.until, now + dur + 8);
+          drop(ag);
+          ag.legs.unshift({ k: 'go', sp: t }, { k: 'stay', sp: t, until: now + dur }, ...back);
+          return true;
+        }
+      }
+      // at home: sit down, or find something to do
+      if (C && ag.home && C === ag.home.C) {
+        const s = homeSpot(ag, chance(0.5) ? 'seat' : 'bench') || homeSpot(ag, 'hearth');
+        if (s) { drop(ag); ag.legs.unshift({ k: 'go', sp: s }, { k: 'stay', sp: s, until: L.until }); return true; }
+      }
+      // a few steps elsewhere, and a look about
+      for (let k = 0; k < 6; k++) {
+        const a = rng() * TAU, r = range(3, 10), x = ag.x + Math.cos(a) * r, y = ag.y + Math.sin(a) * r;
+        if (!standable(ag, x, y) || (!C && !way.los([ag.x, ag.y], [x, y])) || !reach(x, y)) continue;
+        const t = spot(x, y, C ? floorAt(C, x, y) : NaN, a + range(-1, 1), 'stand', { cl: C });
+        drop(ag);
+        ag.legs.unshift({ k: 'go', sp: t }, { k: 'stay', sp: t, until: L.until });
+        return true;
+      }
+      return false;
+    }
+
+    // ---- bodies keep out of one another: each a capsule along its
+    // heading; where two overlap they are pushed apart, the lighter more,
+    // what is sitting, lying or yoked not at all; walkers meeting step
+    // aside to the right; and the timid get out of the way ----
+    const SIZE = { sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
+    const HEAVY = { person: 1, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, horse: 4, donkey: 2.5, rider: 5 };
+    const SETTLED = new Set(['sit', 'lie', 'recline', 'kneel', 'squat', 'swim']);
+    const sizeOf = ag => ag.kind === 'person' ? (ag.pose === 'lie' || ag.pose === 'recline' ? [0.55, 0.25] : [0, ag.age === 'child' ? 0.17 : ag.pose === 'sit' ? 0.3 : 0.23]) : SIZE[ag.kind] || [0, 0.3];
+    function weight(ag) {
+      const L = ag.leg;
+      if (ag.follow || ag.ploughing || ag.kind === 'cart' || ag.kind === 'boat') return Infinity;
+      if (L && (L.k === 'climb' || L.drift || L.run || L.k === 'hide')) return Infinity;
+      if (ag.kind === 'person' && L && L.k === 'stay' && SETTLED.has(ag.pose)) return Infinity;
+      return (HEAVY[ag.kind] || 1) * (ag.pose === 'lie' ? 3 : 1);
+    }
+    function nudge(ag, dx, dy) {
+      const x = ag.x + dx, y = ag.y + dy;
+      if (!standable(ag, x, y)) return;
+      ag.x = x; ag.y = y;
+      const L = ag.leg;
+      if (L && L.k === 'go' && L.pts) {
+        const o = L.off || (L.off = [0, 0]);
+        o[0] += dx; o[1] += dy;
+        const m = Math.hypot(o[0], o[1]);
+        if (m > 1.3) { o[0] *= 1.3 / m; o[1] *= 1.3 / m; }
+      }
+    }
+    // pushed by a body met: one walking is never pushed back, only aside,
+    // and held up long enough squeezes past
+    function shove(ag, nx, ny, m, dt) {
+      const L = ag.leg;
+      if (L && L.k === 'go' && L.pts) {
+        const ca = Math.cos(ag.a), sa = Math.sin(ag.a), back = nx * ca + ny * sa;
+        if (back < 0) {
+          const side = -nx * sa + ny * ca, sg = Math.abs(side) < 0.1 ? 1 : Math.sign(side);
+          nx = -sa * sg; ny = ca * sg;
+          ag.blockT = (ag.blockT || 0) + dt;
+          if (ag.blockT > 1.8) { ag.ghost = now + 3; ag.blockT = 0; }
+        }
+      }
+      nudge(ag, nx * m, ny * m);
+    }
+    // looking ahead as one walks: whatever is in the way, a step aside from it
+    // in good time (meeting someone head on, each to the right)
+    function steer(dt) {
+      for (const ag of all) {
+        const L = ag.leg;
+        if (!ag.vis || !L || L.k !== 'go' || !L.pts || now < (ag.ghost || 0)) continue;
+        const ca = Math.cos(ag.a), sa = Math.sin(ag.a), [, ra] = sizeOf(ag), sp = spaceOf(ag);
+        let sx = 0, sy = 0;
+        around(ag.x, ag.y, 2.8, o => {
+          if (o === ag || !o.vis || o.kind === 'boat' || spaceOf(o) !== sp || Math.abs(o.z - ag.z) > 1.2 || together(ag, o)) return;
+          const dx = o.x - ag.x, dy = o.y - ag.y, ahead = dx * ca + dy * sa, side = -dx * sa + dy * ca, [hb, rb] = sizeOf(o), r = ra + rb + hb * 0.5 + 0.15;
+          if (ahead <= 0 || ahead > 2.6 || Math.abs(side) > r) return;
+          const oncoming = o.leg && o.leg.k === 'go' && Math.cos(o.a) * ca + Math.sin(o.a) * sa < -0.3;
+          const sg = oncoming || Math.abs(side) < 0.08 ? 1 : -Math.sign(side), k = (1 - ahead / 2.6) * (r - Math.abs(side) * (oncoming ? 0 : 1)) / r;
+          sx += -sa * sg * k; sy += ca * sg * k;
+        });
+        if (sx || sy) { const m = Math.hypot(sx, sy), v = Math.min(1, m) * 0.9 * dt; nudge(ag, sx / m * v, sy / m * v); }
+        else if (ag.blockT) ag.blockT = Math.max(0, ag.blockT - dt);
+      }
+    }
+    // the nearest points of two segments
+    function closest(ax, ay, bx, by, cx, cy, dx, dy) {
+      const d1x = bx - ax, d1y = by - ay, d2x = dx - cx, d2y = dy - cy, rx = ax - cx, ry = ay - cy;
+      const a = d1x * d1x + d1y * d1y, e = d2x * d2x + d2y * d2y, f = d2x * rx + d2y * ry;
+      let s = 0, t = 0;
+      if (a < 1e-9 && e < 1e-9) { s = t = 0; }
+      else if (a < 1e-9) t = clamp(f / e, 0, 1);
+      else {
+        const c = d1x * rx + d1y * ry;
+        if (e < 1e-9) s = clamp(-c / a, 0, 1);
+        else {
+          const b = d1x * d2x + d1y * d2y, den = a * e - b * b;
+          s = den > 1e-9 ? clamp((b * f - c * e) / den, 0, 1) : 0;
+          t = (b * s + f) / e;
+          if (t < 0) { t = 0; s = clamp(-c / a, 0, 1); } else if (t > 1) { t = 1; s = clamp((b - c) / a, 0, 1); }
+        }
+      }
+      return [ax + d1x * s, ay + d1y * s, cx + d2x * t, cy + d2y * t];
+    }
+    const together = (a, b) => a.follow === b || b.follow === a || (a.follow && a.follow === b.follow) || (a.team && a.team.includes(b)) || (b.team && b.team.includes(a));
+    function apart(dt) {
+      // (only about what has moved: what stands still has been kept apart already)
+      for (const ag of all) {
+        if (!ag.vis || !ag.mv || ag.kind === 'boat') continue;
+        const [ha, ra] = sizeOf(ag), wa = weight(ag), ca = Math.cos(ag.a), sa = Math.sin(ag.a), sp = spaceOf(ag);
+        const walking = ag.leg && ag.leg.k === 'go' && ag.pose !== 'stand';
+        around(ag.x, ag.y, walking ? 3.5 : 2.2, o => {
+          if (o === ag || (o.mv && o.id < ag.id) || o.kind === 'boat' || Math.abs(o.z - ag.z) > 1.2 || spaceOf(o) !== sp || together(ag, o) || now < (o.ghost || 0) || now < (ag.ghost || 0)) return;
+          const [hb, rb] = sizeOf(o), wb = weight(o);
+          if (wa === Infinity && wb === Infinity) return;
+          const cb = Math.cos(o.a), sb = Math.sin(o.a);
+          const [px, py, qx, qy] = closest(ag.x - ca * ha, ag.y - sa * ha, ag.x + ca * ha, ag.y + sa * ha, o.x - cb * hb, o.y - sb * hb, o.x + cb * hb, o.y + sb * hb);
+          let nx = px - qx, ny = py - qy, d = Math.hypot(nx, ny);
+          const over = ra + rb - d;
+          if (over <= 0) return;
+          if (d < 1e-4) { const t = rng() * TAU; nx = Math.cos(t); ny = Math.sin(t); d = 1; }
+          nx /= d; ny /= d;
+          const fa = wa === Infinity ? 0 : wb === Infinity ? 1 : wb / (wa + wb), push = Math.min(over, 0.5) * 0.7;
+          if (fa > 0) shove(ag, nx, ny, push * fa, dt);
+          if (fa < 1) shove(o, -nx, -ny, push * (1 - fa), dt);
+        });
+      }
+    }
+    // the timid out of the way: sheep and goats of people on their feet and
+    // of dogs, hens of everyone but whoever feeds them, cats of dogs; the
+    // big beasts only of what comes right up to them
+    const FLEE = { sheep: [2.6, 6, 2.4], goat: [2.2, 5, 2.8], hen: [1.6, 3.5, 1.8], cat: [1.8, 5, 3.4], cow: [1.2, 3, 1.4], ox: [1, 2.5, 1.2], horse: [1.3, 3, 2.6], donkey: [1.2, 3, 1.6] };
+    function shy() {
+      // what frightens, gathered from its side (a dog, someone on foot, a rider, a cart)
+      const fear = new Map();
+      for (const o of all) {
+        if (!o.vis) continue;
+        const k = o.kind, foot = k === 'person' && !SETTLED.has(o.pose) && o.anim !== 'scatter' && o.anim !== 'pet';
+        if (!(k === 'dog' || k === 'cat' || k === 'rider' || k === 'cart' || foot)) continue;
+        around(o.x, o.y, k === 'dog' ? 6 : k === 'cat' ? 3.5 : 4, ag => {
+          const F = FLEE[ag.kind];
+          if (!F || ag === o || !ag.vis || ag.follow || ag.ploughing || ag.tied || now < (ag.fleeT || 0) || spaceOf(o) !== spaceOf(ag)) return;
+          const L = ag.leg;
+          if (L && (L.flee || L.k === 'go' || L.k === 'hide')) return;
+          let r = 0;
+          if (k === 'dog') r = ag.kind === 'dog' ? 0 : F[1];
+          else if (k === 'cat') r = ag.kind === 'hen' ? F[1] : 0;
+          else if (k === 'person') r = ag.kind === 'cat' ? (o.pose === 'walk' || o.pose === 'run' ? F[0] : 0) : F[0];
+          else r = F[0] * 1.5;
+          const dx = ag.x - o.x, dy = ag.y - o.y, d = Math.hypot(dx, dy);
+          if (!r || d > r || d < 1e-3) return;
+          const f = fear.get(ag) || [0, 0];
+          f[0] += dx / d * (r - d) / r; f[1] += dy / d * (r - d) / r;
+          fear.set(ag, f);
+        });
+      }
+      for (const [ag, [fx, fy]] of fear) {
+        let ax = fx, ay = fy;
+        // (a flock away to its middle as much as from what came)
+        const Hd = ag.herd;
+        if (Hd) { const [cx, cy] = Hd.pt(Hd.mx, Hd.my), d = Math.hypot(cx - ag.x, cy - ag.y) || 1; ax += (cx - ag.x) / d * 0.5; ay += (cy - ag.y) / d * 0.5; }
+        const m = Math.hypot(ax, ay) || 1, dist = range(2, 4.5);
+        let x = ag.x + ax / m * dist, y = ag.y + ay / m * dist;
+        if (Hd) [x, y] = Hd.pt(...Hd.clampU((x - Hd.cx) * Hd.c + (y - Hd.cy) * Hd.s, -(x - Hd.cx) * Hd.s + (y - Hd.cy) * Hd.c));
+        if (!standable(ag, x, y) || (!ag.cl && !Hd && !way.los([ag.x, ag.y], [x, y]))) { ag.fleeT = now + 1; continue; }
+        ag.legs.length = 0;
+        ag.leg = { k: 'trot', x, y, speed: FLEE[ag.kind][2], pose: 'run', flee: true, until: now + 4 };
+        ag.fleeT = now + 1.5;
+      }
+    }
+
     // ================= on =================
     const figures = [], lights = [];
-    let sunT = -1;
+    let sunT = -1, clockT = -Infinity, tick = 0, acc = 0;
     function step(dt, d) {
       dt = Math.min(dt, 0.5);
       now += dt;
-      clock = hour(d);
+      // (the hour afresh every two seconds or so)
+      if (Math.abs(d.getTime() - clockT) > 2000) { clock = hour(d); clockT = d.getTime(); }
       if (Math.abs(d.getTime() - sunT) > 60e3) { sunT = d.getTime(); sunAz = RomanTownSky.local(d).sun.az; }
       deadline = timeNow() + 8;
+      if (!hash.size) reindex();
       for (const ag of all) {
         if (ag.kind === 'boat') { boat(ag, dt); continue; }
+        // (nothing to do for one out of sight, or a beast standing, grazing or lying a while, till it is over)
+        const Lq = ag.leg;
+        if (Lq && now < Lq.until && (Lq.k === 'hide' || (Lq.k === 'stay' && ag.kind !== 'person' && !Lq.face && !Lq.tether && Lq.seen))) { ag.mv = false; continue; }
+        if (Lq && Lq.k === 'stay') Lq.seen = true;
+        const x0 = ag.x, y0 = ag.y, p0 = ag.pose;
         update(ag, dt);
+        ag.mv = ag.x !== x0 || ag.y !== y0 || ag.pose !== p0;
         // the leaders' trails, for their followers
         if (ag.train || ag.cart) {
           const T = ag.trail || (ag.trail = []), last = T[T.length - 1];
           if (!last || Math.hypot(ag.x - last[0], ag.y - last[1]) > 0.3) { T.push([ag.x, ag.y]); if (T.length > 60) T.shift(); }
         }
       }
-      for (const ag of all) if (ag.follow) follow(ag);
+      for (const ag of all) if (ag.follow) { follow(ag); ag.mv = true; }
+      reindex();
+      feeders = all.filter(a => a.vis && a.anim === 'scatter');
+      // (the frightened and the kept apart every other moment)
+      if (dt > 0) { acc += dt; if (++tick % 2 === 0) { shy(); steer(acc); apart(acc); acc = 0; } }
       figures.length = 0; lights.length = 0;
+      for (const T of tables.values()) if (T.laid > now) figures.push(T);
       for (const ag of all) {
         if (!ag.vis) continue;
         figures.push(ag);
