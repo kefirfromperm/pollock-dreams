@@ -45,7 +45,7 @@ const RomanTownView = (() => {
     wheat: 10, stubble: 11, fallow: 12, meadow: 13, hay: 14, pasture: 15, vines: 16, olives: 17, orchard: 18,
     via: 19, track: 20, river: 21, bank: 22,
   };
-  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15, fabric: 16, cushion: 17, dark: 18, hay: 19, terracotta: 20, door: 21, bronze: 22, grain: 23, sacking: 24, logs: 25, wicker: 26, produce: 27 };
+  const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15, fabric: 16, cushion: 17, dark: 18, hay: 19, terracotta: 20, door: 21, bronze: 22, grain: 23, sacking: 24, logs: 25, wicker: 26, produce: 27, iron: 28, embers: 29, liquor: 30, cloth: 31, bread: 32 };
   const TREES = {
     // colour; the crown's depth as a part of the height (or metres, if over 1)
     cypress: [[44, 62, 38], 1], poplar: [[92, 118, 56], 0.95], pine: [[62, 84, 46], 2.4], oak: [[58, 76, 42], 0.6],
@@ -479,6 +479,20 @@ const RomanTownView = (() => {
         f = 0.45 + 0.65 * puffs(pl / sz + k * 13.0, uSeed + 139);
       }
       else if (m == 22) { c = mix(rgb(118.0, 90.0, 52.0), rgb(92.0, 120.0, 98.0), 0.5 * vnoise(p * 12.0, uSeed + 123)); f = 0.95; }
+      // iron, worn bright where it is struck
+      else if (m == 28) { c = rgb(70.0, 70.0, 76.0); f = 0.8 + 0.3 * vnoise(p * 9.0, uSeed + 141) + 0.25 * n.z; }
+      // embers: a forge's, a kiln's, an oven's mouth, stirring
+      else if (m == 29) { float e = vnoise(p * 16.0 + vec2(uTime * 0.5, -uTime * 0.3), uSeed + 143) * 0.6 + vnoise(p * 40.0, uSeed + 149) * 0.4; c = mix(rgb(52.0, 30.0, 24.0), mix(rgb(170.0, 40.0, 12.0), rgb(255.0, 160.0, 50.0), smoothstep(0.55, 0.85, e)), smoothstep(0.35, 0.6, e)); f = 1.1; }
+      // a fuller's vat: the grey liquor the cloth is trodden in
+      else if (m == 30) { c = rgb(160.0, 164.0, 150.0); f = 0.82 + 0.16 * vnoise(p * 3.0 + vec2(uTime * 0.2), uSeed + 145); }
+      // cloth on the loom: the warp's threads, a band of colour woven across
+      else if (m == 31) {
+        float q = vMat.w < 0.5 ? pl.x : pl.y;
+        c = vMat.z < 0.3 ? rgb(214.0, 204.0, 180.0) : vMat.z < 0.6 ? rgb(164.0, 80.0, 56.0) : vMat.z < 0.8 ? rgb(120.0, 132.0, 150.0) : rgb(190.0, 160.0, 96.0);
+        f = 0.8 + 0.2 * sin(q * 160.0);
+      }
+      // loaves on a counter, round, scored, brown on top
+      else if (m == 32) { c = rgb(188.0, 128.0, 62.0); f = 0.5 + 0.65 * puffs(pl / 0.1 + vMat.y * 9.0, uSeed + 147); }
       else if (m == 14) { c = rgb(206.0, 196.0, 176.0); f = 0.9 + 0.14 * vnoise(p * 3.0, uSeed + 111); }
       else if (m == 15) { c = rgb(232.0, 228.0, 218.0); f = 0.9 + 0.1 * n.z; }
       else if (m == 16) { c = rgb(222.0, 212.0, 188.0); f = 0.92 + 0.1 * vnoise(p * 6.0, uSeed + 113); }
@@ -826,6 +840,9 @@ const RomanTownView = (() => {
       }
       case 'meal': return mealBodies(f, E);
       case 'basket': E(0, 0, 0.18, 0.26, 0.26, 0.18, WICKER); E(0, 0, 0.33, 0.2, 0.2, 0.07, pick(rgbs([[150, 40, 40], [110, 140, 60], [200, 160, 60], [90, 60, 110], [170, 170, 160]]), id, 9)); return;
+      case 'stone': E(0, 0, 0.32, 0.5, 0.32, 0.32, C(204, 196, 178), 0, 0); E(-0.2, 0.15, 0.03, 0.3, 0.25, 0.02, C(220, 214, 200)); return;
+      case 'log': E(0, 0, 0.17, 0.62, 0.17, 0.16, BARK[id % BARK.length], 0, 2); E(0.6, 0, 0.17, 0.03, 0.16, 0.15, SPLIT); E(0.3, 0.35, 0.05, 0.2, 0.07, 0.05, SPLIT, 0.7); return;
+      case 'desk': E(0, 0, 0.7, 0.28, 0.24, 0.025, WOOD); E(0, 0, 0.35, 0.035, 0.035, 0.34, DARKWOOD); return;
       default: return beastBodies(f, E, lod);
     }
   }
@@ -928,6 +945,94 @@ const RomanTownView = (() => {
       E(a, b, 0.04, 0.035, 0.035, 0.04, CLAY); E(a, b, 0.08, 0.026, 0.026, 0.004, WINE);
     }
   }
+  // ---- the trades in hand: where the hands are at each work, and the
+  // tools and the work in them; a gladiator's arms; an actor's mask ----
+  const WOOL = C(232, 226, 210), LEATHER = C(120, 76, 46), WAX = C(150, 120, 60), GOLD = C(214, 178, 82), DOUGH = C(234, 220, 188), MEAT = C(160, 60, 56);
+  const HOT = C(255, 150, 50), BRONZE = C(170, 130, 70), SHIELD = C(150, 42, 34), NET = C(176, 166, 140), MASK = C(238, 232, 218), IVORY = C(226, 214, 184);
+  // sitting: each hand [forward, aside, up] at the work
+  function sitHands(anim, sg, s, ph, T) {
+    const w = Math.sin(ph * T);
+    switch (anim) {
+      case 'craft': case 'sell': case 'talk': return [0.3 + 0.06 * Math.sin(ph * T * (anim === 'craft' ? 2 : 1) + sg), sg * 0.18, s + 0.42];
+      case 'eat': return sg > 0 ? [0.2, 0.08, s + 0.42 + 0.3 * Math.max(0, w)] : [0.3, -0.15, s + 0.42];
+      case 'spin': return sg < 0 ? [0.12, -0.2, s + 0.55] : [0.32, 0.18, s + 0.35 + 0.04 * Math.sin(ph * T * 3)];
+      case 'stitch': case 'basket': return [0.32 + 0.05 * Math.sin(ph * T * 2 + sg), sg * 0.07, s + 0.36];
+      case 'write': return sg < 0 ? [0.34, -0.08, s + 0.45] : [0.36 + 0.02 * Math.sin(ph * T * 4), 0.05, s + 0.48];
+      case 'count': return [0.42 + 0.04 * Math.sin(ph * T * 2 + sg * 2), sg * 0.12, s + 0.34];
+      case 'throw': return [0.45, sg * 0.08, s + 0.3 + 0.02 * Math.sin(ph * T * 3)];
+      case 'pipe': return [0.28, sg * 0.05, s + 0.68];
+      case 'dice': return sg > 0 ? [0.38, 0.1, s + 0.42 + 0.06 * Math.abs(Math.sin(ph * T * 2))] : [0.3, -0.15, s + 0.4];
+      case 'clap': return [0.3, sg * (0.03 + 0.06 * Math.abs(Math.sin(ph * T * 3))), s + 0.6];
+      case 'cheer': return [0.05, sg * 0.28, s + 0.95 + 0.06 * Math.sin(ph * T * 2 + sg)];
+      default: return [0.22, sg * 0.18, s + 0.3];
+    }
+  }
+  function sitWork(anim, s, ph, T, S) {
+    switch (anim) {
+      case 'craft': S(0.42, 0, s + 0.38, 0.12, 0.1, 0.04, WOOD); break;
+      // the distaff up under the left arm, the wool on it; the spindle turning below the right hand
+      case 'spin': S(0.1, -0.2, s + 0.8, 0.02, 0.02, 0.28, WOOD); S(0.1, -0.2, s + 1.05, 0.06, 0.06, 0.08, WOOL); S(0.32, 0.18, s + 0.15, 0.015, 0.015, 0.15, WOOD); S(0.32, 0.18, s + 0.04, 0.035, 0.035, 0.015, CLAY); break;
+      case 'stitch': S(0.34, 0, s + 0.36, 0.1, 0.05, 0.04, LEATHER); break;
+      case 'basket': S(0.38, 0, s + 0.3, 0.17, 0.17, 0.08, WICKER); break;
+      case 'write': S(0.36, -0.06, s + 0.44, 0.09, 0.07, 0.012, WAX); break;
+      case 'count': for (const o of [-0.08, 0.05, 0.14]) S(0.6, o, 0.74, 0.03, 0.03, 0.012 + 0.01 * (o > 0), GOLD); break;
+      case 'pipe': for (const sg of [-1, 1]) S(0.42, sg * 0.04, s + 0.6, 0.18, 0.012, 0.012, IVORY); break;
+    }
+  }
+  // standing: an arm [forward, up, its reach, its drop] at the work, or nothing
+  function workArm(anim, sg, ph, T) {
+    const w = Math.sin(ph * T);
+    switch (anim) {
+      case 'hammer': return sg > 0 ? [0.25, 1.25 + 0.35 * Math.max(0, Math.sin(ph * T * 1.5)), 0.1, 0.22] : [0.3, 1.0, 0.17, 0.07];
+      case 'stoke': return [0.28, 0.9 + 0.08 * Math.sin(ph * T * 1.2 + (sg > 0 ? 0 : Math.PI)), 0.17, 0.07];
+      case 'bake': return [0.3, 1.05, 0.2, 0.06];
+      case 'knead': return [0.32 + 0.06 * Math.sin(ph * T * 1.5 + sg), 0.95, 0.2, 0.06];
+      case 'push': return [0.3, 1.1, 0.2, 0.06];
+      case 'tread': return [0.08, 1.05, 0.07, 0.22];
+      case 'chop': return sg > 0 ? [0.25, 1.15 + 0.3 * Math.max(0, Math.sin(ph * T * 1.3)), 0.12, 0.2] : [0.3, 0.95, 0.17, 0.07];
+      case 'weave': return [0.25, 1.35 + 0.1 * Math.sin(ph * T + sg), 0.12, 0.18];
+      case 'saw': return sg > 0 ? [0.3 + 0.15 * Math.sin(ph * T * 1.2), 0.95, 0.2, 0.06] : [0.28, 0.92, 0.17, 0.07];
+      case 'shave': return sg > 0 ? [0.32, 1.15 + 0.05 * Math.sin(ph * T * 2), 0.17, 0.07] : [0.3, 1.2, 0.15, 0.08];
+      case 'pipe': return [0.22, 1.38, 0.13, 0.08];
+      case 'fight': return sg > 0 ? [0.25 + 0.2 * Math.max(0, Math.sin(ph * T * 1.6)), 1.2, 0.2, 0.06] : [0.22, 1.1, 0.1, 0.16];
+      case 'cheer': return [0.05, 1.55 + 0.08 * Math.sin(ph * T * 2 + sg), 0.06, 0.26];
+      case 'clap': return [0.2, 1.2, 0.15, 0.06];
+      case 'axe': return [0.2, 1.3 + 0.3 * Math.sin(ph * T * 0.9), 0.1, 0.22];
+      case 'declaim': return sg > 0 ? [0.2 + 0.1 * Math.sin(ph * T * 0.6), 1.35, 0.17, 0.12] : [0.12, 1.15, 0.1, 0.15];
+      default: void w; return null;
+    }
+  }
+  function standWork(anim, ph, T, S) {
+    switch (anim) {
+      case 'hammer': {
+        // the hammer coming down, the tongs holding the iron glowing on the anvil
+        const hz = 1.25 + 0.35 * Math.max(0, Math.sin(ph * T * 1.5));
+        S(0.45, 0.25, hz + 0.1, 0.13, 0.02, 0.02, WOOD); S(0.56, 0.25, hz + 0.12, 0.04, 0.04, 0.05, IRON);
+        S(0.5, -0.12, 0.85, 0.22, 0.015, 0.015, IRON); S(0.68, -0.02, 0.76, 0.12, 0.02, 0.015, HOT);
+        break;
+      }
+      case 'bake': S(0.9, 0, 1.05, 0.75, 0.025, 0.025, WOOD); S(1.62, 0, 1.0, 0.15, 0.13, 0.01, WOOD); break;
+      case 'knead': S(0.42, 0, 0.93, 0.13, 0.13, 0.05, DOUGH); break;
+      case 'chop': S(0.42, 0.25, 1.15 + 0.3 * Math.max(0, Math.sin(ph * T * 1.3)), 0.08, 0.02, 0.06, IRON); S(0.56, 0, 0.83, 0.15, 0.11, 0.05, MEAT); break;
+      case 'saw': S(0.45 + 0.15 * Math.sin(ph * T * 1.2), 0.15, 0.84, 0.3, 0.01, 0.06, IRON); S(0.5, 0, 0.82, 0.62, 0.13, 0.025, WOOD); break;
+      case 'shave': S(0.44, 0.2, 1.15, 0.04, 0.01, 0.02, IRON); break;
+      case 'pipe': for (const sg of [-1, 1]) S(0.42, sg * 0.04, 1.36, 0.22, 0.012, 0.012, IVORY); break;
+      case 'axe': { const z = 1.3 + 0.3 * Math.sin(ph * T * 0.9); S(0.45, 0, z, 0.36, 0.025, 0.025, WOOD); S(0.8, 0, z - 0.02, 0.07, 0.02, 0.1, IRON); break; }
+    }
+  }
+  // a gladiator's arms: a sword-fighter his helmet, his tall shield and his
+  // sword; a net-fighter, bareheaded, his trident and his net
+  function gear(f, S, fighting, hz) {
+    const thrust = fighting ? 0.2 * Math.max(0, Math.sin((f.ph || 0) * Math.PI * 2 * 1.6)) : 0;
+    if (f.armed === 'net') {
+      S(0.55 + thrust, 0.25, fighting ? 1.3 : 1.0, 0.85, 0.02, 0.02, WOOD); S(1.4 + thrust, 0.25, fighting ? 1.3 : 1.0, 0.06, 0.07, 0.015, IRON);
+      S(0.25, -0.32, 0.95, 0.15, 0.12, 0.2, NET);
+    } else {
+      S(0, 0, hz + 0.03, 0.135, 0.125, 0.135, BRONZE); S(0, 0, hz + 0.17, 0.12, 0.02, 0.05, SHIELD);
+      S(0.3, -0.3, 1.05, 0.04, 0.22, 0.38, SHIELD);
+      S(0.5 + thrust, 0.25, 1.2, 0.22, 0.02, 0.015, IRON);
+    }
+  }
   function personBodies(f, E, lod) {
     const id = f.id, ph = f.ph || 0, T = Math.PI * 2, sw = Math.sin(ph * T), cw = Math.cos(ph * T);
     const k = f.age === 'child' ? 0.66 : f.age === 'old' ? 0.95 : 1, fem = f.sex === 'f';
@@ -942,6 +1047,8 @@ const RomanTownView = (() => {
       S(fw, 0, z, 0.11, 0.1, 0.12, veiled ? palla : hair);
       S(fw + 0.035, 0, z - 0.02, 0.085, 0.085, 0.095, skin);
       if (veiled) S(fw - 0.02, 0, z + 0.02, 0.125, 0.115, 0.12, palla);
+      // (an actor's mask, its open mouth dark)
+      if (f.anim === 'declaim') { S(fw + 0.06, 0, z - 0.01, 0.075, 0.095, 0.115, MASK); S(fw + 0.13, 0, z - 0.06, 0.02, 0.03, 0.02, C(40, 30, 28)); }
     };
     if (lod) { S(0, 0, 0.82, 0.16, 0.22, 0.72, cl); S(0, 0, 1.52, 0.11, 0.1, 0.12, veiled ? palla : hair); return; }
     const pose = f.pose, anim = f.anim;
@@ -957,6 +1064,10 @@ const RomanTownView = (() => {
       else if (carry === 'staff' || carry === 'spear') S(0.08, 0.3, 1.0, 0.025, 0.025, carry === 'spear' ? 1.1 : 0.9, WOOD);
       else if (carry === 'rod') S(0.2, 0.25, 1.3, 0.9, 0.02, 0.02, WOOD, 0.2);
       else if (carry === 'bag') S(0.05, -0.22, 0.95, 0.14, 0.1, 0.15, C(200, 186, 150));
+      else if (carry === 'tools') S(0.02, -0.22, 0.9, 0.16, 0.08, 0.12, C(120, 96, 70));
+      // the fasces on the left shoulder: rods bound about an axe, its blade out at the top
+      else if (carry === 'fasces') { S(0.05, -0.22, 1.45, 0.06, 0.06, 0.55, C(150, 104, 70)); for (const o of [-0.035, 0.035]) S(0.05 + o, -0.22, 1.45, 0.012, 0.012, 0.56, C(160, 40, 34)); S(0.12, -0.22, 2.0, 0.1, 0.02, 0.07, IRON); }
+      else if (carry === 'axe') { S(-0.05, 0.18, 1.45, 0.45, 0.025, 0.025, WOOD, 0.12); S(0.36, 0.18, 1.5, 0.06, 0.02, 0.1, IRON); }
       // from a cart: a sack on the shoulder, an armful of firewood, a bundle of hay on the back
       else if (carry === 'sack') E(-0.02 * k, -0.1 * k, 1.58 * k, 0.4 * k, 0.24 * k, 0.17 * k, SACK, 0.15, 4);
       else if (carry === 'wood') for (const [o, z] of [[-0.09, 1.08], [0.09, 1.08], [0, 1.2]]) E(0.24 * k, o * k, z * k, 0.07 * k, 0.32 * k, 0.07 * k, BARK[0], 0, 2);
@@ -992,10 +1103,10 @@ const RomanTownView = (() => {
           if (s > 0.12) { S(0.42, sg * 0.1, s / 2, 0.07, 0.065, s / 2, long ? cl : legC); S(0.48, sg * 0.1, 0.04, 0.12, 0.05, 0.04, foot); }
           else { S(0.62, sg * 0.1, 0.07, 0.25, 0.07, 0.07, long ? cl : legC); S(0.88, sg * 0.1, 0.08, 0.05, 0.05, 0.08, foot); }
           // the hands at work, or on the knees
-          const busy = anim === 'craft' || anim === 'sell' || anim === 'talk';
-          S(busy ? 0.3 + 0.06 * Math.sin(ph * T * (anim === 'craft' ? 2 : 1) + sg) : 0.22, sg * 0.18, s + (busy ? 0.42 : 0.3), 0.14, 0.055, 0.06, skin, -sg * 0.4);
+          const [hx, hy, hz] = sitHands(anim, sg, s, ph, T);
+          S(hx, hy, hz, 0.14, 0.055, 0.06, skin, -sg * 0.4);
         }
-        if (anim === 'craft') S(0.42, 0, s + 0.38, 0.12, 0.1, 0.04, WOOD);
+        sitWork(anim, s, ph, T, S);
         return;
       }
       case 'kneel': case 'squat': {
@@ -1009,6 +1120,7 @@ const RomanTownView = (() => {
           S(0.36 + (work ? 0.08 * Math.sin(ph * T * 1.5 + sg * 1.3) : 0), sg * 0.16, work ? 0.3 : 0.42, 0.16, 0.05, 0.05, skin, -sg * 0.3);
         }
         if (anim === 'wash') S(0.62, 0, 0.12, 0.3, 0.26, 0.05, pick(TUNIC, id, 15));
+        if (anim === 'chisel') { S(0.5, 0.1, 0.42, 0.08, 0.02, 0.02, IRON, 0.3); S(0.42, -0.16, 0.5 + 0.12 * Math.max(0, sw), 0.05, 0.05, 0.05, WOOD); }
         if (anim === 'gather') S(0.5, 0.3, 0.12, 0.2, 0.2, 0.12, WICKER);
         carried(1.0);
         return;
@@ -1026,6 +1138,8 @@ const RomanTownView = (() => {
         if (anim === 'sweep') S(0.72, 0.2 * sw, 0.22, 0.5, 0.06, 0.04, STRAW, 0.4 * sw);
         if (anim === 'fill' || f.carry === 'jar' || f.carry === 'jar-full') S(0.55, 0, 0.62, 0.14, 0.14, 0.17, CLAY);
         if (anim === 'pick') S(0.3, -0.3, 0.6, 0.18, 0.15, 0.12, WICKER);
+        if (anim === 'stoke') S(0.75, 0.05, 0.45 + 0.05 * sw, 0.5, 0.03, 0.03, DARKWOOD, 0.1);
+        if (anim === 'heal') S(0.15, -0.3, 0.55, 0.14, 0.1, 0.15, C(200, 186, 150));
         return;
       }
       default: {
@@ -1034,15 +1148,16 @@ const RomanTownView = (() => {
         const st = walking ? (run ? 0.34 : 0.2) * sw : 0, lean = run ? 0.07 : 0;
         const bob = walking ? 0.025 * Math.abs(cw) : 0;
         const turnH = anim === 'talk' ? 0.35 * Math.sin(ph * T * 0.37) : 0;
-        S(lean, 0, 1.17 + bob, 0.125, dress === 'toga' ? 0.24 : 0.2, 0.27, cl); head(lean + 0.01, 1.52 + bob);
+        S(lean, 0, 1.17 + bob, 0.125, dress === 'toga' ? 0.24 : 0.2, 0.27, anim === 'fight' ? skin : cl); head(lean + 0.01, 1.52 + bob);
         if (turnH) S(0.06, turnH * 0.15, 1.5 + bob, 0.04, 0.04, 0.04, skin);
         if (fem && !veiled) S(-0.02, 0, 1.36 + bob, 0.15, 0.24, 0.12, palla);
         if (dress === 'toga') S(0.01, 0.07, 1.22 + bob, 0.15, 0.2, 0.25, cl, 0.25);
         S(0.01, 0, long ? 0.6 : 0.78, 0.17, 0.21, long ? 0.44 : 0.22, long ? cl : under);
         for (const sg of [-1, 1]) {
           const leg = st * sg;
-          S(leg, sg * 0.085, 0.32, 0.07, 0.065, 0.32, long ? cl : legC);
-          S(leg * 1.3 + 0.05, sg * 0.085, 0.04, 0.12, 0.05, 0.04, foot);
+          const lift = anim === 'tread' ? 0.09 * Math.max(0, Math.sin(ph * T * 1.4) * sg) : 0;
+          S(leg, sg * 0.085, 0.32 + lift, 0.07, 0.065, 0.32, long ? cl : legC);
+          S(leg * 1.3 + 0.05, sg * 0.085, 0.04 + lift * 1.6, 0.12, 0.05, 0.04, foot);
           // the arms: swinging, or at their work
           let ax = -leg * 0.6, az = 1.12, arx = 0.06, arz = 0.27;
           if (anim === 'talk' && sg > 0) { ax = 0.17 + 0.07 * Math.sin(ph * T * 0.8); az = 1.22; arx = 0.17; arz = 0.07; }
@@ -1056,6 +1171,8 @@ const RomanTownView = (() => {
           if (anim === 'shoo') { ax = 0.12; az = 1.25 + 0.12 * sg * sw; arx = 0.08; arz = 0.2; }
           if (anim === 'plough') { ax = 0.32; az = 0.95; arx = 0.2; arz = 0.06; }
           if (anim === 'fish' && sg > 0) { ax = 0.2; az = 1.2; arx = 0.17; arz = 0.07; }
+          const w = workArm(anim, sg, ph, T);
+          if (w) [ax, az, arx, arz] = w;
           if (!(carry === 'torch' && sg > 0) && !(carry === 'jar-full' && sg > 0)) S(lean + ax, sg * 0.25, az + bob, arx, 0.055, arz, cl === under || dress === 'tunic' || dress === 'work' || dress === 'slave' ? skin : cl);
         }
         // the work's tools
@@ -1064,6 +1181,8 @@ const RomanTownView = (() => {
         if (anim === 'scythe') S(0.8, 0.5 * Math.sin(ph * T * 0.7), 0.3, 0.75, 0.05, 0.03, IRON, 0.8 * Math.sin(ph * T * 0.7));
         if (anim === 'fish') S(1.9, 0.12, 1.45, 1.6, 0.015, 0.015, WOOD, 0.08);
         if (anim === 'plough') { S(0.75, 0, 0.75, 0.32, 0.25, 0.04, WOOD); S(1.2, 0, 0.45, 0.4, 0.06, 0.25, DARKWOOD); S(2.1, 0, 0.6, 0.9, 0.04, 0.04, WOOD); }
+        standWork(anim, ph, T, S);
+        if (f.armed && (anim === 'fight' || anim === 'cheer' || anim === 'watch')) gear(f, S, anim === 'fight', 1.52 + bob);
         if (!walking && f.carry === 'jar-full') S(0, 0, 1.76, 0.15, 0.15, 0.19, CLAY);
         if (walking || !anim || anim === 'watch' || anim === 'shoo' || anim === 'talk' || anim === 'scatter' || anim === 'pray') carried(1.52 + bob);
       }
@@ -1436,6 +1555,8 @@ const RomanTownView = (() => {
         face(ring);
         walls(ring, b.z0 + z1);
       };
+      // which way a piece against a wall faces, into the room
+      const facing = f => { const a = { 0: Math.PI / 2, 2: -Math.PI / 2, 1: Math.PI, 3: 0 }[f.side] ?? 0; return [Math.cos(a), Math.sin(a)]; };
       // windows: the wall below them left, to the sill, a lattice across
       for (const [a1, c1, a2, c2] of I.windows || []) {
         block(Math.min(a1, a2) - T, Math.min(c1, c2) - T, Math.max(a1, a2) + T, Math.max(c1, c2) + T, -3, 1.0, SOLID.plaster);
@@ -1469,13 +1590,90 @@ const RomanTownView = (() => {
           case 'hearth': block(a1, c1, a2, c2, 0, 0.5, SOLID.stone); block(a1 + 0.12, c1 + 0.12, a2 - 0.12, c2 - 0.12, 0.5, 0.52, SOLID.dark); break;
           case 'counter': {
             block(a1, c1, a2, c2, 0, 0.95, SOLID.plaster);
-            const n = f.jars || 2;
-            for (let k = 0; k < n; k++) {
-              const t = (k + 0.5) / n;
-              disc(longW ? a1 + (a2 - a1) * t : f.a, longW ? f.c : c1 + (c2 - c1) * t, 0.22, 0.95, 0.965, SOLID.dark, 12);
+            const L = longW ? a2 - a1 : c2 - c1, along = t => longW ? [a1 + (a2 - a1) * t, f.c] : [f.a, c1 + (c2 - c1) * t];
+            if (f.bread) {
+              // the day's loaves, in a row or two
+              for (let k = 0, n = Math.max(2, Math.floor(L / 0.26)); k < n; k++) for (const o of [-0.14, 0.14]) {
+                const [a, c] = along((k + 0.5) / n);
+                mat = [SOLID.bread, t1, hash(k, o > 0 ? 1 : 2, seed), 0];
+                disc(a + (longW ? 0 : o), c + (longW ? o : 0), 0.11, 0.95, 1.02, SOLID.bread, 10);
+              }
+            } else if (f.produce) {
+              // baskets set out on it
+              for (let k = 0, n = Math.max(1, Math.floor(L / 0.6)); k < n; k++) {
+                const [a, c] = along((k + 0.5) / n);
+                disc(a, c, 0.24, 0.95, 1.2, SOLID.wicker, 12);
+                mat = [SOLID.produce, t1, hash(k, Math.round(a * 10), seed + 36), 0];
+                disc(a, c, 0.2, 1.2, 1.24, SOLID.produce, 12);
+              }
+            } else for (let k = 0, n = f.jars || 2; k < n; k++) {
+              const [a, c] = along((k + 0.5) / n);
+              disc(a, c, 0.22, 0.95, 0.965, SOLID.dark, 12);
             }
             break;
           }
+          // ---- a shop's trade: what its work is done at ----
+          case 'oven': {
+            // a stone base, the dome on it, its mouth to the room, embers in it
+            const r = Math.min(f.w, f.d) / 2, [ux, uy] = facing(f);
+            block(a1, c1, a2, c2, 0, 0.75, SOLID.stone);
+            for (let k = 0; k < 4; k++) disc(f.a - ux * 0.05, f.c - uy * 0.05, r * 0.92 * Math.cos(k * 0.38), 0.75 + k * 0.16, 0.91 + k * 0.16, SOLID.plaster, 14);
+            const mx = f.a + ux * r * 0.78, mc = f.c + uy * r * 0.78;
+            block(mx - 0.24, mc - 0.24, mx + 0.24, mc + 0.24, 0.75, 1.12, SOLID.dark);
+            disc(f.a + ux * r * 0.5, f.c + uy * r * 0.5, 0.2, 0.75, 0.78, SOLID.embers, 8);
+            break;
+          }
+          case 'mill': {
+            // the lava mill: the cone below, the hourglass turned on it, a bar through to push
+            disc(f.a, f.c, 0.5, 0, 0.45, SOLID.stone, 14);
+            disc(f.a, f.c, 0.44, 0.45, 0.72, SOLID.dark, 14); disc(f.a, f.c, 0.3, 0.72, 0.86, SOLID.dark, 12); disc(f.a, f.c, 0.44, 0.86, 1.15, SOLID.dark, 14);
+            block(f.a - 0.95, f.c - 0.05, f.a + 0.95, f.c + 0.05, 0.74, 0.84, SOLID.timber);
+            break;
+          }
+          case 'forge': {
+            const [ux, uy] = facing(f);
+            block(a1, c1, a2, c2, 0, 0.85, SOLID.stone);
+            block(a1 + 0.15, c1 + 0.15, a2 - 0.15, c2 - 0.15, 0.85, 0.88, SOLID.embers);
+            // the bellows to one side of it
+            const bx = f.a - uy * (Math.max(f.w, f.d) / 2 - 0.2) - ux * 0.1, bc = f.c + ux * (Math.max(f.w, f.d) / 2 - 0.2) - uy * 0.1;
+            block(bx - 0.17, bc - 0.17, bx + 0.17, bc + 0.17, 0.85, 1.0, SOLID.dark);
+            break;
+          }
+          case 'anvil': disc(f.a, f.c, 0.22, 0, 0.5, SOLID.timber, 10); block(a1, c1, a2, c2, 0.5, 0.72, SOLID.iron); break;
+          case 'vat': {
+            const r = Math.min(f.w, f.d) / 2;
+            disc(f.a, f.c, r, 0, 0.7, SOLID.plaster, 16); disc(f.a, f.c, r - 0.09, 0.7, 0.705, SOLID.liquor, 14);
+            break;
+          }
+          case 'kiln': {
+            const r = Math.min(f.w, f.d) / 2, [ux, uy] = facing(f);
+            disc(f.a, f.c, r, 0, 1.1, SOLID.terracotta, 16); disc(f.a, f.c, r * 0.62, 1.1, 1.3, SOLID.terracotta, 12); disc(f.a, f.c, r * 0.3, 1.3, 1.32, SOLID.dark, 10);
+            const mx = f.a + ux * r * 0.85, mc = f.c + uy * r * 0.85;
+            block(mx - 0.22, mc - 0.22, mx + 0.22, mc + 0.22, 0, 0.5, SOLID.dark);
+            disc(mx, mc, 0.14, 0.02, 0.06, SOLID.embers, 8);
+            break;
+          }
+          case 'wheel': {
+            // the kick-wheel below, the shaft, the head, a pot on it
+            disc(f.a, f.c, 0.33, 0, 0.1, SOLID.timber, 14); disc(f.a, f.c, 0.05, 0.1, 0.68, SOLID.timber, 6);
+            disc(f.a, f.c, 0.19, 0.68, 0.72, SOLID.timber, 12); disc(f.a, f.c, 0.1, 0.72, 0.86, SOLID.terracotta, 10);
+            break;
+          }
+          case 'block': disc(f.a, f.c, Math.min(f.w, f.d) / 2, 0, 0.8, SOLID.timber, 12); break;
+          case 'loom': {
+            // the warp-weighted loom against the wall: two uprights, the beam
+            // across, the cloth hanging, the weights in a row at its foot
+            const L = longW ? f.w : f.d, ax = longW ? 1 : 0, cx = 1 - ax, [ux, uy] = facing(f);
+            for (const e of [-1, 1]) { const pa = f.a + ax * e * (L / 2 - 0.05), pc = f.c + cx * e * (L / 2 - 0.05); block(pa - 0.05, pc - 0.05, pa + 0.05, pc + 0.05, 0, 1.95, SOLID.timber); }
+            block(f.a - ax * L / 2 - cx * 0.06, f.c - cx * L / 2 - ax * 0.06, f.a + ax * L / 2 + cx * 0.06, f.c + cx * L / 2 + ax * 0.06, 1.8, 1.92, SOLID.timber);
+            const ca = f.a + ux * 0.04, cc = f.c + uy * 0.04;
+            mat = [SOLID.cloth, t1, hash(Math.round(f.a * 10), Math.round(f.c * 10), seed + 39), longW ? 0 : 1];
+            block(ca - ax * (L / 2 - 0.12) - cx * 0.02, cc - cx * (L / 2 - 0.12) - ax * 0.02, ca + ax * (L / 2 - 0.12) + cx * 0.02, cc + cx * (L / 2 - 0.12) + ax * 0.02, 0.45, 1.78, SOLID.cloth, t1, hash(Math.round(f.a * 10), Math.round(f.c * 10), seed + 39), longW ? 0 : 1);
+            for (let k = 0, n = Math.floor(L / 0.16); k < n; k++) { const o = -L / 2 + 0.15 + k * (L - 0.3) / Math.max(1, n - 1); disc(ca + ux * 0.04 + ax * o, cc + uy * 0.04 + cx * o, 0.055, 0.2, 0.36, SOLID.terracotta, 6); }
+            break;
+          }
+          case 'workbench': block(a1, c1, a2, c2, 0, 0.78, SOLID.timber); block(a1 + 0.2, c1 + 0.1, a1 + 0.6, c2 - 0.1, 0.78, 0.86, SOLID.logs, t1, t2, longW ? 1 : 0); break;
+          case 'chair': disc(f.a, f.c, 0.24, 0, 0.47, SOLID.timber, 10); break;
           case 'plinth': case 'tribunal': block(a1, c1, a2, c2, 0, f.k === 'plinth' ? 1.2 : 1.1, SOLID.marble); break;
           case 'statue': disc(f.a, f.c, f.r, 1.2, 3.0, SOLID.column, 12); break;
           case 'hay': {
@@ -1587,7 +1785,7 @@ const RomanTownView = (() => {
       const sg = Math.sign(Math.sin(rest - shut)) || 1;
       DOORS.push({ b, ha, hc, wd, rest, open: shut + sg * 1.5, cur: rest, mx, my, z: b.z0, t: tints(b), h: 2.1 });
     }
-    // and the pastures' wooden gates, shut, a leaf or two, swinging in to let the shepherd through
+    // and the pastures' wooden gates, shut, a leaf or two, swinging in to let the shepherd through, and held open as his flock goes
     for (const f of town.fields) {
       const G = f.gateway;
       if (!G) continue;
@@ -1616,7 +1814,7 @@ const RomanTownView = (() => {
       // who is about the doors in view (people, dogs), a couple of metres a cell
       const near = new Map(), x0 = rect[0] - 3, y0 = rect[1] - 3, x1 = rect[0] + rect[2] + 3, y1 = rect[1] + rect[3] + 3;
       if (life) for (const f of life.figures) {
-        if ((f.kind !== 'person' && f.kind !== 'dog') || f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
+        if ((f.kind !== 'person' && f.kind !== 'dog' && !f.drove) || f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
         const k = Math.floor(f.x / 2) * 65536 + Math.floor(f.y / 2);
         (near.get(k) || near.set(k, []).get(k)).push(f);
       }

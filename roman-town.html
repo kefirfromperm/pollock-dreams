@@ -15,7 +15,7 @@
 <title>Roman Town</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river; and its people and their beasts about whatever the hour of the Roman day has them about, on and on.">
+<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river; and its people, each at their trade, eating when hungry and sleeping when tired, the whole town off to the theatre or the games on a feast day, the shepherds moving their flocks from pasture to pasture, about whatever the hour of the Roman day has them about, on and on.">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1915; }
   canvas {
@@ -30,11 +30,20 @@
     transition: opacity 1.2s; pointer-events: none;
   }
   #hint.hidden { opacity: 0; }
+  #who {
+    position: fixed; left: 0; top: 0; max-width: 300px; pointer-events: none;
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.7);
+    padding: 5px 9px; border-radius: 4px; display: none; white-space: normal;
+  }
+  #who b { font-weight: 600; color: #fff8e6; }
+  #who i { font-style: normal; color: #e6c98e; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint"></div>
+<div id="who"></div>
 <script src="pollock.js"></script>
 <script src="roman-town.js"></script>
 <script src="roman-town-view.js"></script>
@@ -128,7 +137,7 @@
       if (!started) {
         started = true;
         const t = clock(), hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
-        hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom' : 'drag or arrows: move · wheel or + −: zoom · 0: all · P: pause · S: save PNG');
+        hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom · tap someone: who they are' : 'drag or arrows: move · wheel or + −: zoom · point at someone: who they are · 0: all · P: pause · S: save PNG');
         showHint();
       }
     }
@@ -171,6 +180,52 @@
     const d = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1);
     zoomAt(...devicePt(e), Math.exp(-d * 0.0018));
   }, { passive: false });
+
+  // ---- who someone is: pointed at (or tapped), their name, what they
+  // are, what they are about, whether hungry or tired; the label kept by
+  // them as they go ----
+  const who = document.getElementById('who');
+  let whoF = null, whoT = 0, whoUntil = 0;
+  const THINGS = new Set(['meal', 'cart', 'boat', 'basket', 'stone', 'log', 'desk']);
+  function pickAt(px, py) {
+    if (scale() < 5) return null;
+    const [vx, vy] = viewRect(), wx = vx + px / scale(), wy = vy + py / scale(), r = Math.max(0.6, 16 * dpr / scale());
+    let best = null, bd = r;
+    for (const f of life.figures) {
+      if (THINGS.has(f.kind)) continue;
+      const d = Math.hypot(f.x - wx, f.y - wy) - (f.kind === 'person' ? 0.25 : 0);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
+  }
+  const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  function showWho(now) {
+    if (!whoF || !whoF.vis || scale() < 5 || (whoUntil && now > whoUntil)) { who.style.display = 'none'; whoF = null; return; }
+    if (now - whoT > 400) {
+      whoT = now;
+      const d = life.describe(whoF);
+      if (!d) { who.style.display = 'none'; whoF = null; return; }
+      who.innerHTML = `<b>${esc(d.name)}</b>${d.title ? `, ${esc(d.title)}` : ''}${d.doing ? `<br>${esc(d.doing)}` : ''}${d.needs ? ` · <i>${esc(d.needs)}</i>` : ''}`;
+    }
+    const r = canvas.getBoundingClientRect(), [vx, vy] = viewRect();
+    const x = r.left + (whoF.x - vx) * scale() * r.width / DW, y = r.top + (whoF.y - vy) * scale() * r.height / DH;
+    who.style.display = 'block';
+    who.style.transform = `translate(${Math.min(innerWidth - who.offsetWidth - 6, x + 14)}px, ${Math.max(6, y - who.offsetHeight - 10)}px)`;
+  }
+  canvas.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch' || pointers.size) return;
+    const f = pickAt(...devicePt(e));
+    if (f !== whoF) { whoF = f; whoT = 0; whoUntil = 0; }
+  });
+  canvas.addEventListener('pointerleave', () => { if (!whoUntil) whoF = null; });
+  // (a tap, on a touch screen: the label a while)
+  let tapAt = null;
+  canvas.addEventListener('pointerdown', e => { tapAt = [e.clientX, e.clientY, performance.now()]; });
+  canvas.addEventListener('pointerup', e => {
+    if (!tapAt || e.pointerType !== 'touch' || Math.hypot(e.clientX - tapAt[0], e.clientY - tapAt[1]) > 8 || performance.now() - tapAt[2] > 400) return;
+    whoF = pickAt(...devicePt(e)); whoT = 0; whoUntil = performance.now() + 5000;
+  });
+  (function follow(now) { showWho(now); requestAnimationFrame(follow); })(performance.now());
 
   let lastMove = 0;
   window.addEventListener('mousemove', () => {

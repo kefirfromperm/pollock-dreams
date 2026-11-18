@@ -38,8 +38,12 @@
 //                        hinge; windows: [[s1, t1, s2, t2]]; furniture: [{ k, a, c, w, d } or
 //                        { k, a, c, r }] k: bed, couch, table (round?), bench, chest, hearth,
 //                        counter (jars), stall, plinth, statue, tribunal, hay, amphora, dolium, grain (a
-//                        heap), sacks, woodpile (tall), baskets; goods: a storeroom's (grain, firewood,
-//                        hay, jars, produce)
+//                        heap), sacks, woodpile (tall), baskets; and a shop's, as its trade has it: oven,
+//                        mill, forge, anvil, vat, kiln, wheel (a potter's), block (a butcher's), loom,
+//                        workbench, chair (a barber's); a counter its jars, or bread, or produce; a table
+//                        a board to knead on; goods: a storeroom's (grain, firewood, hay, jars, produce);
+//                        trade: a shop's: caupona (a tavern), bakery, smithy, fullery, pottery, butcher,
+//                        grocer, wine, weaver, cobbler, carpenter, barber
 //     round              { x, y, r, h, roof: flat | cone | dome, pitch, hole } hole: an open
 //                        middle that radius (a well's curb)
 //     cavea              { x, y, angle, r0, r1, h } a theatre's seats: a half ring about its orchestra
@@ -1822,7 +1826,22 @@ const RomanTown = (() => {
 
     // a side left open: gone into all along it
     for (const [b] of walled) if (b.open) entrance(b, b.open, sideLen(b, b.open) / 2, sideLen(b, b.open) - 1, 'open');
-    for (const [b, P] of plans) b.interior = finish(rng, b, P, lamps);
+    // each shop its trade: one of each the town can't do without, then more
+    // as a town has them, most of all taverns; a shop's trade and its
+    // fittings by where it stands, not by the rest of the town
+    const shops = [...plans.keys()].filter(b => b.use === 'shop').sort((p, q) => spotHash(p, 1) - spotHash(q, 1));
+    shops.forEach((b, k) => { b.trade = k < FIRST_TRADES.length ? FIRST_TRADES[k] : pick(spotRng(b, 2), TRADES); });
+    for (const [b, P] of plans) b.interior = finish(b.use === 'shop' ? spotRng(b, 3) : rng, b, P, lamps);
+  }
+  // the trades a town's shops are given: first one of each, then by how
+  // common each was
+  const FIRST_TRADES = ['caupona', 'bakery', 'smithy', 'fullery', 'pottery', 'butcher', 'grocer', 'wine', 'weaver', 'cobbler', 'carpenter', 'barber', 'caupona', 'bakery', 'grocer', 'caupona', 'smithy', 'weaver'];
+  const TRADES = { caupona: 5, bakery: 2, grocer: 2, wine: 1.5, butcher: 1, smithy: 1.5, fullery: 1, pottery: 1, weaver: 1.2, cobbler: 1.5, carpenter: 1.2, barber: 1 };
+  // a number, and a run of them, from where a building stands
+  const spotHash = (b, k) => { let h = (Math.round(b.x * 64) * 73856093) ^ (Math.round(b.y * 64) * 19349663) ^ (k * 83492791); h = Math.imul(h ^ h >>> 16, 0x45d9f3b); h = Math.imul(h ^ h >>> 16, 0x45d9f3b); return ((h ^ h >>> 16) >>> 0) / 4294967296; };
+  function spotRng(b, k) {
+    let a = (spotHash(b, k) * 4294967296) >>> 0;
+    return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   }
 
   // a building's walls, its doors and windows, its floors and columns, and
@@ -1952,6 +1971,51 @@ const RomanTown = (() => {
     };
     const study = r => { r.middle('table', range(rng, 1.3, 1.8), range(rng, 0.8, 1)); r.against('chest', 1, 0.55); if (rng() < 0.6) r.against('bench', range(rng, 1.4, 2.2), 0.45); };
     const kitchen = r => { hearth(r); r.middle('table', range(rng, 1.1, 1.6), 0.8); r.against('bench', range(rng, 1.4, 2), 0.42); if (rng() < 0.6) r.store(false); };
+    // a fire that glows by night: an oven's mouth, a forge, a kiln
+    const glow = (h, power) => { if (h) { const [x, y] = toWorld(b, (h[0] + h[2]) / 2, (h[1] + h[3]) / 2); lamps.push({ x, y, z: b.z0 + 0.7, power, hearth: true }); } return h; };
+    // a piece in the middle with room kept clear about it (a mill walked
+    // round, an anvil stood at), itself only as big as it is
+    const roomy = (r, k, w, d, clearR, extra) => {
+      const [x1, y1, x2, y2] = r.room, mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      let best = null, bd = Infinity;
+      for (let a = x1 + clearR; a <= x2 - clearR; a += 0.25) for (let c = y1 + clearR; c <= y2 - clearR; c += 0.25) {
+        const q = [a - clearR, c - clearR, a + clearR, c + clearR], dd = Math.hypot(a - mx, c - my) + rng() * 0.3;
+        if (dd < bd && r.clear(q)) { bd = dd; best = q; }
+      }
+      if (!best) return null;
+      r.put(k, best, extra);
+      const f = furniture[furniture.length - 1];
+      f.w = w; f.d = d;
+      return best;
+    };
+    // what a shop's trade has in it, each piece put in the first room it
+    // fits, the front room first: the counter it sells over, and what the
+    // work is done at
+    const fittings = trade => {
+      const counter = (extra = {}) => r => r.against('counter', Math.min(2.6, Math.min(r.room[2] - r.room[0], r.room[3] - r.room[1]) * 0.55), 0.75, { jars: 2 + (rng() * 2 | 0), ...extra }) || r.against('counter', 1.3, 0.7, { jars: 2, ...extra });
+      const A = (k, w, d, extra) => r => r.against(k, w, d, extra);
+      const M = (k, w, d, clearR, extra) => r => roomy(r, k, w, d, clearR, extra);
+      const store = big => r => { const n = furniture.length; r.store(big); return furniture.length > n; };
+      switch (trade) {
+        case 'caupona': return [counter({ jars: 3 + (rng() * 2 | 0) }), r => { const n = lamps.length; hearth(r); return lamps.length > n; }, A('table', range(rng, 1, 1.3), 0.7), A('bench', range(rng, 1.4, 2), 0.42), store(false)];
+        // the mills turned by hand, the domed oven, the board the dough is
+        // kneaded on, the bread sold over the counter
+        case 'bakery': return [M('mill', 1.1, 1.1, 1.15), r => glow(r.against('oven', 1.6, 1.45) || r.against('oven', 1.25, 1.2), 0.7), M('mill', 1.1, 1.1, 1.15), A('table', 1.5, 0.7, { board: true }), counter({ bread: true, jars: 0 })];
+        case 'smithy': return [M('anvil', 0.55, 0.35, 0.9), r => glow(r.against('forge', 1.3, 0.9) || r.against('forge', 1, 0.8), 0.6), A('woodpile', range(rng, 1, 1.4), 0.6, { tall: 0.7 }), A('chest', 1, 0.5)];
+        // the vats the cloth is trodden in, jars of what it is trodden in
+        case 'fullery': return [A('vat', 1.05, 1.05), A('vat', 1.05, 1.05), A('vat', 1.05, 1.05), A('vat', 1.05, 1.05), store(false), A('bench', 1.4, 0.42)];
+        case 'pottery': return [M('wheel', 0.7, 0.7, 0.9), r => glow(r.against('kiln', 1.6, 1.6) || r.against('kiln', 1.3, 1.3), 0.5), M('wheel', 0.7, 0.7, 0.9), store(false)];
+        case 'butcher': return [M('block', 0.6, 0.6, 0.8), counter(), A('table', 1.4, 0.7)];
+        case 'grocer': return [counter({ jars: 0, produce: true }), A('baskets', range(rng, 1.4, 2.2), 0.65), A('baskets', range(rng, 1.4, 2.2), 0.65)];
+        case 'wine': return [counter({ jars: 3 + (rng() * 2 | 0) }), store(true), store(false)];
+        case 'weaver': return [A('loom', 1.7, 0.35), A('loom', 1.7, 0.35), A('baskets', 1.3, 0.65), A('bench', 1.4, 0.42)];
+        case 'cobbler': return [A('bench', 1.6, 0.45), r => r.middle('table', 1, 0.7), A('chest', 0.9, 0.5)];
+        case 'carpenter': return [r => roomy(r, 'workbench', 1.9, 0.7, 1.3) || r.against('workbench', 1.8, 0.7), A('woodpile', range(rng, 1.6, 2.4), 0.7, { tall: 1.0 }), A('chest', 1, 0.5)];
+        case 'barber': return [M('chair', 0.5, 0.5, 0.85), A('bench', range(rng, 1.6, 2.2), 0.42), A('chest', 0.8, 0.45)];
+        default: return [counter(), store(rng() < 0.4)];
+      }
+    };
+    const fits = b.use === 'shop' ? fittings(b.trade) : [];
 
     if (b.roof === 'court' && b.hole) {
       const [s1, t1, s2, t2] = b.hole;
@@ -2046,10 +2110,9 @@ const RomanTown = (() => {
           if (i === 0) kitchen(r); else if (rng() < 0.7) bedroom(r); else r.store(false);
           break;
         case 'shop': {
-          // a counter across the front, jars set in it; stores behind
-          const c = r.against('counter', Math.min(room[2] - room[0], room[3] - room[1]) * 0.55, 0.75, { jars: 2 + (rng() * 2 | 0) });
-          r.store(rng() < 0.4);
-          if (!c) r.store(false);
+          const n = furniture.length;
+          for (let q = 0; q < fits.length; q++) if (fits[q](r)) fits.splice(q--, 1);
+          if (furniture.length === n) r.store(rng() < 0.4);
           break;
         }
         case 'baths': if (!pools.has(room)) for (let k = 0; k < 3; k++) r.against('bench', range(rng, 2, 3.5), 0.5); break;
