@@ -100,6 +100,22 @@ const RomanTown = (() => {
     }
     return true;
   }
+  // whether a point stands on a building, within m of it: a box but not its
+  // open court, a round, a theatre's half ring, an amphitheatre
+  function onBuilding(b, x, y, m) {
+    const dx = x - b.x, dy = y - b.y;
+    if (b.shape === 'round') return Math.hypot(dx, dy) < b.r + m;
+    const c = Math.cos(b.angle), s = Math.sin(b.angle), a = dx * c + dy * s, d = -dx * s + dy * c;
+    if (b.shape === 'box') {
+      if (Math.abs(a) > b.w / 2 + m || Math.abs(d) > b.d / 2 + m) return false;
+      if (!b.hole) return true;
+      const p = a + b.w / 2, q = d + b.d / 2, [s1, t1, s2, t2] = b.hole;
+      return !(p > s1 + m && p < s2 - m && q > t1 + m && q < t2 - m);
+    }
+    if (b.shape === 'cavea') return a > -m && Math.hypot(a, d) < b.r1 + m;
+    if (b.shape === 'arena') return (a / (b.a + m)) ** 2 + (d / (b.b + m)) ** 2 < 1;
+    return false;
+  }
   // a convex polygon clipped by another (Sutherland–Hodgman)
   function clip(subject, by) {
     const sg = Math.sign(area(by));
@@ -705,18 +721,22 @@ const RomanTown = (() => {
     }
 
     // ---- a garden inside the walls: an orchard, or vines, a shed ----
-    function orchard(r, poly) {
+    // (none within 2 m of the rectangle kept clear, if there is one)
+    function orchard(r, poly, clear) {
       const sp = range(rng, 6, 8), kind = rng() < 0.3 ? 'olive' : 'fruit';
       for (let u = r[0] + sp / 2; u < r[2]; u += sp) for (let v = r[1] + sp / 2; v < r[3]; v += sp) {
-        if (rng() < 0.85) tree(u + range(rng, -0.6, 0.6), v + range(rng, -0.6, 0.6), kind, range(rng, 2, 3.2), range(rng, 4, 6.5), poly);
+        if (rng() >= 0.85) continue;
+        const tu = u + range(rng, -0.6, 0.6), tv = v + range(rng, -0.6, 0.6);
+        if (clear && tu > clear[0] - 2 && tu < clear[2] + 2 && tv > clear[1] - 2 && tv < clear[3] + 2) continue;
+        tree(tu, tv, kind, range(rng, 2, 3.2), range(rng, 4, 6.5), poly);
       }
     }
     function garden(g) {
+      const [x, y] = dims(g.r), shed = [g.r[0] + 2, g.r[1] + 2, g.r[0] + 2 + Math.min(10, x / 3), g.r[1] + 2 + Math.min(7, y / 3)];
       ground(g.r, 'garden', true);
-      if (rng() < 0.6) orchard(g.r, true);
+      if (rng() < 0.6) orchard(g.r, true, shed);
       else ground(g.r, 'vines', true, { angle: th + (rng() < 0.5 ? 0 : Math.PI / 2) });
-      const [x, y] = dims(g.r);
-      box([g.r[0] + 2, g.r[1] + 2, g.r[0] + 2 + Math.min(10, x / 3), g.r[1] + 2 + Math.min(7, y / 3)], { use: 'shed', h: 4, roof: 'gable', axis: 'u' }, true);
+      box(shed, { use: 'shed', h: 4, roof: 'gable', axis: 'u' }, true);
     }
 
     // ---- houses: lots along both long sides of a block ----
@@ -756,12 +776,14 @@ const RomanTown = (() => {
         return box(R(0, 0, w, D), hole ? { use: 'insula', h, z0, roof: 'court', hole: R(w / 2 - 2.5, D / 2 - 2.5, w / 2 + 2.5, D / 2 + 2.5) } : { use: 'insula', h, z0, roof: 'hip' }, within);
       }
       if (r > 0.9 - 0.12 * (1 - cen)) {
+        // a shop on the street, its garden behind it
+        const sd = Math.min(d, 6);
         ground(R(0, 0, w, d), 'garden', within);
-        for (let k = 0, n = 1 + (rng() * 3 | 0); k < n; k++) {
-          const [u, v] = F.pt(s0 + range(rng, 2, w - 2), range(rng, 2, d - 2));
+        if (d - sd > 4) for (let k = 0, n = 1 + (rng() * 3 | 0); k < n; k++) {
+          const [u, v] = F.pt(s0 + range(rng, 2, w - 2), range(rng, sd + 2, d - 2));
           tree(u, v, pick(rng, { fruit: 3, olive: 1, cypress: 1, shrub: 1 }), range(rng, 1.5, 3), range(rng, 4, 8), within);
         }
-        return box(R(0.5, 0, w - 0.5, Math.min(d, 6)), { use: 'shop', h: range(rng, 4, 5.5), z0, roof: 'gable', axis: sA }, within);
+        return box(R(0.5, 0, w - 0.5, sd), { use: 'shop', h: range(rng, 4, 5.5), z0, roof: 'gable', axis: sA }, within);
       }
       // a house: front rooms on the street, maybe more behind a yard
       const D = Math.min(d, range(rng, 8, 14)), h = range(rng, 5, 8.5);
@@ -953,12 +975,15 @@ const RomanTown = (() => {
       ground([u - A / 2 + k, v - Bd / 2 + k, u + A / 2 - k, v + Bd / 2 - k], 'yard');
       well(u + range(rng, -2, 2), v + range(rng, -2, 2));
       lamp(u - A / 2 + k + 0.8, v, 2.2, 0.8);
-      const bx = u + A / 2 + 8;
-      box([bx, v - Bd / 2, bx + 9, v - Bd / 2 + range(rng, 16, 26)], { use: 'barn', h: 6.5, z0: hAt(...P(bx + 4, v)), roof: 'gable', axis: 'v' });
-      ground([u - A / 2 - 6, v + Bd / 2 + 2, u + A / 2, v + Bd / 2 + 16], 'garden');
+      const bx = u + A / 2 + 8, barn = [bx, v - Bd / 2, bx + 9, v - Bd / 2 + range(rng, 16, 26)];
+      box(barn, { use: 'barn', h: 6.5, z0: hAt(...P(bx + 4, v)), roof: 'gable', axis: 'v' });
+      const orch = [u - A / 2 - 6, v + Bd / 2 + 2, u + A / 2, v + Bd / 2 + 16];
+      ground(orch, 'garden');
       for (let q = 0; q < 6; q++) tree(u - A / 2 - 6 + range(rng, 2, A + 4), v + Bd / 2 + range(rng, 4, 14), 'fruit', range(rng, 2, 3), range(rng, 4, 6));
       if (rng() < 0.7) tree(u - A / 2 - 5, v - Bd / 2 - 5, 'pine', range(rng, 5, 7), range(rng, 12, 16));
       occ.disc(x, y, 38, 3);
+      for (const r of [barn, orch]) occ.poly(rectPoly([r[0] - 3, r[1] - 3, r[2] + 3, r[3] + 3]), 3);
+      occ.disc(...P(u - A / 2 - 5, v - Bd / 2 - 5), 5, 3);
       n++;
     }
 
@@ -1046,10 +1071,19 @@ const RomanTown = (() => {
         if (!inWorld(x, y)) continue;
         seen++;
         const sl = slopeAt(x, y);
-        if (tsd(x, y) < 20 || occ.get(x, y) === 3 || occ.get(x, y) === 1 || sl > 0.42) hard++;
+        if (tsd(x, y) < 20 || sl > 0.42) hard++;
         else if (sl > 0.2) steep++;
       }
       if (!seen) return;
+      // anything already there, a tomb, a cypress, a farm, another field,
+      // looked for every few metres, not to be walled or ploughed over
+      if (!hard) {
+        const nu = Math.ceil((pr[2] - pr[0]) / 3), nv = Math.ceil((pr[3] - pr[1]) / 3);
+        for (let i = 0; i <= nu && !hard; i++) for (let j = 0; j <= nv; j++) {
+          const o = occ.get(...P(lerp(pr[0], pr[2], i / nu), lerp(pr[1], pr[3], j / nv)));
+          if (o === 3 || o === 1) { hard++; break; }
+        }
+      }
       if (hard) {
         if (depth < 2 && Math.min(r[2] - r[0], r[3] - r[1]) > 22) {
           const mu = lerp(r[0], r[2], range(rng, 0.4, 0.6)), mv = lerp(r[1], r[3], range(rng, 0.4, 0.6));
@@ -1095,10 +1129,20 @@ const RomanTown = (() => {
           if (!inWorld(x1, y1, 2) && !inWorld(x2, y2, 2)) continue;
           const [x, y] = P((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2);
           B.push({ shape: 'box', use: 'drystone', mat: 'stone', x, y, angle: th + Math.atan2(p2[1] - p1[1], p2[0] - p1[0]), w: L / n + 0.6, d: 0.7, z0: Math.min(hAt(x1, y1), hAt(x2, y2)), h: range(rng, 0.9, 1.2), roof: 'flat', pitch: 0 });
+          // nothing wild to grow up through the wall
+          occ.seg(x1, y1, x2, y2, 1.5, 2);
         }
       });
-      if (rng() < 0.5) tree(range(rng, u1 + 4, u2 - 4), range(rng, v1 + 4, v2 - 4), rng() < 0.6 ? 'oak' : 'pine', range(rng, 4, 6.5), range(rng, 9, 14));
-      if (rng() < 0.35) well(range(rng, u1 + 3, u2 - 3), range(rng, v1 + 3, v2 - 3));
+      // the shade tree well inside, on open grass, and the well clear of it
+      let shade = null;
+      if (rng() < 0.5) {
+        const u = range(rng, u1 + 6, u2 - 6), v = range(rng, v1 + 6, v2 - 6), r = range(rng, 4, 6.5), kind = rng() < 0.6 ? 'oak' : 'pine';
+        if (u1 + 6 < u2 - 6 && v1 + 6 < v2 - 6 && occ.free(...P(u, v), 2, 1)) { tree(u, v, kind, r, range(rng, 9, 14)); shade = [u, v]; }
+      }
+      if (rng() < 0.35) {
+        const u = range(rng, u1 + 3, u2 - 3), v = range(rng, v1 + 3, v2 - 3);
+        if (!shade || Math.hypot(u - shade[0], v - shade[1]) > 5) well(u, v);
+      }
       if (!GRAZING || rng() < 0.25) return;
       const kind = pick(rng, { sheep: 4, goat: 1.5, cow: 2, horse: 0.7 });
       const herds = kind === 'sheep' || kind === 'goat' ? 1 + (rng() * 2 | 0) : 1;
@@ -1149,6 +1193,25 @@ const RomanTown = (() => {
       const h = kind === 'pine' ? range(rng, 11, 17) : kind === 'oak' ? range(rng, 7, 12) : kind === 'poplar' ? range(rng, 14, 22) : range(rng, 9, 16);
       if (!occ.free(px, py, r * 0.5)) continue;
       out.trees.push({ x: px, y: py, z0: hAt(px, py), r, h, kind });
+    }
+
+    // no tree growing up through a roof, a wall, a well or a tomb, whatever
+    // set it there: a trunk wants a metre clear about it (or half that, a bush's)
+    {
+      const cell = 24, grid = new Map(), key = (i, j) => i * 4096 + j;
+      for (const b of B) {
+        const R = b.shape === 'round' ? b.r : b.shape === 'box' ? Math.hypot(b.w, b.d) / 2 : b.shape === 'cavea' ? b.r1 : Math.max(b.a, b.b);
+        for (let i = Math.floor((b.x - R - 1) / cell); i <= Math.floor((b.x + R + 1) / cell); i++)
+          for (let j = Math.floor((b.y - R - 1) / cell); j <= Math.floor((b.y + R + 1) / cell); j++) {
+            const k = key(i, j);
+            if (!grid.has(k)) grid.set(k, []);
+            grid.get(k).push(b);
+          }
+      }
+      out.trees = out.trees.filter(t => {
+        const m = t.kind === 'shrub' ? 0.5 : 1;
+        return !(grid.get(key(Math.floor(t.x / cell), Math.floor(t.y / cell))) || []).some(b => onBuilding(b, t.x, t.y, m));
+      });
     }
 
     // and inside every building with rooms
