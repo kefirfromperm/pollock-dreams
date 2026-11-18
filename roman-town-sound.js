@@ -5,7 +5,9 @@
 // their games, the pipes, a crowd at the play applauding, at the games roaring;
 // the beasts, each its own cry: sheep and goats bleating, cattle lowing,
 // horses whinnying, a donkey braying, dogs barking, cats, hens, pigs; the
-// fountains and the river, the mills grinding, the carts' wheels; birds in
+// fountains and the river, the mills grinding, the carts' wheels; feet and
+// hooves, a whisper alone, a clatter when a crowd or a herd goes by; fires
+// roaring low and crackling, the ovens', the forges', the torches'; birds in
 // the trees by day, crickets, frogs and an owl by night; and the wind.
 //
 // How loud each is goes by everything in view: each kind of sound has its
@@ -216,6 +218,20 @@ const RomanTownSound = (() => {
       n.connect(bp).connect(g);
       env(g, t, amp, 0.001, 0.012);
     },
+    // a footstep on stone or beaten earth: a soft scuff
+    step(ac, dest, t, amp, pan, r) {
+      const g = voice(ac, dest, t, pan, 0.1), n = noise(ac, t, 0.06), bp = filter(ac, 'bandpass', 900 + r() * 1400, 1.2), lp = filter(ac, 'lowpass', 3500);
+      n.connect(bp).connect(lp).connect(g);
+      env(g, t, amp, 0.004, 0.045);
+    },
+    // a hoof: clip-clop, a hollow knock and its pair
+    hoof(ac, dest, t, amp, pan, r) {
+      for (const [d, k] of [[0, 1], [0.12 + r() * 0.06, 0.8]]) {
+        const s = t + d, g = voice(ac, dest, s, pan, 0.12), o = osc(ac, 'triangle', 520 + r() * 260, s, 0.08), n = noise(ac, s, 0.03), bp = filter(ac, 'bandpass', 700 + r() * 300, 4);
+        o.frequency.exponentialRampToValueAtTime(300, s + 0.05); o.connect(g); n.connect(bp).connect(g);
+        env(g, s, amp * k, 0.002, 0.05);
+      }
+    },
     // a cart's wheel: a creak and a knock
     creak(ac, dest, t, amp, pan, r) {
       const len = 0.3 + r() * 0.3, g = voice(ac, dest, t, pan, len + 0.1), o = osc(ac, 'sawtooth', 180 + r() * 120, t, len + 0.1), bp = filter(ac, 'bandpass', 1300, 6);
@@ -242,6 +258,7 @@ const RomanTownSound = (() => {
       return B[name];
     };
     bed('wind', [filter(ac, 'lowpass', 380, 0.7)]).k = 14.45;
+    bed('fire', [filter(ac, 'lowpass', 600, 0.8), filter(ac, 'highpass', 70)]).k = 11.17;
     bed('water', [filter(ac, 'highpass', 900), filter(ac, 'peaking', 2500, 1)]).k = 2.44;
     bed('river', [filter(ac, 'lowpass', 1400), filter(ac, 'highpass', 200)]).k = 7.23;
     bed('voices', [filter(ac, 'bandpass', 520, 1.4), filter(ac, 'peaking', 1600, 2)]).k = 15.11;
@@ -292,9 +309,11 @@ const RomanTownSound = (() => {
     cricket: { v: 'cricket', rate: 1.2, w: 0.05, E: 0.0026, pk: 0.7 },
     frog: { v: 'frog', rate: 1 / 3, w: 0.12, E: 0.0015, pk: 0.58 },
     owl: { v: 'owl', rate: 1 / 90, w: 0.4, E: 0.1125, pk: 0.71 },
-    crackle: { v: 'crackle', rate: 5, w: 0.12, E: 5e-05, pk: 0.44 },
+    crackle: { v: 'crackle', rate: 5, w: 0.25, E: 5e-05, pk: 0.44 },
+    step: { v: 'step', rate: 1.8, w: 0.02, E: 0.0001, pk: 0.36, cap: 24 },
+    hoof: { v: 'hoof', rate: 1.6, w: 0.08, E: 0.0019, pk: 0.73, cap: 16 },
     creak: { v: 'creak', rate: 0.5, w: 0.25, E: 0.0003, pk: 0.17 },
-    wind: { bed: true }, water: { bed: true }, river: { bed: true }, voices: { bed: true }, crowd: { bed: true }, mill: { bed: true }, carts: { bed: true }, applause: { bed: true },
+    wind: { bed: true }, fire: { bed: true }, water: { bed: true }, river: { bed: true }, voices: { bed: true }, crowd: { bed: true }, mill: { bed: true }, carts: { bed: true }, applause: { bed: true },
   };
   // (no more of a kind than this a second, each the louder for it)
   const CAP = 7;
@@ -311,7 +330,7 @@ const RomanTownSound = (() => {
     const fountains = town.buildings.filter(b => b.use === 'fountain').map(b => [b.x, b.y, 1]).concat((town.places || []).filter(p => p.kind === 'nymphaeum').map(p => [p.x, p.y, 2.5]));
     const river = town.river ? town.river.points.filter((_, i) => i % 2 === 0) : [];
     const trees = town.trees.filter(t => t.kind !== 'shrub' && t.r > 1.6).map(t => [t.x, t.y]);
-    const fires = (town.lamps || []).filter(l => l.hearth).map(l => [l.x, l.y]);
+    const fires = (town.lamps || []).filter(l => l.hearth).map(l => [l.x, l.y]), lamps = (town.lamps || []).filter(l => !l.hearth).map(l => [l.x, l.y]);
 
     function start() {
       ac = new AudioContext({ latencyHint: 'playback' });
@@ -346,6 +365,9 @@ const RomanTownSound = (() => {
       const src = {}, add = (k, x, y, n = 1) => { const s = src[k] || (src[k] = { n: 0, at: [] }); s.n += n; if (s.at.length < 64) s.at.push([x, y, n]); };
       if (life && playing) for (const f of life.figures) {
         if (!inView(f.x, f.y)) continue;
+        // (a beast lying down is quiet: asleep, by night; by day, now and then)
+        const resting = f.kind !== 'person' && f.pose === 'lie' ? (day ? 0.15 : 0) : 1;
+        if (!resting) continue;
         switch (f.kind) {
           case 'person': {
             const a = f.anim, L = f.leg;
@@ -363,26 +385,34 @@ const RomanTownSound = (() => {
             else if (L && L.play) add('kid', f.x, f.y);
             else if (a === 'talk' || a === 'declaim' || a === 'sell' || a === 'dice') { add('voices', f.x, f.y); add('word', f.x, f.y); }
             else if (f.pose === 'walk' || f.pose === 'stand') add('voices', f.x, f.y, 0.08);
+            if (f.pose === 'walk' || f.pose === 'run') add('step', f.x, f.y, f.pose === 'run' ? 1.6 : 1);
             break;
           }
-          case 'sheep': add('bleat', f.x, f.y); break;
-          case 'goat': add('goat', f.x, f.y); break;
-          case 'cow': case 'ox': add('moo', f.x, f.y); break;
-          case 'horse': case 'rider': add('neigh', f.x, f.y); break;
-          case 'donkey': add('bray', f.x, f.y); break;
-          case 'dog': add('bark', f.x, f.y, f.pose === 'run' ? 3 : f.pose === 'lie' ? 0.2 : 1); break;
-          case 'cat': add('meow', f.x, f.y); break;
+          case 'sheep': add('bleat', f.x, f.y, resting); break;
+          case 'goat': add('goat', f.x, f.y, resting); break;
+          case 'cow': case 'ox': add('moo', f.x, f.y, resting); break;
+          case 'horse': case 'rider': add('neigh', f.x, f.y, resting); break;
+          case 'donkey': add('bray', f.x, f.y, resting); break;
+          case 'dog': add('bark', f.x, f.y, f.pose === 'run' ? 3 : resting); break;
+          case 'cat': add('meow', f.x, f.y, resting); break;
           case 'hen': add('cluck', f.x, f.y); break;
-          case 'pig': add('oink', f.x, f.y, f.pose === 'lie' ? 0.4 : 1); break;
+          case 'pig': add('oink', f.x, f.y, f.pose === 'lie' ? resting * 2 : 1); break;
           case 'cart': if (f.pose === 'walk') { add('carts', f.x, f.y); add('creak', f.x, f.y); } break;
         }
+        // (and the hooves of whatever big goes by, the feet of the small)
+        if ((f.kind === 'horse' || f.kind === 'rider' || f.kind === 'donkey' || f.kind === 'cow' || f.kind === 'ox') && (f.pose === 'walk' || f.pose === 'run')) add('hoof', f.x, f.y, f.pose === 'run' ? 2 : 1);
+        if ((f.kind === 'sheep' || f.kind === 'goat' || f.kind === 'pig') && (f.pose === 'walk' || f.pose === 'run')) add('step', f.x, f.y, 0.6);
       }
       for (const [x, y, n] of fountains) if (inView(x, y)) add('water', x, y, n);
       for (const [x, y] of river) if (inView(x, y)) { add('river', x, y, 0.25); if (!day) add('frog', x, y, 0.3); }
       let tn = 0;
       for (const [x, y] of trees) if (inView(x, y)) { tn++; if (day || dusk) add('chirp', x, y, day ? 1 : 0.5); }
       if (!day && tn) add('owl', cx, y0 + h / 2, Math.min(1, tn / 40));
-      for (const [x, y] of fires) if (inView(x, y)) add('crackle', x, y, 0.5);
+      // fires: the ovens', forges', kilns' and hearths', always; the torches
+      // carried and the lamps along the streets, by night
+      for (const [x, y] of fires) if (inView(x, y)) { add('fire', x, y, 0.6); add('crackle', x, y, 1); }
+      if (!day) for (const [x, y] of lamps) if (inView(x, y)) { add('fire', x, y, 0.3); add('crackle', x, y, 0.4); }
+      if (life && playing) for (const l of life.lights) if (inView(l.x, l.y)) { add('fire', l.x, l.y, 0.4); add('crackle', l.x, l.y, 0.6); }
       // crickets in the grass by night, all over
       if (!day) add('cricket', cx, y0 + h / 2, 6);
       add('wind', cx, y0 + h / 2, 1);
@@ -394,17 +424,18 @@ const RomanTownSound = (() => {
         const s = src[k], share = s ? s.n * BEDW[k] / P : 0, b = B[k];
         if (s) { let sx = 0, sn = 0; for (const [x, , n] of s.at) { sx += x * n; sn += n; } b.p.pan.setTargetAtTime(panOf(sx / sn), now, 0.3); }
         // (the wind rising and falling of itself)
-        const gust = k === 'wind' ? 0.75 + 0.25 * Math.sin(now * 0.31 + Math.sin(now * 0.13) * 2) : 1;
-        b.g.gain.setTargetAtTime(LEVEL * b.k * Math.sqrt(share) * gust, now, 0.25);
+        const gust = k === 'wind' ? 0.75 + 0.25 * Math.sin(now * 0.31 + Math.sin(now * 0.13) * 2) : k === 'fire' ? 0.7 + 0.6 * r() : 1;
+        // (the wind counted in the whole, so that nothing is ever all there is, but itself kept low: a breath behind it all)
+        b.g.gain.setTargetAtTime(LEVEL * b.k * Math.sqrt(share) * gust * (k === 'wind' ? 0.35 : 1), now, 0.25);
       }
       for (const k in src) {
         const K = KIND[k];
         if (K.bed) continue;
-        const s = src[k], rate = s.n * K.rate, play = Math.min(rate, CAP), share = s.n * K.w / P;
+        const s = src[k], rate = s.n * K.rate, play = Math.min(rate, K.cap || CAP), share = s.n * K.w / P;
         // (as loud as makes its share, played as often as it is: louder the rarer)
         const amp = Math.min(0.9 / K.pk, LEVEL * Math.sqrt(share / (play * K.E)));
         // (how many in this moment: as many as are due, the odd one at random)
-        const lam = play * dt, count = Math.min(6, Math.floor(lam) + (r() < lam % 1 ? 1 : 0));
+        const lam = play * dt, count = Math.min(K.cap ? 8 : 6, Math.floor(lam) + (r() < lam % 1 ? 1 : 0));
         for (let c = 0; c < count; c++) {
           const [x, y] = s.at[r() * s.at.length | 0], t = now + 0.05 + r() * dt;
           let note;
@@ -416,6 +447,6 @@ const RomanTownSound = (() => {
     return { toggle, update, get on() { return on; } };
   }
   // how loud a bed is of the whole, for each that makes it
-  const BEDW = { wind: 1.2, water: 0.6, river: 0.35, voices: 0.12, crowd: 0.12, mill: 0.35, carts: 0.5, applause: 0.2 };
+  const BEDW = { fire: 0.25, wind: 1.2, water: 0.6, river: 0.35, voices: 0.12, crowd: 0.12, mill: 0.35, carts: 0.5, applause: 0.2 };
   return { create, V, KIND, beds };
 })();

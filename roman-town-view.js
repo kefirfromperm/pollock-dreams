@@ -227,6 +227,7 @@ const RomanTownView = (() => {
   const GROUND_FS = NOISE + OUT + `
     in vec2 vP; in float vT, vLevel, vAngle; flat in float vMat, vTint;
     uniform sampler2D uTer; uniform vec3 uTerDim; // the ground's heights and slopes; nx, ny, its cell
+    uniform sampler2D uGrass; // how much grass is left on each pasture
     uniform int uSeed; uniform float uTA, uZmin, uZmax, uRelief;
     // where water falls into the pools about: where it strikes, the spout; how far it falls
     uniform vec4 uJets[32]; uniform float uJetH[32]; uniform int uNJ;
@@ -276,7 +277,7 @@ const RomanTownView = (() => {
       vec2 g = uRelief * t.yz; // (its slopes shaded as if steeper, as relief maps do, so the hills show)
       vec3 n = normalize(vec3(-g, 1.0));
       int m = int(vMat + 0.5);
-      float tint = 0.9 + 0.2 * vTint, nz = fnoise(p / 3.0, uSeed + 3), f = 1.0, grass = 0.0;
+      float tint = 0.9 + 0.2 * vTint, nz = fnoise(p / 3.0, uSeed + 3), f = 1.0, grass = 0.0, tallG = 0.12;
       vec3 c = rgb(156.0, 134.0, 104.0);
       float pu = along(p, uTA), pv = across(p, uTA);
       if (m == 0) {
@@ -322,7 +323,18 @@ const RomanTownView = (() => {
         c = fract(across(p, vAngle) / 4.5) < 0.22 ? rgb(196.0, 176.0, 104.0) : rgb(150.0, 152.0, 84.0);
         f = tint * (0.88 + 0.22 * fnoise(p / 1.2, uSeed + 29));
       }
-      else if (m == 15) { c = rgb(112.0, 126.0, 60.0); f = tint * (0.78 + 0.3 * fnoise(p / 1.3, uSeed + 19)) * (0.9 + 0.2 * fnoise(p / 14.0, uSeed + 23)); }
+      else if (m == 15) {
+        // a pasture, as much grass on it as the beasts have left: long and
+        // deep green, grazed short, down to tufts with the bare dusty earth
+        // between, the bare spreading in patches
+        float gr = texelFetch(uGrass, ivec2(int(vLevel), 0), 0).r;
+        float patchy = fnoise(p / 2.6, uSeed + 81) * 0.55 + fnoise(p / 0.7, uSeed + 83) * 0.3 + fnoise(p / 0.2, uSeed + 85) * 0.15;
+        float cover = smoothstep(-0.08, 0.08, gr * 1.15 - patchy);
+        vec3 green = mix(rgb(124.0, 128.0, 66.0), rgb(92.0, 128.0, 50.0), smoothstep(0.4, 1.0, gr));
+        c = mix(mix(rgb(176.0, 156.0, 116.0), rgb(140.0, 122.0, 88.0), fnoise(p / 1.7, uSeed + 87)), green, cover);
+        f = tint * (0.78 + 0.3 * fnoise(p / 1.3, uSeed + 19)) * (0.9 + 0.2 * fnoise(p / 14.0, uSeed + 23));
+        grass = cover; tallG = 0.08 + 0.7 * gr * gr;
+      }
       else if (m == 16) {
         float r = fract(across(p, vAngle) / 2.2);
         c = r < 0.38 ? mix(rgb(82.0, 112.0, 50.0), rgb(128.0, 108.0, 80.0), 0.25 + 0.3 * vnoise(vec2(along(p, vAngle) / 0.8, r), uSeed)) : rgb(128.0, 108.0, 80.0);
@@ -385,7 +397,7 @@ const RomanTownView = (() => {
       // short, and a garden's, hardly
       float tall = 0.55 * grass;
       if (m == 13) { grass = 1.0; tall = 1.0; }
-      if (m == 15) { grass = 1.0; tall = 0.12; }
+      if (m == 15) tall = tallG;
       if (m == 24) tall = 0.1;
       if (m == 10) { grass = 1.4; tall = 1.4; }
       if (m == 5) { grass = 0.4; tall = 0.1; }
@@ -622,6 +634,13 @@ const RomanTownView = (() => {
         vec2 w = vW.xy * 70.0;
         float v = seen(0.03), f = vnoise3(vW * 7.0, 141);
         tone *= mix(1.0, 0.9 + 0.1 * sin(w.x) * sin(w.y), v) * (0.85 + 0.25 * f);
+      } else if (tx == 5) {
+        // a fleece: wool in curls and locks, shadowed between, greyer and
+        // dirtier low down where it brushes the ground
+        float a = vnoise3(vW * 14.0, 143), b = vnoise3(vW * 34.0, 145), v = seen(0.05);
+        float curl = smoothstep(0.25, 0.75, a * 0.65 + b * 0.35);
+        tone *= mix(1.0, 0.72 + 0.38 * curl, v) * mix(0.82, 1.0, smoothstep(-0.2, 0.5, n.z));
+        n = normalize(n + v * 0.55 * vec3(vnoise3(vW * 20.0, 147) - 0.5, vnoise3(vW * 20.0, 149) - 0.5, 0.0));
       }
       if (n.z < 0.0) n.z = -n.z;
       oAlb = vec4(clamp(col * tone, 0.0, 1.0), 0.0);
@@ -828,10 +847,10 @@ const RomanTownView = (() => {
   const WOOD = C(118, 86, 56), DARKWOOD = C(76, 56, 40), CLAY = C(180, 98, 62), WICKER = C(176, 146, 92), IRON = C(90, 90, 96), HOOF = C(46, 40, 36), HORN = C(214, 204, 176), STRAW = C(206, 178, 104);
   const pick = (list, id, k) => list[Math.floor(hash(id, k, 4441) * list.length) % list.length];
   // bodies for one figure, through E(forward, aside, up, rx, ry, rz, colour, turn) in its own frame
-  function figureBodies(f, E, lod) {
+  function figureBodies(f, E, lod, fine) {
     const id = f.id || 1, ph = f.ph || 0, sw = Math.sin(ph * Math.PI * 2), cw = Math.cos(ph * Math.PI * 2);
     switch (f.kind) {
-      case 'person': return personBodies(f, E, lod);
+      case 'person': return personBodies(f, E, lod, fine);
       case 'rider': {
         beastBodies({ kind: 'horse', id, ph, pose: f.pose === 'walk' || f.pose === 'run' ? 'walk' : 'stand' }, E, lod);
         const cl = pick(f.dress === 'cloak' ? CLOAK : TUNIC, id, 3), sk = pick(SKIN, id, 1), hr = pick(HAIR, id, 2);
@@ -861,7 +880,9 @@ const RomanTownView = (() => {
       case 'stone': E(0, 0, 0.32, 0.5, 0.32, 0.32, C(204, 196, 178), 0, 0); E(-0.2, 0.15, 0.03, 0.3, 0.25, 0.02, C(220, 214, 200)); return;
       case 'log': E(0, 0, 0.17, 0.62, 0.17, 0.16, BARK[id % BARK.length], 0, 2); E(0.6, 0, 0.17, 0.03, 0.16, 0.15, SPLIT); E(0.3, 0.35, 0.05, 0.2, 0.07, 0.05, SPLIT, 0.7); return;
       case 'desk': E(0, 0, 0.7, 0.28, 0.24, 0.025, WOOD); E(0, 0, 0.35, 0.035, 0.035, 0.34, DARKWOOD); return;
-      default: return beastBodies(f, E, lod);
+      // a herd's trough: a hollowed log, water in it
+      case 'trough': E(0, 0, 0.22, 1.0, 0.32, 0.22, DARKWOOD); E(0, 0, 0.4, 0.88, 0.22, 0.04, C(70, 110, 112)); return;
+      default: return beastBodies(f, E, lod, fine);
     }
   }
   // a cart's load, as much of it as is left (0…1), on its bed (1.08 up,
@@ -973,6 +994,7 @@ const RomanTownView = (() => {
     switch (anim) {
       case 'craft': case 'sell': case 'talk': return [0.3 + 0.06 * Math.sin(ph * T * (anim === 'craft' ? 2 : 1) + sg), sg * 0.18, s + 0.42];
       case 'eat': return sg > 0 ? [0.2, 0.08, s + 0.42 + 0.3 * Math.max(0, w)] : [0.3, -0.15, s + 0.42];
+      case 'drink': return sg > 0 ? [0.16, 0.06, s + 0.72] : [0.28, -0.15, s + 0.4];
       case 'spin': return sg < 0 ? [0.12, -0.2, s + 0.55] : [0.32, 0.18, s + 0.35 + 0.04 * Math.sin(ph * T * 3)];
       case 'stitch': case 'basket': return [0.32 + 0.05 * Math.sin(ph * T * 2 + sg), sg * 0.07, s + 0.36];
       case 'write': return sg < 0 ? [0.34, -0.08, s + 0.45] : [0.36 + 0.02 * Math.sin(ph * T * 4), 0.05, s + 0.48];
@@ -1012,6 +1034,7 @@ const RomanTownView = (() => {
       case 'saw': return sg > 0 ? [0.3 + 0.15 * Math.sin(ph * T * 1.2), 0.95, 0.2, 0.06] : [0.28, 0.92, 0.17, 0.07];
       case 'shave': return sg > 0 ? [0.32, 1.15 + 0.05 * Math.sin(ph * T * 2), 0.17, 0.07] : [0.3, 1.2, 0.15, 0.08];
       case 'pipe': return [0.22, 1.38, 0.13, 0.08];
+      case 'drink': return sg > 0 ? [0.14, 1.4, 0.08, 0.12] : null;
       case 'fight': return sg > 0 ? [0.25 + 0.2 * Math.max(0, Math.sin(ph * T * 1.6)), 1.2, 0.2, 0.06] : [0.22, 1.1, 0.1, 0.16];
       case 'cheer': return [0.05, 1.55 + 0.08 * Math.sin(ph * T * 2 + sg), 0.06, 0.26];
       case 'clap': return [0.2, 1.2, 0.15, 0.06];
@@ -1034,6 +1057,7 @@ const RomanTownView = (() => {
       case 'chop': S(0.42, 0.25, 1.15 + 0.3 * Math.max(0, Math.sin(ph * T * 1.3)), 0.08, 0.02, 0.06, IRON); S(0.56, 0, 0.83, 0.15, 0.11, 0.05, MEAT); break;
       case 'saw': S(0.45 + 0.15 * Math.sin(ph * T * 1.2), 0.15, 0.84, 0.3, 0.01, 0.06, IRON); S(0.5, 0, 0.82, 0.62, 0.13, 0.025, WOOD); break;
       case 'shave': S(0.44, 0.2, 1.15, 0.04, 0.01, 0.02, IRON); break;
+      case 'drink': S(0.2, 0.1, 1.48, 0.045, 0.045, 0.05, CLAY); break;
       case 'pipe': for (const sg of [-1, 1]) S(0.42, sg * 0.04, 1.36, 0.22, 0.012, 0.012, IVORY); break;
       case 'axe': { const z = 1.3 + 0.3 * Math.sin(ph * T * 0.9); S(0.45, 0, z, 0.36, 0.025, 0.025, WOOD); S(0.8, 0, z - 0.02, 0.07, 0.02, 0.1, IRON); break; }
     }
@@ -1051,7 +1075,7 @@ const RomanTownView = (() => {
       S(0.5 + thrust, 0.25, 1.2, 0.22, 0.02, 0.015, IRON);
     }
   }
-  function personBodies(f, E, lod) {
+  function personBodies(f, E, lod, fine) {
     const id = f.id, ph = f.ph || 0, T = Math.PI * 2, sw = Math.sin(ph * T), cw = Math.cos(ph * T);
     const k = f.age === 'child' ? 0.66 : f.age === 'old' ? 0.95 : 1, fem = f.sex === 'f';
     const skin = pick(SKIN, id, 1), hair = f.age === 'old' ? C(160, 154, 146) : pick(HAIR, id, 2);
@@ -1059,6 +1083,7 @@ const RomanTownView = (() => {
     const cl = dress === 'toga' ? C(236, 232, 222) : dress === 'stola' ? pick(STOLA, id, 4) : dress === 'slave' ? pick(SLAVE, id, 5) : dress === 'cloak' ? pick(CLOAK, id, 6) : dress === 'work' ? pick(SLAVE, id, 7) : under;
     const palla = fem ? pick(STOLA, id, 8) : cl, veiled = fem && hash(id, 9, 77) > 0.55 && f.pose !== 'lie';
     const long = dress === 'toga' || fem, legC = skin, foot = C(96, 70, 48);
+    const bearded = !fem && (f.age === 'old' ? hash(id, 31, 7) < 0.6 : f.age === 'adult' && hash(id, 31, 7) < 0.25);
     // (a body in the figure's frame, its size by the figure's)
     const S = (fw, a, z, rx, ry, rz, c, t = 0) => E(fw * k, a * k, z * k, rx * k, ry * k, rz * k, c, t);
     const head = (fw, z) => {
@@ -1067,6 +1092,13 @@ const RomanTownView = (() => {
       if (veiled) S(fw - 0.02, 0, z + 0.02, 0.125, 0.115, 0.12, palla);
       // (an actor's mask, its open mouth dark)
       if (f.anim === 'declaim') { S(fw + 0.06, 0, z - 0.01, 0.075, 0.095, 0.115, MASK); S(fw + 0.13, 0, z - 0.06, 0.02, 0.03, 0.02, C(40, 30, 28)); }
+      else if (fine) {
+        // a nose, the ears; a man's beard, now and then; a woman's hair in a knot behind
+        S(fw + 0.115, 0, z - 0.03, 0.03, 0.02, 0.025, skin.map(v => v * 0.94));
+        if (!veiled) for (const sg of [-1, 1]) S(fw + 0.01, sg * 0.093, z - 0.02, 0.02, 0.018, 0.035, skin.map(v => v * 0.9));
+        if (bearded) S(fw + 0.08, 0, z - 0.08, 0.05, 0.075, 0.045, hair);
+        if (fem && !veiled && f.age !== 'child') S(fw - 0.1, 0, z + 0.03, 0.055, 0.06, 0.05, hair);
+      }
     };
     if (lod) { S(0, 0, 0.82, 0.16, 0.22, 0.72, cl); S(0, 0, 1.52, 0.11, 0.1, 0.12, veiled ? palla : hair); return; }
     const pose = f.pose, anim = f.anim;
@@ -1170,6 +1202,15 @@ const RomanTownView = (() => {
         if (turnH) S(0.06, turnH * 0.15, 1.5 + bob, 0.04, 0.04, 0.04, skin);
         if (fem && !veiled) S(-0.02, 0, 1.36 + bob, 0.15, 0.24, 0.12, palla);
         if (dress === 'toga') S(0.01, 0.07, 1.22 + bob, 0.15, 0.2, 0.25, cl, 0.25);
+        if (fine) {
+          S(0.01, 0, 1.43 + bob, 0.055, 0.055, 0.05, skin);
+          // a belt about a tunic; a citizen's two red stripes down it
+          if (!long && anim !== 'fight') { S(lean, 0, 1.0 + bob, 0.13, 0.205, 0.025, LEATHER); if (dress === 'tunic' && !f.bond) for (const sg of [-1, 1]) S(lean + 0.115, sg * 0.075, 1.15 + bob, 0.015, 0.012, 0.22, C(150, 40, 40)); }
+          // a magistrate's toga its purple border; a freeborn boy's gold amulet; a lady's necklace
+          if (dress === 'toga' && f.magistrate) S(0.06, -0.12, 1.22 + bob, 0.1, 0.035, 0.24, C(110, 40, 90), 0.25);
+          if (f.age === 'child' && !fem) S(0.12, 0, 1.3 + bob, 0.025, 0.025, 0.025, GOLD);
+          if (f.job === 'domina') S(0.1, 0, 1.36 + bob, 0.04, 0.1, 0.015, GOLD);
+        }
         S(0.01, 0, long ? 0.6 : 0.78, 0.17, 0.21, long ? 0.44 : 0.22, long ? cl : under);
         for (const sg of [-1, 1]) {
           const leg = st * sg;
@@ -1191,7 +1232,11 @@ const RomanTownView = (() => {
           if (anim === 'fish' && sg > 0) { ax = 0.2; az = 1.2; arx = 0.17; arz = 0.07; }
           const w = workArm(anim, sg, ph, T);
           if (w) [ax, az, arx, arz] = w;
-          if (!(carry === 'torch' && sg > 0) && !(carry === 'jar-full' && sg > 0)) S(lean + ax, sg * 0.25, az + bob, arx, 0.055, arz, cl === under || dress === 'tunic' || dress === 'work' || dress === 'slave' ? skin : cl);
+          if (!(carry === 'torch' && sg > 0) && !(carry === 'jar-full' && sg > 0)) {
+            S(lean + ax, sg * 0.25, az + bob, arx, 0.055, arz, cl === under || dress === 'tunic' || dress === 'work' || dress === 'slave' ? skin : cl);
+            // (the hand at the arm's end)
+            if (fine) { const hx = arx > arz ? ax + arx * 0.95 : ax, hz = arx > arz ? az : az - arz * 0.95; S(lean + hx, sg * 0.25, hz + bob, 0.045, 0.04, 0.05, skin); }
+          }
         }
         // the work's tools
         if (anim === 'beat' || anim === 'pole') S(0.6, 0.15 * sw, 2.3, 1.1, 0.03, 0.03, WOOD, 0.5 * sw);
@@ -1206,7 +1251,7 @@ const RomanTownView = (() => {
       }
     }
   }
-  function beastBodies(f, E, lod) {
+  function beastBodies(f, E, lod, fine) {
     const id = f.id || 1, ph = f.ph || 0, T = Math.PI * 2, kind = f.kind, coat = pick(COATS[kind] || COATS.dog, id, 21);
     const pose = f.pose, lie = pose === 'lie', graze = pose === 'graze', sit = pose === 'sit', walking = pose === 'walk' || pose === 'run';
     const legs = (L, Wd, h, r, col, gait) => {
@@ -1220,12 +1265,18 @@ const RomanTownView = (() => {
     if (kind === 'sheep' || kind === 'goat') {
       const g = kind === 'goat', s = g ? 0.95 : 1, face = !g && hash(id, 22, 5) < 0.3 ? C(60, 52, 46) : coat.map(v => v * 0.9);
       const hz = graze ? 0.2 : lie ? 0.38 : g ? 0.8 : 0.66, hf = graze ? 0.66 : lie ? 0.5 : 0.6;
-      E(0, 0, lie ? 0.28 : g ? 0.62 : 0.56, 0.52 * s, g ? 0.21 : 0.3, lie ? 0.24 : g ? 0.24 : 0.3, coat);
+      E(0, 0, lie ? 0.28 : g ? 0.62 : 0.56, 0.52 * s, g ? 0.21 : 0.3, lie ? 0.24 : g ? 0.24 : 0.3, coat, 0, g ? 0 : 5);
       if (!lod) {
         E(hf, 0, hz, 0.15, 0.085, 0.1, face);
         if (g) for (const sg of [-1, 1]) E(hf - 0.07, sg * 0.05, hz + 0.1, 0.09, 0.02, 0.03, HORN, sg * 0.4);
         legs(0.3, 0.13, g ? 0.48 : 0.36, 0.04, g ? coat.map(v => v * 0.8) : C(70, 62, 56), 0.12);
         E(-0.5, 0, (lie ? 0.3 : g ? 0.72 : 0.55), 0.08, 0.05, 0.06, coat);
+      }
+      if (fine) {
+        // ears out to the sides, the eyes, the muzzle; a goat's beard (a sheep's fleece is in its stuff)
+        for (const sg of [-1, 1]) { E(hf - 0.06, sg * 0.1, hz + 0.04, 0.05, 0.06, 0.02, face, sg * 0.6); E(hf + 0.06, sg * 0.06, hz + 0.04, 0.015, 0.015, 0.015, C(30, 26, 22)); }
+        E(hf + 0.13, 0, hz - 0.03, 0.04, 0.05, 0.04, face.map(v => v * 0.85));
+        if (g) E(hf + 0.06, 0, hz - 0.12, 0.03, 0.03, 0.06, coat.map(v => v * 0.6));
       }
       return;
     }
@@ -1244,6 +1295,18 @@ const RomanTownView = (() => {
       legs(horse ? 0.62 : 0.66, horse ? 0.18 : 0.24, horse ? 0.95 : 0.78, horse ? 0.07 : 0.09, horse ? coat.map(v => v * 0.75) : coat.map(v => v * 0.85), 0.28);
       S(-1.0, 0, horse ? 1.0 : 0.72, horse ? 0.12 : 0.05, horse ? 0.08 : 0.04, horse ? 0.32 : 0.3, horse ? dark : coat);
       if (f.laden || kind === 'donkey' && hash(id, 24, 1) < 0.5) for (const sg of [-1, 1]) S(0, sg * 0.42, bz - 0.15, 0.3, 0.14, 0.22, WICKER);
+      if (fine) {
+        // ears, eyes, a darker muzzle; hooves; a cow's udder and her patches;
+        // a horse's forelock and its tail's long hair; the donkey's dark cross
+        const ear = horse ? [0.06, 0.035, 0.08] : [0.04, 0.09, 0.03];
+        if (kind !== 'donkey') for (const sg of [-1, 1]) S(1.02, sg * (horse ? 0.07 : 0.17), hz + (horse ? 0.15 : 0.05), ...ear, coat.map(v => v * 0.9), sg * 0.3);
+        for (const sg of [-1, 1]) S(1.25, sg * (horse ? 0.08 : 0.1), hz + 0.05, 0.02, 0.02, 0.02, C(24, 20, 18));
+        S(horse ? 1.47 : 1.43, 0, hz - 0.03, horse ? 0.08 : 0.09, horse ? 0.09 : 0.13, horse ? 0.08 : 0.1, kind === 'donkey' ? C(214, 206, 192) : coat.map(v => v * 0.7));
+        if (!lie) for (const [fx, sg] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) S(fx * (horse ? 0.62 : 0.66), sg * (horse ? 0.18 : 0.24), 0.04, horse ? 0.08 : 0.1, horse ? 0.075 : 0.09, 0.04, HOOF);
+        if (kind === 'cow') { if (!lie) S(-0.55, 0, 0.55, 0.17, 0.15, 0.1, C(222, 176, 166)); if (hash(id, 25, 1) < 0.5) for (let k = 0; k < 3; k++) S(-0.6 + k * 0.5 + 0.2 * hash(id, 80 + k, 1), (hash(id, 90 + k, 1) - 0.5) * 0.5, bz + 0.25, 0.25, 0.2, 0.18, k % 2 ? C(236, 228, 214) : coat.map(v => v * 0.5)); }
+        if (kind === 'horse') { S(1.12, 0, hz + 0.1, 0.12, 0.05, 0.05, dark); S(-1.15, 0, 0.85, 0.1, 0.07, 0.38, dark); }
+        if (kind === 'donkey') { S(0, 0, bz + 0.33, 0.85, 0.035, 0.02, dark); S(-0.1, 0, bz + 0.3, 0.035, 0.32, 0.02, dark); }
+      }
       return;
     }
     if (kind === 'dog' || kind === 'cat') {
@@ -1252,6 +1315,12 @@ const RomanTownView = (() => {
       if (sit) { S(-0.1, 0, 0.32, 0.22, 0.14, 0.22, coat); S(0.12, 0, 0.6, 0.13, 0.085, 0.09, coat); S(0.02, 0, 0.22, 0.12, 0.1, 0.22, coat); S(-0.3, 0, 0.06, 0.2, 0.04, 0.04, coat); return; }
       S(0, 0, 0.44, 0.36, 0.14, 0.15, coat); S(0.42, 0, 0.56, 0.14, 0.08, 0.09, coat); S(0.55, 0, 0.53, 0.06, 0.04, 0.04, dark);
       if (!lod) { legs(0.24, 0.08, 0.36, 0.035, coat, 0.15); S(-0.45, 0, 0.55, 0.18, 0.03, 0.03, coat, 0); }
+      if (fine) {
+        // pricked ears (a cat's sharper), the nose's tip, the eyes; a working dog's red collar
+        for (const sg of [-1, 1]) { S(0.36, sg * 0.06, 0.65, 0.035, 0.03, kind === 'cat' ? 0.06 : 0.045, coat.map(v => v * 0.85), sg * 0.3); S(0.5, sg * 0.04, 0.6, 0.015, 0.015, 0.015, C(26, 22, 18)); }
+        S(0.6, 0, 0.53, 0.02, 0.02, 0.02, C(20, 16, 14));
+        if (f.master || f.farm) S(0.3, 0, 0.55, 0.03, 0.09, 0.07, C(160, 40, 34));
+      }
       return;
     }
     if (kind === 'pig') {
@@ -1269,6 +1338,11 @@ const RomanTownView = (() => {
       if (lod) return;
       for (const sg of [-1, 1]) E(hf - 0.02, sg * 0.1, hz + 0.13, 0.09, 0.06, 0.03, col, sg * 0.5);
       legs(0.3, 0.13, 0.22, 0.05, low, 0.1);
+      if (fine) {
+        // the snout's two nostrils, the eyes, the trotters dark
+        for (const sg of [-1, 1]) { E(hf + 0.24, sg * 0.03, hz - 0.03, 0.01, 0.015, 0.015, C(60, 36, 34)); E(hf + 0.1, sg * 0.08, hz + 0.05, 0.012, 0.012, 0.012, C(26, 20, 18)); }
+        for (const [fx, sg] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) E(fx * 0.3, sg * 0.13, 0.03, 0.05, 0.045, 0.03, C(70, 54, 46));
+      }
       E(-0.58, 0, 0.5, 0.06, 0.04, 0.04, col); E(-0.62, 0.03, 0.54, 0.03, 0.03, 0.03, col);
       return;
     }
@@ -1276,6 +1350,12 @@ const RomanTownView = (() => {
       const peck = graze && Math.sin(ph * T * 2.3) > 0.3;
       E(0, 0, 0.22, 0.15, 0.1, 0.11, coat); E(-0.13, 0, 0.3, 0.07, 0.05, 0.08, coat.map(v => v * 0.8));
       E(peck ? 0.19 : 0.13, 0, peck ? 0.08 : 0.33, 0.05, 0.04, 0.045, coat); E(peck ? 0.2 : 0.14, 0, peck ? 0.11 : 0.37, 0.03, 0.01, 0.02, C(190, 40, 30));
+      if (fine) {
+        // the wings folded, the tail's feathers up, the beak, the wattle
+        for (const sg of [-1, 1]) E(-0.02, sg * 0.09, 0.24, 0.1, 0.03, 0.06, coat.map(v => v * 0.85));
+        E(-0.18, 0, 0.36, 0.05, 0.03, 0.09, coat.map(v => v * 0.6), 0);
+        E(peck ? 0.24 : 0.18, 0, peck ? 0.06 : 0.32, 0.025, 0.012, 0.012, C(210, 170, 70)); E(peck ? 0.21 : 0.15, 0, peck ? 0.03 : 0.29, 0.015, 0.01, 0.025, C(190, 40, 30));
+      }
       if (!lod) for (const sg of [-1, 1]) E(0, sg * 0.04, 0.06, 0.015, 0.015, 0.06, C(200, 160, 60));
       return;
     }
@@ -1331,11 +1411,18 @@ const RomanTownView = (() => {
       for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
     }
 
+    // ---- how much grass is left on each pasture, as the life says (all of it, till it does) ----
+    const grassTex = gl.createTexture(), grassN = Math.max(1, town.fields.length);
+    let grassV = -1;
+    gl.bindTexture(gl.TEXTURE_2D, grassTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, grassN, 1, 0, gl.RED, gl.FLOAT, new Float32Array(grassN).fill(0.8));
+    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
+
     // ---- the ground's patches: x, y, what, angle, across, level, tint ----
     const GV = [];
     const gvert = (x, y, m, a = 0, t = 0, lev = 0, tint = 0) => GV.push(x, y, m, a, t, lev, tint);
-    function gpoly(pts, m, a = 0, tint = 0) {
-      for (let i = 1; i + 1 < pts.length; i++) for (const q of [pts[0], pts[i], pts[i + 1]]) gvert(q[0], q[1], m, a, 0, 0, tint);
+    function gpoly(pts, m, a = 0, tint = 0, lev = 0) {
+      for (let i = 1; i + 1 < pts.length; i++) for (const q of [pts[0], pts[i], pts[i + 1]]) gvert(q[0], q[1], m, a, 0, lev, tint);
     }
     // a line of a width: a strip, across it −1…1, mitred where it bends; a
     // river's way downstream at each point too
@@ -1360,7 +1447,8 @@ const RomanTownView = (() => {
       }
     }
     gpoly([[0, 0], [W, 0], [W, H], [0, H]], GROUND.natural);
-    for (const f of town.fields) gpoly(f.poly, GROUND[f.crop] ?? GROUND.meadow, f.angle, hash(Math.round(f.poly[0][0] * 7), Math.round(f.poly[0][1] * 7), seed));
+    // (a pasture its number, for how much grass is left on it)
+    town.fields.forEach((f, i) => gpoly(f.poly, GROUND[f.crop] ?? GROUND.meadow, f.angle, hash(Math.round(f.poly[0][0] * 7), Math.round(f.poly[0][1] * 7), seed), f.crop === 'pasture' ? i + 0.5 : 0));
     for (const kind of ['track', 'via']) for (const r of town.roads) if (r.kind === kind) gline(r.points, r.width / 2, GROUND[kind]);
     if (town.river) {
       const R = town.river;
@@ -1712,6 +1800,19 @@ const RomanTownView = (() => {
           }
           case 'workbench': block(a1, c1, a2, c2, 0, 0.78, SOLID.timber); block(a1 + 0.2, c1 + 0.1, a1 + 0.6, c2 - 0.1, 0.78, 0.86, SOLID.logs, t1, t2, longW ? 1 : 0); break;
           case 'chair': disc(f.a, f.c, 0.24, 0, 0.47, SOLID.timber, 10); break;
+          case 'latrine': {
+            // a stone bench, a keyhole of a hole every two feet along it; in
+            // the public one water running in a channel at its foot
+            const [ux, uy] = facing(f), L = longW ? f.w : f.d, n = f.holes || 1, ax = longW ? 1 : 0, cx = 1 - ax;
+            block(a1, c1, a2, c2, 0, 0.45, SOLID.marble);
+            for (let k = 0; k < n; k++) {
+              const o = -L / 2 + (k + 0.5) * L / n, a = f.a + ax * o - ux * 0.02, c = f.c + cx * o - uy * 0.02;
+              disc(a, c, 0.11, 0.45, 0.455, SOLID.dark, 10);
+              block(a + ux * 0.1 - cx * 0.035, c + uy * 0.1 - ax * 0.035, a + ux * 0.34 + cx * 0.035, c + uy * 0.34 + ax * 0.035, 0.45, 0.455, SOLID.dark);
+            }
+            if (n > 1) { const h = Math.abs(ux) > 0.5 ? f.w / 2 : f.d / 2, ga = f.a + ux * (h + 0.14), gc = f.c + uy * (h + 0.14); block(ga - ax * L / 2 - cx * 0.1, gc - cx * L / 2 - ax * 0.1, ga + ax * L / 2 + cx * 0.1, gc + cx * L / 2 + ax * 0.1, 0.06, 0.1, SOLID.liquor); }
+            break;
+          }
           case 'plinth': case 'tribunal': block(a1, c1, a2, c2, 0, f.k === 'plinth' ? 1.2 : 1.1, SOLID.marble); break;
           case 'statue': disc(f.a, f.c, f.r, 1.2, 3.0, SOLID.column, 12); break;
           case 'hay': {
@@ -2021,7 +2122,8 @@ const RomanTownView = (() => {
     function movers(life, x0, y0, x1, y1, scale) {
       movN = 0; movZ = [Infinity, -Infinity];
       if (!life) return 0;
-      const lod = scale < 3.2;
+      // (close enough, the small things too: faces, hands, belts, ears, tails)
+      const lod = scale < 3.2, fine = scale > 9;
       for (const f of life.figures) {
         if (f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
         const ca = Math.cos(f.a || 0), sa = Math.sin(f.a || 0), fz = f.z || 0;
@@ -2034,7 +2136,7 @@ const RomanTownView = (() => {
           movData[o + 3] = rx; movData[o + 4] = ry; movData[o + 5] = rz;
           movData[o + 6] = col[0]; movData[o + 7] = col[1]; movData[o + 8] = col[2]; movData[o + 9] = 0;
           movData[o + 10] = (f.a || 0) + t; movData[o + 11] = -tex; movData[o + 12] = fz; movData[o + 13] = 2;
-        }, lod);
+        }, lod, fine);
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, movBuf);
       gl.bufferData(gl.ARRAY_BUFFER, movData.subarray(0, BS * Math.max(movN, 1)), gl.DYNAMIC_DRAW);
@@ -2143,7 +2245,7 @@ const RomanTownView = (() => {
 
     // ---- passes ----
     const jetData = new Float32Array(32 * 4), jetH = new Float32Array(32);
-    function drawScene(g, mvp, rect, scale) {
+    function drawScene(g, mvp, rect, scale, life = null) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo);
       gl.viewport(0, 0, g.w, g.h);
       gl.clearColor(0, 0, 0, 0);
@@ -2159,6 +2261,10 @@ const RomanTownView = (() => {
       gl.uniform1f(L.uZmid, (zlo + zhi) / 2);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, terTex);
       gl.uniform1i(L.uTer, 0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, grassTex);
+      if (life && life.grass && life.grassV !== grassV) { grassV = life.grassV; gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, grassN, 1, gl.RED, gl.FLOAT, life.grass); }
+      gl.uniform1i(L.uGrass, 1);
+      gl.activeTexture(gl.TEXTURE0);
       gl.uniform3f(L.uTerDim, T.nx, T.ny, T.cell);
       gl.uniform1i(L.uSeed, iseed);
       gl.uniform1f(L.uTA, TA); gl.uniform1f(L.uZmin, zmin); gl.uniform1f(L.uZmax, zmax); gl.uniform1f(L.uRelief, 3);
@@ -2316,7 +2422,7 @@ const RomanTownView = (() => {
       doorsIn(rect, life, t);
       const shade = movN || doorN;
       if (shade) drawMoverShadows(lt.L, rect);
-      drawScene(G, topDown(...rect), rect, scale);
+      drawScene(G, topDown(...rect), rect, scale, life);
       // the light
       gl.disable(gl.DEPTH_TEST);
       gl.bindFramebuffer(gl.FRAMEBUFFER, litFBO);

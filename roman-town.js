@@ -40,10 +40,10 @@
 //                        counter (jars), stall, plinth, statue, tribunal, hay, amphora, dolium, grain (a
 //                        heap), sacks, woodpile (tall), baskets; and a shop's, as its trade has it: oven,
 //                        mill, forge, anvil, vat, kiln, wheel (a potter's), block (a butcher's), loom,
-//                        workbench, chair (a barber's); a counter its jars, or bread, or produce; a table
+//                        workbench, chair (a barber's), latrine (a bench, holes seats in it); a counter its jars, or bread, or produce; a table
 //                        a board to knead on; goods: a storeroom's (grain, firewood, hay, jars, produce);
 //                        trade: a shop's: caupona (a tavern), bakery, smithy, fullery, pottery, butcher,
-//                        grocer, wine, weaver, cobbler, carpenter, barber
+//                        grocer, wine, weaver, cobbler, carpenter, barber, forica (the public latrine)
 //     round              { x, y, r, h, roof: flat | cone | dome, pitch, hole } hole: an open
 //                        middle that radius (a well's curb)
 //     cavea              { x, y, angle, r0, r1, h } a theatre's seats: a half ring about its orchestra
@@ -576,7 +576,8 @@ const RomanTown = (() => {
           // the spout on the curb at the end by the corner, the water falling a little way in
           const e = along ? [0, -sv] : [-su, 0], L = along ? hd : hw;
           jet(u + e[0] * (L - 0.6), v + e[1] * (L - 0.6), u + e[0] * (L - 0.12), v + e[1] * (L - 0.12), 0.95);
-          if (rng() < 0.4) lamp(u, v, 2.6, 0.8);
+          // (a lamp on a post by it now and then, at its far end, on the street: not over the water)
+          if (rng() < 0.4) lamp(u - e[0] * (L + 0.45), v - e[1] * (L + 0.45), 2.6, 0.8);
         }
     }
     const groups = [];
@@ -1641,8 +1642,12 @@ const RomanTown = (() => {
       }
     }
 
+    // no street lamp left standing in a fountain's water (the lamps were set
+    // along the streets before the fountains were)
+    out.lamps = out.lamps.filter(l => !B.some(b => b.use === 'fountain' && Math.hypot(b.x - l.x, b.y - l.y) < 3 && onBuilding({ ...b, hole: null }, l.x, l.y, 0.3)));
+
     // and inside every building with rooms: its rooms, its doors, its furniture
-    inhabit(rng, B, out.lamps);
+    inhabit(rng, B, out.lamps, out.places);
 
     return out;
   }
@@ -1734,7 +1739,7 @@ const RomanTown = (() => {
   // a way in from outside for each house, its front door where it should
   // be if it can be, another out the back; last its walls, windows and
   // furniture
-  function inhabit(rng, B, lamps) {
+  function inhabit(rng, B, lamps, places = []) {
     const plans = new Map();
     for (const b of B) if (b.shape === 'box' && ROOMS[b.use]) plans.set(b, plan(rng, b));
     const walled = [...plans].filter(([, P]) => !P.bare);
@@ -1859,6 +1864,22 @@ const RomanTown = (() => {
     // fittings by where it stands, not by the rest of the town
     const shops = [...plans.keys()].filter(b => b.use === 'shop').sort((p, q) => spotHash(p, 1) - spotHash(q, 1));
     shops.forEach((b, k) => { b.trade = k < FIRST_TRADES.length ? FIRST_TRADES[k] : pick(spotRng(b, 2), TRADES); });
+    // and the town's public latrines (foricae), its benches of seats round
+    // the walls, water running in a channel before them: the shop nearest
+    // the forum, and more about the town, each as far from the others as can
+    // be, one for every forty-five or so houses (none taking the last shop of its trade)
+    const fm = places.find(p => p.kind === 'forum'), homesN = B.filter(b => b.use === 'house' || b.use === 'insula' || b.use === 'domus').length;
+    if (shops.length) {
+      const L = [];
+      const first = fm ? shops.slice().sort((p, q) => Math.hypot(p.x - fm.x, p.y - fm.y) - Math.hypot(q.x - fm.x, q.y - fm.y))[0] : shops[0];
+      L.push(first);
+      for (let k = 1; k < Math.min(Math.round(homesN / 45) + 1, Math.floor(shops.length / 3.5)); k++) {
+        let best = null, bd = 0;
+        for (const b of shops) { if (L.includes(b) || shops.filter(o => o.trade === b.trade && !L.includes(o)).length < 2) continue; const d = Math.min(...L.map(o => Math.hypot(o.x - b.x, o.y - b.y))); if (d > bd) { bd = d; best = b; } }
+        if (best && bd > 35) L.push(best);
+      }
+      for (const b of L) b.trade = 'forica';
+    }
     for (const [b, P] of plans) b.interior = finish(b.use === 'shop' ? spotRng(b, 3) : rng, b, P, lamps);
   }
   // the trades a town's shops are given: first one of each, then by how
@@ -2040,6 +2061,9 @@ const RomanTown = (() => {
         case 'cobbler': return [A('bench', 1.6, 0.45), r => r.middle('table', 1, 0.7), A('chest', 0.9, 0.5)];
         case 'carpenter': return [r => roomy(r, 'workbench', 1.9, 0.7, 1.3) || r.against('workbench', 1.8, 0.7), A('woodpile', range(rng, 1.6, 2.4), 0.7, { tall: 1.0 }), A('chest', 1, 0.5)];
         case 'barber': return [M('chair', 0.5, 0.5, 0.85), A('bench', range(rng, 1.6, 2.2), 0.42), A('chest', 0.8, 0.45)];
+        // the public latrine: long stone benches round the room, a seat every
+        // two feet, a channel of running water at their feet
+        case 'forica': { const seats = r => { const L = Math.min(3.6, Math.max(r.room[2] - r.room[0], r.room[3] - r.room[1]) - 1.2); return L > 1.1 && r.against('latrine', L, 0.65, { holes: Math.max(2, Math.floor(L / 0.6)) }); }; return [seats, seats, seats, A('bench', 1.2, 0.42)]; }
         default: return [counter(), store(rng() < 0.4)];
       }
     };

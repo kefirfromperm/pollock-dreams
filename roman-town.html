@@ -205,7 +205,7 @@
   // them as they go ----
   const who = document.getElementById('who');
   let whoF = null, whoT = 0, whoUntil = 0;
-  const THINGS = new Set(['meal', 'cart', 'boat', 'basket', 'stone', 'log', 'desk']);
+  const THINGS = new Set(['meal', 'cart', 'boat', 'basket', 'stone', 'log', 'desk', 'trough']);
   function pickAt(px, py) {
     if (scale() < 5) return null;
     const [vx, vy] = viewRect(), wx = vx + px / scale(), wy = vy + py / scale(), r = Math.max(0.6, 16 * dpr / scale());

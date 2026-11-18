@@ -100,7 +100,7 @@ const RomanTownLife = (() => {
   // what each is, as one would say it
   const TITLE = {
     farmer: 'a farmer', shepherd: 'a shepherd', herdsman: 'a herdsman', fisher: 'a fisherman', porter: 'a porter', artisan: 'a craftsman',
-    innkeeper: 'keeps a tavern', baker: 'a baker', smith: 'a smith', fuller: 'a fuller', potter: 'a potter', butcher: 'a butcher', grocer: 'a greengrocer',
+    innkeeper: 'keeps a tavern', foricarius: 'keeps the public latrine', baker: 'a baker', smith: 'a smith', fuller: 'a fuller', potter: 'a potter', butcher: 'a butcher', grocer: 'a greengrocer',
     vintner: 'a wine-seller', weaver: 'a weaver', cobbler: 'a cobbler', carpenter: 'a carpenter', barber: 'a barber',
     patron: 'a patron of the town', domina: 'mistress of her house', wife: 'keeps the house', slave: 'a slave', child: 'a child', old: 'getting on in years',
     priest: 'a priest', teacher: 'a schoolmaster', attendant: 'a bath attendant', guard: 'guards a gate', sentry: 'a sentry on the walls', lookout: 'a lookout on the walls',
@@ -116,7 +116,7 @@ const RomanTownLife = (() => {
     stoke: 'working the bellows', bake: 'baking bread', knead: 'kneading dough', push: 'turning the mill', tread: 'treading cloth in a vat', throw: 'throwing pots at the wheel',
     chop: 'cutting meat', weave: 'weaving at the loom', saw: 'sawing timber', shave: 'shaving a customer', stitch: 'stitching shoes', spin: 'spinning wool',
     ladle: 'serving at the counter', write: 'writing', count: 'counting coins', chisel: 'cutting stone', axe: 'felling wood', pipe: 'playing the pipes',
-    fight: 'fighting', cheer: 'cheering', clap: 'applauding', declaim: 'declaiming', fasces: 'attending the magistrate', heal: 'seeing a patient', basket: 'weaving a basket',
+    fight: 'fighting', drink: 'drinking', cheer: 'cheering', clap: 'applauding', declaim: 'declaiming', fasces: 'attending the magistrate', heal: 'seeing a patient', basket: 'weaving a basket',
   };
 
   // what one is about, as words: there, and on the way there
@@ -135,7 +135,7 @@ const RomanTownLife = (() => {
     salutatio: ['calling on his patron', 'to call on his patron'], tribunal: ['sitting in judgement', 'to the basilica'], cena: ['at dinner', 'to dinner'], serve: ['serving at dinner', 'to serve'],
     feed: ['feeding the hens', 'to the hens'], sell: ['selling at the market', 'to the market'], river: ['by the river', 'down to the river'], sacrifice: ['at the altar', 'to the altar'],
     precinct: ['about the temple', 'to the temple'], attend: ['tending the baths', 'to the baths'], guard: ['guarding the gate', 'to the gate'], sentry: ['walking the walls', 'up onto the walls'],
-    lookout: ['keeping a lookout from a tower', 'up to his tower'], patrol: ['on his rounds with the watch', 'on his rounds'], interlude: ['taking a break', 'for a break'], travel: ['on a journey', 'on the road'],
+    lookout: ['keeping a lookout from a tower', 'up to his tower'], drink: ['having a drink', 'for a drink'], inn: ['staying the night at an inn', 'to an inn for the night'], nature: ['at the latrine', 'to the latrine'], patrol: ['on his rounds with the watch', 'on his rounds'], interlude: ['taking a break', 'for a break'], travel: ['on a journey', 'on the road'],
   };
 
   // ================= the hour, as the Romans told it =================
@@ -719,7 +719,7 @@ const RomanTownLife = (() => {
       return out[0];
     }
     function furnitureSpots(b) {
-      const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], tribunal: null, rooms: [], tables: [], work: [] };
+      const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], tribunal: null, rooms: [], tables: [], work: [], latrines: [] };
       const I = b.interior, z = fz(b);
       // where a trade's work is done: standing, sitting or walking at a piece, its work in hand
       const work = (f, k, x, y, a, pose, anim, o = {}) => S.work.push({ b, f, k, x, y, z, a, pose, anim, ...o });
@@ -748,6 +748,12 @@ const RomanTownLife = (() => {
           // the barber standing at the chair, the one shaved sitting in it
           case 'chair': { const [x, y] = toWorld(b, f.a, f.c); beside(0.42, 'chair', 'stand', 'shave', { chair: { x, y, z, seat: 0.47 } }); continue; }
           case 'table': if (f.board) { if (face !== undefined) before(0.4, 'board', 'stand', 'knead'); continue; } break;
+          // a latrine's seats, one at each hole, facing out from the wall
+          case 'latrine': {
+            const L = lw ? f.w : f.d, n = f.holes || 1;
+            if (face !== undefined) for (let k = 0; k < n; k++) { const o = -L / 2 + (k + 0.5) * L / n, [x, y] = toWorld(b, f.a + (lw ? o : 0), f.c + (lw ? 0 : o)); S.latrines.push({ b, x, y, z, a: ang(b, face) }); }
+            continue;
+          }
         }
         const longW = (f.w || 0) >= (f.d || 0);
         const facing = { 0: Math.PI / 2, 2: -Math.PI / 2, 1: Math.PI, 3: 0 }[f.side];
@@ -1001,7 +1007,7 @@ const RomanTownLife = (() => {
         const C = clusterOf(b);
         if (!C) continue;
         for (const o of C.bs) seen.add(o);
-        const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], rooms: [], tables: [], work: [] };
+        const S = { beds: [], couches: [], seats: [], benches: [], hearths: [], counters: [], stalls: [], stores: [], rooms: [], tables: [], work: [], latrines: [] };
         for (const o of C.bs) {
           const s = furnitureSpots(o);
           for (const k in S) S[k].push(...s[k].map(v => Array.isArray(v) ? { b: o, r: v } : v));
@@ -1079,7 +1085,7 @@ const RomanTownLife = (() => {
     }
     // the shops and their trades: what is done in each and where, the
     // counter it sells over, who keeps it and who works in it
-    const SHOPJOB = { caupona: 'innkeeper', bakery: 'baker', smithy: 'smith', fullery: 'fuller', pottery: 'potter', butcher: 'butcher', grocer: 'grocer', wine: 'vintner', weaver: 'weaver', cobbler: 'cobbler', carpenter: 'carpenter', barber: 'barber' };
+    const SHOPJOB = { forica: 'foricarius', caupona: 'innkeeper', bakery: 'baker', smithy: 'smith', fullery: 'fuller', pottery: 'potter', butcher: 'butcher', grocer: 'grocer', wine: 'vintner', weaver: 'weaver', cobbler: 'cobbler', carpenter: 'carpenter', barber: 'barber' };
     const FOOD = new Set(['caupona', 'bakery', 'butcher', 'grocer', 'wine']);
     const shops = [];
     for (const h of homes) if (h.kind === 'shop' && h.b.trade && !shops.some(W => W.C === h.C)) {
@@ -1090,6 +1096,7 @@ const RomanTownLife = (() => {
       shops.push(W);
     }
     const shopsOf = trade => shops.filter(W => W.trade === trade);
+    const foricae = shopsOf('forica').filter(W => W.h.S.latrines.length);
     // the trades: the shopkeepers by their shops; the town's servants; the
     // workshops' hands; farmers more the further out they live; and the
     // rest a trade at home, or carrying for hire
@@ -1161,6 +1168,18 @@ const RomanTownLife = (() => {
 
     // ================= the beasts =================
     const herds = [];
+    // ---- the grass on the pastures: some lush, some grazed bare; eaten down
+    // by what grazes there, the more the more of it and the bigger, growing
+    // back slowly where nothing does ----
+    const grass = new Float32Array(town.fields.length).fill(1);
+    let grassV = 0, grassT = 0;
+    town.fields.forEach((f, i) => { f.idx = i; f.area = Math.abs(f.poly.reduce((a, p, k) => { const q = f.poly[(k + 1) % f.poly.length]; return a + p[0] * q[1] - p[1] * q[0]; }, 0)) / 2; if (f.crop === 'pasture') grass[i] = range(0.3, 1); });
+    const BITE = { sheep: 1, goat: 1, pig: 1.6, cow: 4, horse: 4 }, EATG = 0.0011, GROW = 1 / (18 * 3600);
+    function grow(dt) {
+      for (const f of pastures) { const i = f.idx; if (!f.herd || f.herd.mode !== 'graze') grass[i] = Math.min(1, grass[i] + GROW * dt * (heat() > 1.3 ? 0.5 : 1)); }
+      for (const Hd of herds) if (Hd.mode === 'graze') { const i = Hd.f.idx; grass[i] = Math.max(0, grass[i] - EATG * Hd.beasts.length * (BITE[Hd.kind] || 1) * dt / Math.max(200, Hd.f.area)); }
+      grassV++;
+    }
     // a herd's pasture: its middle, its frame along the field's rows, how
     // far it reaches each way (a step in from its wall), its shade tree
     function frameOf(f) {
@@ -1181,8 +1200,18 @@ const RomanTownLife = (() => {
       H.local = (x, y) => [(x - F.cx) * F.c + (y - F.cy) * F.s, -(x - F.cx) * F.s + (y - F.cy) * F.c];
       H.clampU = (u, v) => [clamp(u, -F.hu, F.hu), clamp(v, -F.hv, F.hv)];
       H.mx = range(-F.hu, F.hu) * 0.4; H.my = range(-F.hv, F.hv) * 0.4;
-      // (the grass here good for some hours yet)
-      H.until = now + range(1.5, 5) * 3600;
+      // (moved on when the grass is grazed down, or after a long while anyway)
+      H.until = now + range(8, 14) * 3600;
+      // its water: a trough by the pasture's well, if it has one, or just
+      // inside its gate, to one side of it
+      H.trough = null;
+      for (const b of near(F.cx, F.cy, Math.max(F.hu, F.hv) + 2)) if (b.use === 'well') {
+        const [u, v] = H.local(b.x, b.y);
+        if (Math.abs(u) < F.hu && Math.abs(v) < F.hv) { const a = Math.atan2(F.cy - b.y, F.cx - b.x), x = b.x + Math.cos(a) * (b.r + 1), y = b.y + Math.sin(a) * (b.r + 1); if (way.costAt(x, y) < Infinity) H.trough = { x, y, a: a + Math.PI / 2 }; break; }
+      }
+      const g = !H.trough && gateOf(f);
+      if (g) for (const sg of [1, -1]) { const x = g.inn[0] + g.ny * sg * 2.6 + g.nx * 0.6, y = g.inn[1] - g.nx * sg * 2.6 + g.ny * 0.6, [u, v] = H.local(x, y); if (Math.abs(u) < F.hu + 0.5 && Math.abs(v) < F.hv + 0.5 && way.costAt(x, y) < Infinity) { H.trough = { x, y, a: Math.atan2(g.ny, g.nx) + Math.PI / 2 }; break; } }
+      if (H.trough) H.trough.kind = 'trough';
     }
     {
       let budget = 520;
@@ -1194,8 +1223,8 @@ const RomanTownLife = (() => {
         const n = Math.min(budget, kind === 'sheep' ? 8 + (rng() * 22 | 0) : kind === 'goat' ? 5 + (rng() * 10 | 0) : kind === 'cow' ? 3 + (rng() * 7 | 0) : kind === 'pig' ? 4 + (rng() * 8 | 0) : 2 + (rng() * 5 | 0));
         const H = { kind, spread: kind === 'sheep' ? range(3, 6) : kind === 'pig' ? range(4, 7) : range(5, 10), beasts: [], mode: 'graze' };
         settle(H, f);
-        // (the first of them to move on any time in the next hours)
-        H.until = now + range(0.05, 4) * 3600;
+        // (its grass as it is: some herds on a pasture about grazed down, some on fresh)
+        grass[f.idx] = range(0.12, 0.9);
         for (let k = 0; k < n; k++) {
           const [u, v] = H.clampU(H.mx + gauss() * H.spread, H.my + gauss() * H.spread * 0.7), [x, y] = H.pt(u, v);
           H.beasts.push(being(kind, { herd: H, u, v, x, y, z: hAt(x, y), speed: kind === 'horse' ? 1.3 : kind === 'cow' ? 0.7 : kind === 'pig' ? 0.5 : 0.6, look: rng(), muddy: kind === 'pig' ? rng() : 0 }));
@@ -1206,10 +1235,10 @@ const RomanTownLife = (() => {
       // a shepherd for a flock, if there is anyone to spare, mostly with a
       // dog; a herdsman for some of the cattle and the horses, a dog now and then
       const spare = all.filter(a => a.job === 'artisan' || a.job === 'porter').sort(() => rng() - 0.5);
-      spare.length = Math.round(spare.length * 0.4);
+      spare.length = Math.min(spare.length, Math.max(Math.round(spare.length * 0.4), herds.length));
       for (const H of herds.slice().sort((p, q) => (q.kind === 'sheep' || q.kind === 'goat') - (p.kind === 'sheep' || p.kind === 'goat'))) {
         const flock = H.kind === 'sheep' || H.kind === 'goat';
-        if (!spare.length || (!flock && chance(0.45))) continue;
+        if (!spare.length || (H.kind === 'pig' && chance(0.4))) continue;
         const m = spare.pop();
         m.job = flock ? 'shepherd' : 'herdsman'; m.herd = H; H.shepherd = m; m.title = H.kind === 'pig' ? 'a swineherd' : null; m.craft = null;
         if (chance(flock ? 0.75 : 0.4)) H.dog = being('dog', { master: m, speed: 1.8, look: rng() });
@@ -1342,6 +1371,15 @@ const RomanTownLife = (() => {
     // and the rest of the time works, or goes to the baths, the forum, the
     // tavern, or with the whole town to the theatre or the games.
     const HUNGRY = 1 / (8 * 3600), WEARY = 1 / (16 * 3600), REST = 1 / (7.5 * 3600), EAT = 1 / (18 * 60);
+    // and the call of nature: rising through the day, the more after eating,
+    // slowly in the night (so first thing in the morning, mostly); eased in a
+    // minute or few at a latrine, at home, the town's, or behind a bush
+    const NATURE = 1 / (6 * 3600), EASE = 1 / 100;
+    // and thirst: rising the faster the hotter the day and the harder the
+    // work, hardly at all asleep; a meal's wine and water slake some of it,
+    // a drink all of it
+    const THIRSTY = 1 / (5 * 3600), DRINK = 1 / 30;
+    const heat = () => { const m = clock.month, summer = m >= 5 && m <= 7 ? 1.6 : m === 4 || m === 8 ? 1.25 : m <= 1 || m === 11 ? 0.75 : 1; return summer * (clock.R > 3 && clock.R < 9 ? 1.3 : clock.R > 12 || clock.R < 0 ? 0.6 : 1); };
     const HARD = new Set(['hoe', 'dig', 'reap', 'scythe', 'plough', 'beat', 'hammer', 'push', 'tread', 'saw', 'chop', 'axe', 'chisel', 'fight', 'exercise', 'knead', 'bake', 'stoke', 'ball']);
     const LOADED = new Set(['amphora', 'sack', 'wood', 'hay', 'jar-full', 'stone']);
     const cyc = x => ((x % 24) + 24) % 24;
@@ -1364,6 +1402,8 @@ const RomanTownLife = (() => {
       return null;
     }
     const MEAL = { breakfast: 0.5, lunch: 0.55, dinner: 1, snack: 0.4 };
+    const wantsDrink = ag => ag.thirst > 0.8;
+    const wantsNature = ag => ag.nature > 0.8 || (ag.nature > 0.45 && cyc(clock.R - ag.wakeR) < 0.8);
     const wantsFood = ag => { const m = mealtime(ag); return ag.hunger > 0.8 || (!!m && ag.hunger > (m === 'dinner' ? 0.3 : 0.4)); };
     // a rest in the heat of the day, if one is tired enough, once
     const wantsSiesta = ag => clock.R > 5.8 && clock.R < 7.6 && ag.fatigue > 0.42 && ag.napped !== clock.day && ag.age !== 'child';
@@ -1383,6 +1423,9 @@ const RomanTownLife = (() => {
         }
       }
       ag.fatigue = clamp(f + range(-0.06, 0.06), 0, 1.1); ag.hunger = clamp(h + range(-0.1, 0.1), 0, 1);
+      // (gone at waking, and now and then since)
+      ag.nature = asleep ? range(0.3, 0.6) : range(0, 0.7);
+      ag.thirst = asleep ? range(0.2, 0.45) : range(0, 0.7);
       ag.asleep = asleep;
     }
     // each moment: hungrier, wearier, or eating, or asleep
@@ -1392,6 +1435,8 @@ const RomanTownLife = (() => {
         ag.asleep = true;
         ag.fatigue = Math.max(0, ag.fatigue - REST * dt);
         ag.hunger = Math.min(1.3, ag.hunger + HUNGRY * 0.25 * ag.appetite * dt);
+        ag.nature = Math.min(1.3, ag.nature + NATURE * 0.3 * dt);
+        ag.thirst = Math.min(1.3, ag.thirst + THIRSTY * 0.2 * dt);
         return;
       }
       let e = 1;
@@ -1401,7 +1446,12 @@ const RomanTownLife = (() => {
       if (here && L.rest) ag.fatigue = Math.max(0, ag.fatigue - REST * 0.6 * dt);
       else ag.fatigue = Math.min(1.3, ag.fatigue + WEARY * ag.weary * e * dt);
       ag.hunger = Math.min(1.3, ag.hunger + HUNGRY * ag.appetite * (0.7 + 0.3 * e) * dt);
-      if (here && L.food !== undefined) ag.hunger = Math.max(L.food, ag.hunger - EAT * dt);
+      if (here && L.food !== undefined) { const h0 = ag.hunger; ag.hunger = Math.max(L.food, ag.hunger - EAT * dt); ag.nature += (h0 - ag.hunger) * 0.3; }
+      ag.nature = Math.min(1.3, ag.nature + NATURE * dt);
+      if (here && L.ease) ag.nature = Math.max(0, ag.nature - EASE * dt);
+      ag.thirst = Math.min(1.3, ag.thirst + THIRSTY * heat() * (0.6 + 0.4 * Math.max(e, 0.5)) * dt);
+      if (here && L.food !== undefined) ag.thirst = Math.max(0.15, ag.thirst - DRINK * 0.15 * dt);
+      if (here && L.drink) ag.thirst = Math.max(0, ag.thirst - DRINK * dt);
     }
 
     // ================= what each does at each hour =================
@@ -1457,7 +1507,7 @@ const RomanTownLife = (() => {
         // shut for the heat of noon, open again till evening
         case 'innkeeper': at(wake, 'shop'); at(14.3, 'night'); break;
         case 'baker': at(wake, 'shop'); at(4, 'home'); at(4.4, 'meal'); at(5, 'night'); break;
-        case 'butcher': case 'grocer': case 'vintner':
+        case 'butcher': case 'grocer': case 'vintner': case 'foricarius':
           at(wake, 'meal'); at(wake + 0.3, 'shop'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.4, 'shop'); at(10.2, 'home'); at(10.5, 'meal'); at(12.2, 'night'); break;
         case 'smith': case 'potter': case 'fuller': case 'carpenter': case 'cobbler': case 'weaver': case 'barber': workday('shop', { out: 0.25 }); break;
         case 'hand':
@@ -1876,7 +1926,7 @@ const RomanTownLife = (() => {
         if (!there || warm) { const sp = seat(); go(ag, sp, { carry: 'staff' }); stay(ag, sp, short(until, 300, 900)); return; }
         // the grass here grazed down: on to fresh, if there is time before evening
         const sh = showOf(clock.day);
-        if (Hd.mode === 'graze' && Hd.kind !== 'pig' && now > Hd.until && clock.R > 0.5 && clock.R < 8.6 && !(ag.showGoer && sh && clock.R > SHOW[0] - 2.5)) {
+        if (Hd.mode === 'graze' && Hd.kind !== 'pig' && (grass[Hd.f.idx] < 0.22 || now > Hd.until) && clock.R > 0.5 && clock.R < 10 && !(ag.showGoer && sh && clock.R > SHOW[0] - 2.5)) {
           ag.doing = 'drove';
           if (moveFlock(ag, Hd)) return;
           Hd.until = now + range(900, 2400);
@@ -2016,11 +2066,14 @@ const RomanTownLife = (() => {
         if (!posts.length) return ACT.sentry(ag, e, until);
         const night = clock.R > 11.8 || clock.R < 0, Pt = posts[(idx >> 1) % posts.length], G = gates[Pt.gate];
         const kit = night ? { torch: true, carry: 'torch' } : { carry: 'spear' }, lit = night ? { torch: true } : {};
-        const there = Math.hypot(ag.x - Pt.x, ag.y - Pt.y) < 1 && Math.abs(ag.z - Pt.z) < 0.5;
-        const look = a => spot(Pt.x, Pt.y, Pt.z, a, 'stand', { anim: 'watch', cl: null });
+        const there = Math.hypot(ag.x - Pt.x, ag.y - Pt.y) < 1.2 && Math.abs(ag.z - Pt.z) < 0.5;
+        // (the day's and the night's each his own place at it, side by side, so the watch is handed over)
+        const side = ag.night ? 0.4 : -0.4, px = Pt.x - Math.sin(Pt.out) * side, py = Pt.y + Math.cos(Pt.out) * side;
+        const look = a => spot(px, py, Pt.z, a, 'stand', { anim: 'watch', cl: null });
         const glance = () => Pt.out + (chance(0.3) ? (chance(0.5) ? 1 : -1) * range(1, 1.6) : range(-0.5, 0.5));
         const below = spot(...G.inner, NaN, 0, 'stand', { cl: null });
         const way = Pt.up.map(p => [p[0], p[1], p[2]]), ground = [G.inner[0], G.inner[1], groundZ(...G.inner)];
+        way[way.length - 1] = [px, py, Pt.z];
         if (until - now < 400) {
           // (the watch over: down, and a word with the guards at the gate)
           if (!there) { go(ag, below); stay(ag, spot(...G.inner, NaN, G.g.angle, 'stand', { anim: 'talk', cl: null }), until); return; }
@@ -2139,6 +2192,8 @@ const RomanTownLife = (() => {
             break;
           }
           case 'butcher': if ((!keeper || chance(0.4)) && work(['block'], Math.min(dur, range(200, 600)))) return; break;
+          // the latrine's keeper on his stool at the door, taking the coins
+          case 'forica': { const sp = { ...doorSpot(W.h), anim: 'count', pose: 'sit', seat: 0.42, stool: true }; go(ag, sp); stay(ag, sp, now + dur); return; }
         }
         // nothing else: at the counter, or at the door at something
         if (sell(dur)) return;
@@ -2334,6 +2389,54 @@ const RomanTownLife = (() => {
       else ACT.rest(ag, e, until);
       mark(ag, n, { rest: true });
     }
+    // the call of nature: in the town, the nearest of its public latrines, a
+    // seat on the bench beside whoever is there, a word with them; out in the
+    // country, behind a bush
+    function easeNow(ag) {
+      const h = H(ag), n = ag.legs.length, dur = chance(0.6) ? range(30, 80) : range(100, 220), atHome = h && !farFromHome(ag);
+      const seat = (list, C, talk) => { const q = take(list, ag, now + dur + 20); if (!q) return false; const sp = spot(q.x, q.y, q.z, q.a, 'sit', { seat: 0.45, cl: C, anim: talk && chance(0.5) ? 'talk' : null }); go(ag, sp, { carry: ag.carry === 'staff' ? 'staff' : null }); stay(ag, sp, now + dur); return true; };
+      const near = foricae.filter(W => Math.hypot(W.b.x - ag.x, W.b.y - ag.y) < 400).sort((p, q) => Math.hypot(p.b.x - ag.x, p.b.y - ag.y) - Math.hypot(q.b.x - ag.x, q.b.y - ag.y)), fo = near[0];
+      let ok = false;
+      void atHome;
+      // (the nearest with a seat free; all full, a wait at the nearest's door, and again)
+      if (fo && (ag.cl || inTown(ag.x, ag.y))) {
+        for (const W of near.slice(0, 3)) if (!ok) ok = seat(W.h.S.latrines, W.C, true);
+        if (!ok && (ag.waited || 0) < 5) {
+          ag.waited = (ag.waited || 0) + 1;
+          const sp = { ...doorSpot(fo.h), anim: null, pose: 'stand', seat: 0, stool: false };
+          go(ag, sp); stay(ag, sp, now + range(30, 90)); call(ag, () => { ag.legs.length = 0; easeNow(ag); });
+          return;
+        }
+      }
+      if (ok) ag.waited = 0;
+      if (!ok && !ag.cl && !inTown(ag.x, ag.y)) {
+        // (behind a bush or a tree near by, out of the way)
+        let best = null, bd = 45;
+        for (const t of town.trees) { const d = Math.hypot(t.x - ag.x, t.y - ag.y); if (d < bd && t.r < 4) { const a = Math.atan2(ag.y - t.y, ag.x - t.x) + Math.PI, x = t.x + Math.cos(a) * (t.r * 0.8 + 0.4), y = t.y + Math.sin(a) * (t.r * 0.8 + 0.4); if (way.costAt(x, y) < 4 && (!ag.herd || standable({ herd: null }, x, y))) { bd = d; best = [x, y, a + Math.PI]; } } }
+        const [x, y, a] = best || [ag.x + range(-4, 4), ag.y + range(-4, 4), rng() * TAU];
+        if (way.costAt(x, y) < Infinity) { const sp = spot(x, y, NaN, a, 'squat', { cl: null }); go(ag, sp); stay(ag, sp, now + range(50, 150)); ok = true; }
+      }
+      if (!ok && h) { go(ag, homeIn(h)); hide(ag, now + dur); ok = true; }
+      if (ok) mark(ag, n, { ease: true });
+    }
+    // a drink: on duty or out at the work in the country, from the flask he
+    // carries; at home, from the water jar; in the town, cupped hands at the
+    // nearest fountain, or a cup at a tavern's counter; by the river, kneeling at it
+    function drinkNow(ag, duty) {
+      const n = ag.legs.length, w = ag.work ? ag.work.act : null, h = H(ag);
+      const here = () => { const sp = spot(ag.x, ag.y, ag.z, ag.a, ag.pose === 'sit' ? 'sit' : 'stand', { anim: 'drink', seat: ag.seat, stool: ag.stool, cl: ag.cl }); stay(ag, sp, now + range(10, 25)); };
+      if (duty || (OUTDOOR.has(w) && !ag.cl && farFromHome(ag) && !(banks.length && banks.some(b => Math.hypot(b.x - ag.x, b.y - ag.y) < 60)))) here();
+      else if (!farFromHome(ag) && h && h.S && !h.upstairs && (ag.cl === h.C || chance(0.5))) { const sp = homeSpot(ag, 'store') || homeSpot(ag, 'hearth'); if (sp) { sp.anim = 'drink'; sp.pose = 'stand'; go(ag, sp); stay(ag, sp, now + range(20, 40)); } else here(); }
+      else if (!ag.cl && banks.length && !inTown(ag.x, ag.y) && banks.some(b => Math.hypot(b.x - ag.x, b.y - ag.y) < 150)) { const b = banks.slice().sort((p, q) => Math.hypot(p.x - ag.x, p.y - ag.y) - Math.hypot(q.x - ag.x, q.y - ag.y))[0], sp = spot(b.x, b.y, NaN, b.a, 'kneel', { anim: 'fill', cl: null }); go(ag, sp); stay(ag, sp, now + range(25, 45)); }
+      else {
+        const f = fountains.slice().sort((p, q) => Math.hypot(p.b.x - ag.x, p.b.y - ag.y) - Math.hypot(q.b.x - ag.x, q.b.y - ag.y))[0], c = counters.filter(c => c.trade === 'caupona').sort((p, q) => Math.hypot(p.buy.x - ag.x, p.buy.y - ag.y) - Math.hypot(q.buy.x - ag.x, q.buy.y - ag.y))[0];
+        const df = f ? Math.hypot(f.b.x - ag.x, f.b.y - ag.y) : Infinity, dc = c ? Math.hypot(c.buy.x - ag.x, c.buy.y - ag.y) : Infinity;
+        if (c && dc < df * 0.6 && ag.age === 'adult') { const sp = spot(c.buy.x + range(-0.4, 0.4), c.buy.y + range(-0.4, 0.4), c.buy.z, c.buy.a, 'stand', { anim: 'drink', cl: clusterOf(c.b) }); go(ag, sp); stay(ag, sp, now + range(60, 240), { atCounter: c }); }
+        else if (f && df < 250) { const q = choice(f.spots), sp = spot(q.x, q.y, NaN, q.a, 'bend', { anim: 'drink', cl: null }); go(ag, sp); stay(ag, sp, now + range(15, 35)); }
+        else here();
+      }
+      mark(ag, n, { drink: true });
+    }
     // a basket of loaves taken round to a big house's door, and back
     function deliver(ag, item) {
       const h = choice(homes.filter(h => h.kind === 'domus' && !h.upstairs)), [x, y] = h.front.inn, sp = spot(x, y, NaN, 0, 'bend', { cl: h.C });
@@ -2511,14 +2614,60 @@ const RomanTownLife = (() => {
 
     // ---- the travellers: in from the end of a road, to the town, about
     // it a while, and away by another road ----
+    // the seconds till first light
+    const toDawn = () => { const R = clock.R; return R < 0.3 ? secs(clock, R, 0.3) : secs(clock, R, 18) + secs(clock, -6, 0.3); };
+    // a tavern for the night: the nearest to where one is; at its table or
+    // counter of an evening, then up to its rooms till first light
+    function inn(ag, at) {
+      const T = shopsOf('caupona');
+      if (!T.length) return false;
+      const W = T.slice().sort((p, q) => Math.hypot(p.b.x - at[0], p.b.y - at[1]) - Math.hypot(q.b.x - at[0], q.b.y - at[1]))[0];
+      const sup = clock.R > 10 && clock.R < 13.6, dawn = now + toDawn() + range(0, 1800);
+      const evening = (who) => {
+        if (!sup) return;
+        const seat = W.h.S.seats.length ? take(W.h.S.seats, who, now + 3600) : null, c = W.counters[0];
+        const sp = seat ? spot(seat.x, seat.y, seat.z, seat.a, 'sit', { seat: 0.42, stool: true, cl: W.C, anim: 'eat' }) : c ? spot(c.buy.x + range(-0.5, 0.5), c.buy.y + range(-0.5, 0.5), c.buy.z, c.buy.a, 'stand', { cl: W.C, anim: 'talk' }) : null;
+        if (sp) { who.legs.push({ k: 'go', sp }, { k: 'stay', sp, until: now + range(1500, 3000) }); }
+      };
+      if (ag.man) {
+        // the horse tied at the door all night, the rider in to his supper and his bed
+        const [ox, oy] = W.h.front.out, dest = spot(ox + range(-1.5, 1.5), oy + range(-1.5, 1.5), NaN, 0, 'stand', { cl: null });
+        go(ag, dest);
+        call(ag, () => {
+          ag.kind = 'horse'; ag.tied = true;
+          const m = ag.man, a = ag.a;
+          m.x = ag.x - Math.sin(a) * 0.9; m.y = ag.y + Math.cos(a) * 0.9; m.z = groundZ(m.x, m.y); m.a = a; m.cl = null; m.vis = true; m.legs.length = 0; m.leg = null;
+          m.doing = 'inn'; evening(m);
+          m.legs.push({ k: 'go', sp: homeIn(W.h) }, { k: 'hide', until: dawn }, { k: 'go', sp: spot(m.x, m.y, NaN, a, 'stand', { cl: null }) }, { k: 'call', fn: () => { m.vis = false; ag.kind = 'rider'; ag.tied = false; if (ag.leg && ag.leg.k === 'stay') ag.leg.until = now; } });
+        });
+        ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: dawn + 7200, tether: true });
+      } else {
+        evening(ag);
+        go(ag, homeIn(W.h)); hide(ag, dawn);
+      }
+      ag.doing = 'inn';
+      return true;
+    }
     function travel(ag) {
-      const R = clock.R, night = R > 12.3 || R < -0.4;
+      const R = clock.R, night = R > 12.3 || R < -0.4, late = R > 10.8 || R < -0.4;
       const show = v => { ag.vis = v; for (const f of ag.train || []) f.vis = v; if (ag.cart) ag.cart.vis = v; };
       const T = ag.trip || (ag.trip = { stage: 'away' });
+      // (on the road by night only the carts: the rest wait for the morning, or put up at an inn)
+      if (T.stage === 'away' && night && ag.traveller !== 'cart' && !T.waited) {
+        T.waited = true; show(false);
+        hide(ag, now + toDawn() + range(0, 5400));
+        return;
+      }
+      if (T.stage !== 'away' && late && ag.traveller !== 'cart' && !T.inned && T.from) {
+        T.inned = true; leaveGroup(ag);
+        const G = gates.length ? gates.slice().sort((p, q) => Math.hypot(p.g.x - ag.x, p.g.y - ag.y) - Math.hypot(q.g.x - ag.x, q.g.y - ag.y))[0] : null;
+        if (inn(ag, inTown(ag.x, ag.y) || !G ? [ag.x, ag.y] : G.inner)) { T.stage = 'leave'; return; }
+      }
       if (T.stage === 'away') {
+        T.waited = false; T.inned = false;
         T.from = choice(ends); T.to = choice(ends);
         if (ag.cart) { ag.cart.load = choice(LOADS); ag.cart.left = 1; }
-        if (warm && rng() < 0.6) {
+        if (warm && rng() < 0.6 && (!night || ag.traveller === 'cart')) {
           // already on the road in
           const pts = T.from.road.points, p = pts[Math.min(T.from.q, 3 + (rng() * Math.max(1, T.from.q - 3) | 0))];
           ag.x = p[0]; ag.y = p[1]; ag.z = groundZ(...p); ag.cl = null; ag.placed = true; show(true);
@@ -2626,6 +2775,17 @@ const RomanTownLife = (() => {
         ag.legs.push({ k: 'stay', sp: null, pose: chance(0.5) ? 'stand' : 'graze', until: now + range(3, 10) });
         return;
       }
+      if (ag.herd && ag.herd.mode === 'graze' && ag.herd.trough && !night && !warm && now > (ag.drinkAt ?? (ag.drinkAt = now + range(0, 4) * 3600))) {
+        // thirsty: to the trough, a drink, head down at it, and back to the grass
+        const W = ag.herd.trough, a = W.a + (chance(0.5) ? Math.PI / 2 : -Math.PI / 2), o = range(-0.7, 0.7), x = W.x + Math.cos(W.a) * o + Math.cos(a) * 0.75, y = W.y + Math.sin(W.a) * o + Math.sin(a) * 0.75;
+        ag.drinkAt = now + range(2.5, 4.5) * 3600 / (clock.month >= 5 && clock.month <= 7 ? 1.5 : 1);
+        if (way.costAt(x, y) < Infinity) {
+          ag.dest = [x, y];
+          if (way.los([ag.x, ag.y], [x, y])) ag.legs.push({ k: 'trot', x, y, speed: ag.speed * 1.1, pose: 'walk' }); else ag.legs.push({ k: 'go', sp: spot(x, y, NaN, a + Math.PI, 'stand', { cl: null }) });
+          ag.legs.push({ k: 'stay', sp: null, pose: 'graze', until: now + range(20, 45), face: { x: W.x, y: W.y, vis: true }, drinking: true });
+          return;
+        }
+      }
       if (ag.herd && ag.herd.kind === 'pig') {
         // pigs: rooting about the pasture, snouts down; to the wallow, to
         // stand in it, to roll and lie in it, the more in the heat of the day;
@@ -2639,10 +2799,11 @@ const RomanTownLife = (() => {
           let x, y;
           if (wallow) { const t = rng() * TAU, q = Math.sqrt(rng()) * 0.8; x = M.x + Math.cos(M.a) * M.rx * q * Math.cos(t) - Math.sin(M.a) * M.ry * q * Math.sin(t); y = M.y + Math.sin(M.a) * M.rx * q * Math.cos(t) + Math.cos(M.a) * M.ry * q * Math.sin(t); }
           else { const [u, v] = Hd.clampU(Hd.mx + gauss() * Hd.spread, Hd.my + gauss() * Hd.spread * 0.8); [x, y] = Hd.pt(u, v); }
-          if (standable(ag, x, y) && way.los([ag.x, ag.y], [x, y]) && (k > 3 || !Hd.beasts.some(b => b !== ag && Math.hypot(b.x - x, b.y - y) < 0.8))) [tx, ty] = [x, y];
+          if (standable(ag, x, y) && way.los([ag.x, ag.y], [x, y]) && (k > 4 || !Hd.beasts.some(b => b !== ag && Math.hypot((b.dest || [b.x])[0] - x, (b.dest || [0, b.y])[1] - y) < 0.9))) [tx, ty] = [x, y];
         }
         if (rng() < 0.05) { Hd.mx = clamp(Hd.mx + gauss() * 3, -Hd.hu * 0.8, Hd.hu * 0.8); Hd.my = clamp(Hd.my + gauss() * 3, -Hd.hv * 0.8, Hd.hv * 0.8); }
         if (tx === undefined) [tx, ty] = [ag.x, ag.y];
+        ag.dest = [tx, ty];
         const d = Math.hypot(tx - ag.x, ty - ag.y), lie = night || (wallow && chance(hot ? 0.7 : 0.4));
         if (warm && !ag.placed) { ag.x = tx; ag.y = ty; ag.z = groundZ(tx, ty); ag.placed = true; }
         else if (d > 0.3) ag.legs.push({ k: 'trot', x: tx, y: ty, speed: ag.speed * (d > 10 ? 1.6 : 0.8), pose: 'walk' });
@@ -2656,19 +2817,32 @@ const RomanTownLife = (() => {
         if (rng() < 0.04) { Hd.mx = clamp(Hd.mx + gauss() * 3, -Hd.hu * 0.8, Hd.hu * 0.8); Hd.my = clamp(Hd.my + gauss() * 3, -Hd.hv * 0.8, Hd.hv * 0.8); }
         let tx, ty;
         const lie = (night || (noon && chance(0.6))) && ag.kind !== 'horse';
-        if (noon && Hd.shade && chance(0.7)) {
+        // (a place in the shade nobody else has, if there is one left)
+        if (noon && Hd.shade && chance(0.7)) for (let k = 0; k < 6 && tx === undefined; k++) {
           const p = shadeOf(Hd.shade);
-          if (p) { const u = (p[0] - Hd.cx) * Hd.c + (p[1] - Hd.cy) * Hd.s, v = -(p[0] - Hd.cx) * Hd.s + (p[1] - Hd.cy) * Hd.c; if (Math.abs(u) < Hd.hu && Math.abs(v) < Hd.hv) [tx, ty] = p; }
+          if (!p) continue;
+          const u = (p[0] - Hd.cx) * Hd.c + (p[1] - Hd.cy) * Hd.s, v = -(p[0] - Hd.cx) * Hd.s + (p[1] - Hd.cy) * Hd.c, room = ag.kind === 'sheep' || ag.kind === 'goat' ? 1.1 : 2.2;
+          if (Math.abs(u) < Hd.hu && Math.abs(v) < Hd.hv && !Hd.beasts.some(b => b !== ag && Math.hypot((b.dest || [b.x, b.y])[0] - p[0], (b.dest || [b.x, b.y])[1] - p[1]) < room)) [tx, ty] = p;
         }
-        // (somewhere not taken by another of them)
-        const room = ag.kind === 'sheep' || ag.kind === 'goat' ? 1.1 : 2.2;
-        for (let k = 0; k < 5 && tx === undefined; k++) {
-          const [u, v] = Hd.clampU(Hd.mx + gauss() * Hd.spread * (night ? 0.6 : 1), Hd.my + gauss() * Hd.spread * (night ? 0.4 : 0.7)), [x, y] = Hd.pt(u, v);
+        // (somewhere not taken by another of them, nor where another is going;
+        // if nowhere is, the least crowded)
+        const room = ag.kind === 'sheep' || ag.kind === 'goat' ? 1.1 : 2.2, at = b => b.dest || [b.x, b.y];
+        let best = -1;
+        for (let k = 0; k < 8 && tx === undefined; k++) {
+          const wide = night ? 0.6 : 1 + 0.9 * (1 - grass[Hd.f.idx]);
+          const [u, v] = Hd.clampU(Hd.mx + gauss() * Hd.spread * wide, Hd.my + gauss() * Hd.spread * (night ? 0.4 : 0.7 * wide)), [x, y] = Hd.pt(u, v);
           // (open ground, got to straight, round a haystack, a tree, a well rather than through them)
           const ok = way.costAt(x, y) < Infinity && way.costAt(x + 0.7, y) < Infinity && way.costAt(x - 0.7, y) < Infinity && way.costAt(x, y + 0.7) < Infinity && way.costAt(x, y - 0.7) < Infinity && way.los([ag.x, ag.y], [x, y]);
-          if (ok && (k === 4 || !Hd.beasts.some(b => b !== ag && Math.hypot(b.x - x, b.y - y) < room))) [tx, ty] = [x, y];
+          if (!ok) continue;
+          let near = Infinity;
+          for (const b of Hd.beasts) if (b !== ag) { const [bx, by] = at(b); near = Math.min(near, Math.hypot(bx - x, by - y)); }
+          if (near >= room) [tx, ty] = [x, y];
+          else if (near > best) { best = near; ag.alt = [x, y]; }
         }
+        if (tx === undefined && ag.alt) [tx, ty] = ag.alt;
+        ag.alt = null;
         if (tx === undefined) [tx, ty] = [ag.x, ag.y];
+        ag.dest = [tx, ty];
         const d = Math.hypot(tx - ag.x, ty - ag.y);
         if (warm && !ag.placed) { ag.x = tx; ag.y = ty; ag.z = groundZ(tx, ty); ag.placed = true; }
         else if (d > 0.4) ag.legs.push({ k: 'trot', x: tx, y: ty, speed: d > 15 ? ag.speed * 1.6 : ag.speed * 0.6, pose: 'walk' });
@@ -2795,7 +2969,8 @@ const RomanTownLife = (() => {
     function moveFlock(ag, H) {
       const from = gateOf(H.f);
       if (!from) return false;
-      const cands = pastures.filter(f => f !== H.f && !f.herd && !f.bound && !f.pigs).map(f => [f, Math.hypot(f.poly[0][0] - H.cx, f.poly[0][1] - H.cy)]).filter(([, d]) => d > 35 && d < 420).sort((p, q) => p[1] - q[1]).slice(0, 10).sort(() => rng() - 0.5);
+      // (the best grown of the near ones, a little at random)
+      const cands = pastures.filter(f => f !== H.f && !f.herd && !f.bound && !f.pigs && grass[f.idx] > 0.5).map(f => [f, Math.hypot(f.poly[0][0] - H.cx, f.poly[0][1] - H.cy)]).filter(([, d]) => d > 35 && d < 420).map(([f, d]) => [f, grass[f.idx] - d / 700 + rng() * 0.15]).sort((p, q) => q[1] - p[1]).slice(0, 6);
       for (const [f] of cands.slice(0, 4)) {
         const F = frameOf(f), to = gateOf(f);
         if (!to || F.hu < 4 || F.hv < 4) continue;
@@ -2928,6 +3103,8 @@ const RomanTownLife = (() => {
         const duty = DUTY.has(e.act);
         if (ag.asleep ? !woken(ag) : ag.fatigue > (duty ? Math.max(1.12, sleepAt(ag)) : sleepAt(ag))) { ag.doing = 'sleep'; sleepNow(ag, e); return done(); }
         ag.asleep = false;
+        if (wantsNature(ag) && (!duty || ag.nature > 1)) { ag.doing = 'nature'; easeNow(ag); return done(); }
+        if (wantsDrink(ag)) { ag.doing = 'drink'; drinkNow(ag, duty); return done(); }
         if (wantsFood(ag) && (!duty || ag.hunger > 0.75)) { ag.doing = 'meal'; eatNow(ag, duty ? e : null); return done(); }
         const sh = showAct(ag);
         if (sh) { ag.doing = sh.act; ag.work = sh; ACT[sh.act](ag, sh, now + Math.max(60, secs(clock, R, SHOW[1]))); return done(); }
@@ -2988,7 +3165,9 @@ const RomanTownLife = (() => {
         const cp = q => { const p = P[q].slice(); p.key = q; return p; };
         for (let k = 0; k < n && i !== L.to; k++, i = (i + dir + n) % n) pts.push(cp(i));
         pts.push(cp(L.to));
-        L.pts = pts.concat(pts.slice().reverse()); L.i = 0; L.d = 0; L.k = 'climb'; L.loop = L.until; L.torch = L.night;
+        // (there and back, each way on the right of the walk, so that two meeting pass)
+        const right = list => list.map((p, q) => { const a = list[Math.max(0, q - 1)], b = list[Math.min(list.length - 1, q + 1)], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, o = 0.45; const r = [p[0] - (b[1] - a[1]) / l * o, p[1] + (b[0] - a[0]) / l * o, p[2]]; r.key = p.key; return r; });
+        L.pts = right(pts).concat(right(pts.slice().reverse())); L.i = 0; L.d = 0; L.k = 'climb'; L.loop = L.until; L.torch = L.night;
         // (where the towers are along it, to stop at)
         L.stops = new Set(L.pts.map((p, q) => wallWalk.towerAt.has(p.key) ? q : -1).filter(q => q >= 0));
       }
@@ -3154,8 +3333,10 @@ const RomanTownLife = (() => {
       const L = ag.leg;
       if (!L || ag.job === 'traveller' || ag.traveller || ag.ride || (L.k !== 'stay' && L.k !== 'hide')) return false;
       if (L.sleep) return woken(ag);
-      if (L.food !== undefined || L.duel || (ag.herd && ag.herd.mode !== 'graze')) return false;
-      if (L.watch) return ag.hunger > 1.15 || ag.fatigue > 1.15;
+      if (L.food !== undefined || L.ease || L.drink || L.duel || (ag.herd && ag.herd.mode !== 'graze')) return false;
+      if (L.watch) return ag.hunger > 1.15 || ag.fatigue > 1.15 || ag.nature > 1.15 || ag.thirst > 1.2;
+      if (ag.nature > 1.0 && !L.rest) return true;
+      if (ag.thirst > 1.0 && !L.rest && !L.drink) return true;
       const duty = ag.work && DUTY.has(ag.work.act);
       if (ag.fatigue > (duty ? Math.max(1.12, sleepAt(ag)) : sleepAt(ag)) + (L.rest ? 0.1 : 0)) return true;
       if (ag.hunger > (duty ? 1.0 : 0.9) && !L.rest) return true;
@@ -3516,6 +3697,9 @@ const RomanTownLife = (() => {
       if (Math.abs(d.getTime() - sunT) > 60e3) { sunT = d.getTime(); sunAz = RomanTownSky.local(d).sun.az; }
       deadline = timeNow() + 8;
       if (!hash.size) reindex();
+      // (the grass grazed and growing, every couple of seconds)
+      grassT += dt;
+      if (grassT > 2) { grow(grassT); grassT = 0; }
       // (the crowd at a show breaking into applause now and then)
       const sw = showOf(clock.day);
       if (sw && clock.R > SHOW[0] && clock.R < SHOW[1]) { const A = cheers[sw]; if (now > A.next) { A.until = Math.max(A.until, now + range(4, 10)); A.next = now + range(40, 150); } }
@@ -3553,6 +3737,7 @@ const RomanTownLife = (() => {
       if (dt > 0) { acc += dt; if (++tick % 2 === 0) { shy(); steer(acc); apart(acc); acc = 0; } }
       figures.length = 0; lights.length = 0;
       for (const T of tables.values()) if (T.laid > now) figures.push(T);
+      for (const Hd of herds) if (Hd.trough) figures.push(Hd.trough);
       for (const ag of all) {
         if (!ag.vis) continue;
         figures.push(ag);
@@ -3573,7 +3758,7 @@ const RomanTownLife = (() => {
         const H = p.herd, M = p.master || (H && H.shepherd) || (p.farm && p.farm.master);
         const what = p.kind === 'dog' && p.stray ? 'a stray dog' : p.kind === 'cat' ? 'a cat' : `a ${p.kind}`;
         const whose = M ? `${M.name}’s` : '';
-        const doing = p.drove || (H && H.mode !== 'graze') ? 'being moved to fresh grass' : p.pose === 'lie' ? 'lying down' : p.pose === 'graze' ? 'grazing' : p.pose === 'walk' || p.pose === 'run' ? 'on the move' : '';
+        const doing = p.drove || (H && H.mode !== 'graze') ? 'being moved to fresh grass' : p.pose === 'lie' ? 'lying down' : p.pose === 'graze' ? (H && p.leg && p.leg.drinking ? 'drinking at the trough' : H && grass[H.f.idx] < 0.25 ? 'nosing for the last of the grass' : 'grazing') : p.pose === 'walk' || p.pose === 'run' ? 'on the move' : '';
         return { name: whose ? `${whose} ${p.kind}${H ? ', of the ' + (H.kind === 'sheep' || H.kind === 'goat' ? 'flock' : 'herd') : ''}` : what, title: '', doing, needs: '' };
       }
       const his = p.sex === 'f' ? 'her' : 'his';
@@ -3588,27 +3773,32 @@ const RomanTownLife = (() => {
       else if (p.job === 'gladiator') title = p.armed === 'net' ? 'a gladiator, with net and trident' : 'a gladiator, with sword and shield';
       const L = p.leg, act = p.doing || (p.work && p.work.act) || 'home', words = ABOUT[act] || ['', ''];
       let doing;
-      if (p.asleep || (L && L.sleep)) doing = 'asleep';
+      if (L && L.sleep && (L.k === 'hide' || p.pose === 'lie' || !p.vis)) doing = 'asleep';
       else if (p.follow) doing = `walking behind ${his} master`;
       else if (L && (L.k === 'go' || L.k === 'climb' || L.k === 'lead') && p.vis && p.pose !== 'stand') doing = act === 'show' && L.k === 'climb' ? 'climbing to a seat' : `on ${his} way ${words[1]}`;
-      else if (L && L.k === 'hide') doing = act === 'travel' ? 'away on the road' : 'indoors';
+      else if (L && L.k === 'hide') doing = act === 'inn' ? 'asleep upstairs at an inn' : act === 'travel' ? 'away on the road' : 'indoors';
       else if (L && L.watch) doing = p.anim === 'clap' ? 'applauding' : p.anim === 'cheer' ? 'on his feet, cheering' : L.watch === 'arena' ? 'watching the games' : 'watching the play';
       else if (L && L.food !== undefined) doing = act === 'cena' || p.pose === 'recline' ? 'at dinner' : 'eating';
+      else if (L && L.drink) doing = p.pose === 'kneel' ? 'drinking from the river' : p.pose === 'bend' ? 'drinking at the fountain' : L.atCounter ? 'a cup of wine at a tavern' : p.cl ? 'a drink of water' : `a drink from ${his} flask`;
+      else if (L && L.ease) doing = p.pose === 'squat' ? 'answering a call of nature behind a bush' : !p.vis ? 'indoors' : L.sp && L.sp.cl && L.sp.cl.bs.some(b => b.trade === 'forica') ? (p.anim === 'talk' ? 'at the public latrine, chatting with a neighbour' : 'at the public latrine') : 'at the latrine';
       else if (L && L.rest) doing = p.pose === 'lie' ? 'having a nap' : 'resting';
       else if (p.anim && DOING[p.anim] && p.anim !== 'talk') doing = DOING[p.anim];
       else doing = words[0] || (p.anim === 'talk' ? 'talking' : '');
       if (act === 'drove' && L && L.k === 'go') doing = 'leading the flock to fresh grass';
       const needs = [];
-      if (!p.asleep) {
+      if (p.hunger !== undefined && doing !== 'asleep') {
         if (p.hunger > 0.85) needs.push('very hungry'); else if (p.hunger > 0.6) needs.push('hungry');
         if (p.fatigue > sleepAt(p)) needs.push('sleepy'); else if (p.fatigue > 0.7) needs.push('tired');
+        if (p.thirst > 0.7 && !(L && L.drink)) needs.push(p.thirst > 0.95 ? 'parched' : 'thirsty');
+        if (p.nature > 0.8 && !(L && L.ease)) needs.push('needs the latrine');
       }
       return { name: p.name, title, doing, needs: needs.join(', ') };
     }
 
     // a warm start: everyone already about what they are about at this hour
     warm = true;
-    for (const ag of all) if (ag.kind === 'person' && ag.wakeR !== undefined) presume(ag);
+    // (a traveller on the road keeps his own hours, eating and sleeping at inns we do not see)
+    for (const ag of all) if (ag.kind === 'person' && ag.wakeR !== undefined && ag.job !== 'traveller' && ag.job !== 'rider') presume(ag);
     for (const ag of all) {
       if (ag.kind === 'boat') continue;
       if (ag.follow) continue;
@@ -3625,9 +3815,22 @@ const RomanTownLife = (() => {
       if (L) { const i = ag.legs.indexOf(L); ag.legs.splice(0, i); L.until = now + (L.until - now) * rng(); }
     }
     warm = false;
+    // (the beasts of a herd settled where they were put, none on top of another)
+    for (const Hd of herds) for (let it = 0; it < 12; it++) {
+      let moved = false;
+      for (const a of Hd.beasts) for (const b of Hd.beasts) {
+        if (a.id >= b.id) continue;
+        const [ha, ra] = sizeOf(a), [hb, rb] = sizeOf(b), want = ra + rb + (ha + hb) * 0.6, dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+        if (d >= want) continue;
+        const ux = d > 1e-3 ? dx / d : Math.cos(a.id), uy = d > 1e-3 ? dy / d : Math.sin(a.id), m = (want - d) / 2 + 0.02;
+        for (const [o, sg] of [[a, -1], [b, 1]]) { const x = o.x + ux * m * sg, y = o.y + uy * m * sg; if (standable(o, x, y)) { o.x = x; o.y = y; o.z = groundZ(x, y); o.dest = [x, y]; if (o.leg && o.leg.sp) o.leg.sp = { ...o.leg.sp, x, y }; } }
+        moved = true;
+      }
+      if (!moved) break;
+    }
     for (const ag of all) if (ag.kind === 'boat') boat(ag, 0);
     step(0, date);
-    return { step, figures, lights, people: all, describe, herds };
+    return { step, figures, lights, people: all, describe, herds, grass, get grassV() { return grassV; } };
   }
 
   return { create, hour };
