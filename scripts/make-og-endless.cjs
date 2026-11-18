@@ -12,6 +12,11 @@
 //                                    --seed 5 --seconds 60 --out og/og-black-holes.png
 //   node scripts/make-og-endless.cjs --page soap-bubble.html --text "Soap Bubble" \
 //                                    --seed 5 --seconds 5 --out og/og-soap-bubble.png
+//   node scripts/make-og-endless.cjs --page roman-town.html --text "Roman Town" \
+//                                    --query "seed=5&time=2026-06-21T10:00" \
+//                                    --seed 5 --seconds 1 --out og/og-roman-town.png
+//
+// (--query: the page's own parameters, e.g. a town's seed and hour)
 //
 // Needs playwright-core (NODE_PATH) and chromium (WebGL paintings are drawn
 // by its software GPU, SwiftShader); og.html loads opentype.js from cdnjs,
@@ -23,7 +28,7 @@ const { chromium } = require('playwright-core');
 const args = Object.fromEntries(process.argv.slice(2).join(' ').split(/(?:^| )--/).filter(Boolean)
   .map(s => s.trim()).map(s => [s.split(/\s+/)[0], s.slice(s.split(/\s+/)[0].length).trim().replace(/^"(.*)"$/, '$1')]));
 const pageName = args.page ?? 'rectangle-dreams.html', text = args.text ?? 'Rectangle Dreams';
-const seed = Number(args.seed ?? 23), seconds = Number(args.seconds ?? 40);
+const seed = Number(args.seed ?? 23), seconds = Number(args.seconds ?? 40), query = args.query ?? '';
 const out = path.resolve(args.out ?? path.join(__dirname, '../og/og-rectangles.png'));
 const width = 1200, height = 630, root = path.resolve(__dirname, '..');
 const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome']
@@ -71,7 +76,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
       return (window.snapshot?.() ?? document.getElementById('c')).toDataURL('image/png').slice(22);
     };
   }, { seed, width, height, pageName });
-  await page.goto(`http://og.local/${pageName}`);
+  await page.goto(`http://og.local/${pageName}${query ? '?' + query : ''}`);
   bg = Buffer.from(await page.evaluate(ms => window.__run(ms, 1000 / 30), seconds * 1000), 'base64');
 
   // 2. the title over it
