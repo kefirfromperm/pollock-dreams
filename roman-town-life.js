@@ -105,7 +105,7 @@ const RomanTownLife = (() => {
     patron: 'a patron of the town', domina: 'mistress of her house', wife: 'keeps the house', slave: 'a slave', child: 'a child', old: 'getting on in years',
     priest: 'a priest', teacher: 'a schoolmaster', attendant: 'a bath attendant', guard: 'guards a gate', sentry: 'a sentry on the walls', lookout: 'a lookout on the walls',
     watch: 'of the night watch', traveller: 'a traveller', rider: 'a traveller', doctor: 'a doctor', scribe: 'a scribe', banker: 'a money-changer', mason: 'a stonemason',
-    woodcutter: 'a woodcutter', water: 'a water-carrier', lictor: 'a lictor', musician: 'a piper', actor: 'an actor', gladiator: 'a gladiator', hand: 'works in a shop',
+    woodcutter: 'a woodcutter', water: 'a water-carrier', lictor: 'a lictor', musician: 'a piper', actor: 'an actor', gladiator: 'a gladiator', venator: 'a beast-hunter of the arena', hand: 'works in a shop',
   };
   // what one is doing, by the work in one's hands
   const DOING = {
@@ -129,7 +129,7 @@ const RomanTownLife = (() => {
     tavern: ['at the tavern', 'to the tavern'], barber: ['at the barber’s', 'to the barber’s'], water: ['fetching water', 'for water'], chores: ['about the house', 'home'],
     cook: ['cooking', 'to the kitchen'], spin: ['spinning wool', 'home to spin'], porter: ['carrying a load', 'for a load'], carrywater: ['carrying water', 'with a jar of water'],
     masonry: ['cutting stone for a tomb', 'out to the tombs'], woodcut: ['cutting wood', 'out for wood'], visit: ['seeing a patient', 'to a patient'], desk: ['at his table in the forum', 'to the forum'],
-    lictor: ['attending the magistrate', 'to the basilica'], pipe: ['playing the pipes', 'to play'], rehearse: ['rehearsing on the stage', 'to the theatre'], train: ['training', 'to train'],
+    lictor: ['attending the magistrate', 'to the basilica'], pipe: ['playing the pipes', 'to play'], rehearse: ['rehearsing on the stage', 'to the theatre'], train: ['training', 'to train'], menagerie: ['tending the beasts in their cages', 'to the beasts'], hunt: ['hunting beasts on the sand', 'to the arena'],
     doorkeep: ['keeping the door', 'to the door'], escort: ['behind his master', 'after his master'], help: ['helping his father', 'to his father'], school: ['at school', 'to school'],
     teach: ['teaching', 'to school'], play: ['playing', 'out to play'], door: ['sitting by the door', 'out to the door'], receive: ['receiving his clients', 'home'],
     salutatio: ['calling on his patron', 'to call on his patron'], tribunal: ['sitting in judgement', 'to the basilica'], cena: ['at dinner', 'to dinner'], serve: ['serving at dinner', 'to serve'],
@@ -1131,7 +1131,7 @@ const RomanTownLife = (() => {
       if (patrons.length) take(Math.min(2, patrons.length) * 2, 'lictor', m => -m.home.outer);
       take(2, 'musician');
       if (theatreTown) take(4, 'actor');
-      if (amphTown) take(6, 'gladiator');
+      if (amphTown) { take(6, 'gladiator'); take(2, 'venator'); }
       take(tombs.length ? 3 : 2, 'mason');
       take(2, 'woodcutter', m => m.home.outer);
       if (fountains.length) take(2, 'water');
@@ -1243,6 +1243,25 @@ const RomanTownLife = (() => {
         m.job = flock ? 'shepherd' : 'herdsman'; m.herd = H; H.shepherd = m; m.title = H.kind === 'pig' ? 'a swineherd' : null; m.craft = null;
         if (chance(flock ? 0.75 : 0.4)) H.dog = being('dog', { master: m, speed: 1.8, look: rng() });
       }
+    }
+    // the arena's beasts, from the far ends of the empire: a lion and a
+    // lioness, a bear, an elephant, two ostriches; each in its cage by the
+    // amphitheatre, let out onto the sand on a games day for the hunt
+    const zoo = [], cages = [];
+    if (amph) {
+      const b = amph, ca = Math.cos(b.angle), sa = Math.sin(b.angle), at = (rho, t) => { const x = rho * b.a * Math.cos(t), y = rho * b.b * Math.sin(t); return [b.x + x * ca - y * sa, b.y + x * sa + y * ca]; };
+      const kinds = [['lion', true], ['lion', false], ['bear'], ['elephant'], ['ostrich'], ['ostrich']];
+      // (a row of them along the wall outside, beside a way in, where there is ground for them)
+      for (const t0 of [0.22, Math.PI + 0.22, Math.PI / 2 + 0.25, -Math.PI / 2 + 0.25]) {
+        for (let k = 0, t = t0; k < 40 && cages.length < kinds.length; k++, t += 0.045) {
+          const big = kinds[cages.length][0] === 'elephant', rho = 1 + (big ? 5 : 3.2) / b.a, [x, y] = at(rho, t);
+          if (cages.some(c => Math.hypot(c.x - x, c.y - y) < (big || c.big ? 6.5 : 4.2))) continue;
+          if (![[0, 0], [1.4, 0], [-1.4, 0], [0, 1.4], [0, -1.4]].every(([dx, dy]) => way.costAt(x + dx, y + dy) < 4)) continue;
+          cages.push({ kind: 'cage', x, y, z: hAt(x, y), a: Math.atan2(y - b.y, x - b.x) + Math.PI / 2, big, id: 9000 + cages.length });
+        }
+        if (cages.length >= kinds.length) break;
+      }
+      cages.forEach((c, k) => { const [kind, male] = kinds[k]; zoo.push(being(kind, { cage: c, male, exotic: true, x: c.x, y: c.y, z: c.z, speed: kind === 'ostrich' ? 1.6 : kind === 'elephant' ? 0.8 : kind === 'bear' ? 0.9 : 1.2, look: rng() })); });
     }
     // the farms' beasts: a yoke of oxen, a donkey, a dog or two, hens
     for (const h of homes) if (h.kind === 'villa') {
@@ -1526,6 +1545,7 @@ const RomanTownLife = (() => {
         // the piper: at the morning's sacrifices, practising at his door, at a rich man's dinner
         case 'musician': at(wake - 0.1, 'meal'); at(wake + 0.15, 'pipe', { where: 'altar' }); at(2.2, 'home'); at(3, 'pipe', { where: 'door' }); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'forum'); at(9.4, 'pipe', { where: 'cena' }); at(12.6, 'night'); break;
         case 'actor': at(wake, 'meal'); at(1, 'rehearse'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'baths'); at(9.5, 'home'); at(10, 'meal'); if (chance(0.5)) at(11, 'tavern'); at(12.6, 'night'); break;
+        case 'venator': at(wake, 'meal'); at(1, 'menagerie'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'menagerie'); at(9.6, 'baths'); at(10.6, 'home'); at(10.8, 'meal'); at(12.4, 'night'); break;
         case 'gladiator': at(wake, 'meal'); at(0.5, 'train'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'train'); at(9.2, 'baths'); at(10.4, 'home'); at(10.6, 'meal'); at(12.2, 'night'); break;
         case 'patron': {
           at(wake, 'receive'); at(1.4, ag.magistrate ? 'tribunal' : 'forum'); at(5.8, 'meal'); at(6.4, 'siesta');
@@ -2354,6 +2374,7 @@ const RomanTownLife = (() => {
         go(ag, sp); stay(ag, sp, short(until, 600, 1500));
       },
       travel(ag) { travel(ag); },
+      hunt: (...a) => ACT_HUNT.hunt(...a), menagerie: (...a) => ACT_HUNT.menagerie(...a),
     };
     // ---- what one's body says: a meal, sleep, a rest at noon ----
     const farFromHome = ag => { const h = H(ag); return !h || Math.hypot(ag.x - h.front.out[0], ag.y - h.front.out[1]) > 220; };
@@ -2765,6 +2786,7 @@ const RomanTownLife = (() => {
       const R = clock.R, night = R > 12.6 || R < -0.3, noon = R > 5.2 && R < 7.8;
       if (ag.follow) return;
       if (ag.herd && ag.herd.mode === 'drove') { ag.leg = { k: 'drove' }; return; }
+      if (ag.exotic) return exotic(ag);
       if (ag.herd && ag.herd.mode === 'gather') {
         // to the shepherd at the gate, the others there already
         const Hd = ag.herd, [gx, gy] = Hd.gather, r = 1 + Math.sqrt(Hd.beasts.length) * (Hd.kind === 'cow' || Hd.kind === 'horse' ? 1.2 : 0.55);
@@ -2939,6 +2961,51 @@ const RomanTownLife = (() => {
       ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + 60 });
     }
 
+    // ================= the arena's beasts =================
+    // a point of the sand, so far out from its middle (0…1)
+    const sandAt = q => { const b = amph, t = rng() * TAU, r = Math.sqrt(rng()) * q, x = r * b.a0 * Math.cos(t), y = r * b.b0 * Math.sin(t), ca = Math.cos(b.angle), sa = Math.sin(b.angle); return [b.x + x * ca - y * sa, b.y + x * sa + y * ca]; };
+    const onSand = ag => { const b = amph; if (!b) return false; const dx = ag.x - b.x, dy = ag.y - b.y, ca = Math.cos(b.angle), sa = Math.sin(b.angle), u = (dx * ca + dy * sa) / b.a0, v = (-dx * sa + dy * ca) / b.b0; return u * u + v * v < 1; };
+    const huntOn = () => showOf(clock.day) === 'arena' && clock.R > SHOW[0] - 0.4 && clock.R < SHOW[1] - 0.2;
+    function exotic(ag) {
+      const C = ag.cage, k = ag.kind;
+      if (huntOn()) {
+        // on the sand: the lion prowling and turning on the hunters, the bear
+        // up on its hind legs at them, the elephant ambling, the ostriches running
+        if (!onSand(ag)) { const [x, y] = sandAt(0.6); ag.legs.push({ k: 'go', sp: spot(x, y, NaN, 0, 'stand', { cl: null }) }); return; }
+        const near = all.find(a => a.job === 'venator' && a.vis && Math.hypot(a.x - ag.x, a.y - ag.y) < 9);
+        if (k === 'lion' && near && chance(0.4)) { ag.legs.push({ k: 'chase', who: near, until: now + range(3, 6), near: 2.2 }); ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + range(4, 10), face: near }); return; }
+        const [x, y] = sandAt(0.85), run = k === 'ostrich' ? chance(0.6) : k === 'lion' && chance(0.3);
+        ag.legs.push({ k: 'trot', x, y, speed: run ? (k === 'ostrich' ? 4.5 : 3.5) : ag.speed * 0.8, pose: run ? 'run' : 'walk' });
+        ag.legs.push({ k: 'stay', sp: null, pose: k === 'bear' && near ? 'rear' : k === 'lion' && chance(0.3) ? 'lie' : 'stand', until: now + range(5, 25), face: near || null });
+        return;
+      }
+      // in its cage: pacing to and fro, lying, standing; brought back to it after the games
+      if (Math.hypot(ag.x - C.x, ag.y - C.y) > 3) { ag.legs.push({ k: 'go', sp: spot(C.x, C.y, NaN, C.a, 'stand', { cl: null }) }); return; }
+      if (warm && !ag.placed) { ag.x = C.x; ag.y = C.y; ag.placed = true; }
+      if ((k === 'lion' || k === 'bear') && chance(0.5) && !(clock.R > 12.5 || clock.R < -0.3)) {
+        const o = (C.big ? 1.6 : 1.0) * (chance(0.5) ? 1 : -1), x = C.x + Math.cos(C.a) * o, y = C.y + Math.sin(C.a) * o;
+        ag.legs.push({ k: 'trot', x, y, speed: 0.9, pose: 'walk' }, { k: 'stay', sp: null, pose: 'stand', until: now + range(1, 4) });
+        return;
+      }
+      ag.legs.push({ k: 'stay', sp: null, pose: k === 'ostrich' || k === 'elephant' ? 'stand' : chance(0.6) ? 'lie' : 'stand', until: now + range(60, 400) });
+    }
+    // the hunters: on the sand after the beasts, spear levelled, closing in
+    // and backing off; on other days at the cages, seeing to the beasts
+    const ACT_HUNT = {
+      hunt(ag, e, until) {
+        if (!amph || !zoo.length) return ACT.show(ag, e, until);
+        const prey = zoo[(all.filter(a => a.job === 'venator').indexOf(ag) + Math.floor(now / 90)) % zoo.length];
+        if (!onSand(ag)) { const [x, y] = sandAt(0.5); go(ag, spot(x, y, NaN, 0, 'stand', { anim: 'fight', cl: null }), { carry: null }); return; }
+        ag.legs.push({ k: 'chase', who: prey, until: now + range(6, 14), near: 3.2 });
+        ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: Math.min(until, now + range(5, 12)), face: prey, hunt: true });
+      },
+      menagerie(ag, e, until) {
+        if (!cages.length) return ACT.forum(ag, e, until);
+        const C = choice(cages), a = C.a + Math.PI / 2, x = C.x + Math.cos(a) * 2.2, y = C.y + Math.sin(a) * 2.2;
+        const sp = way.costAt(x, y) < Infinity ? spot(x, y, NaN, a + Math.PI, 'stand', { anim: chance(0.5) ? 'watch' : 'scatter', cl: null }) : spot(C.x, C.y, NaN, 0, 'stand', { cl: null });
+        go(ag, sp, { carry: chance(0.5) ? 'basket' : null }); stay(ag, sp, short(until, 300, 900)); call(ag, () => { ag.carry = null; });
+      },
+    };
     // ================= the flocks moved on =================
     // When a pasture is grazed down the shepherd moves his flock to fresh
     // grass: over to its gate, the dog sent round behind to bring them in to
@@ -3131,6 +3198,7 @@ const RomanTownLife = (() => {
       if (!w || R < SHOW[0] - 0.6 || R >= SHOW[1] - 0.15 || ag.age === 'child' && !ag.showGoer) return null;
       if (w === 'theatre' && ag.job === 'actor') return { act: 'perform', where: w };
       if (w === 'arena' && ag.job === 'gladiator') return { act: 'fight', where: w };
+      if (w === 'arena' && ag.job === 'venator') return { act: 'hunt', where: w };
       if (ag.job === 'musician') return { act: 'pipe', where: w };
       if (ag.showGoer) return { act: 'show', where: w };
       return null;
@@ -3195,7 +3263,7 @@ const RomanTownLife = (() => {
       ag.a += clamp(turn(ag.a, want), -7 * dt, 7 * dt);
       return false;
     }
-    const STRIDE = { pig: 0.7, person: 1.4, rider: 2.2, sheep: 0.8, goat: 0.8, cow: 1.5, ox: 1.5, horse: 2, donkey: 1.2, dog: 1, cat: 0.7, hen: 0.25, cart: 3 };
+    const STRIDE = { lion: 1.6, bear: 1.2, elephant: 2.4, ostrich: 1.8, pig: 0.7, person: 1.4, rider: 2.2, sheep: 0.8, goat: 0.8, cow: 1.5, ox: 1.5, horse: 2, donkey: 1.2, dog: 1, cat: 0.7, hen: 0.25, cart: 3 };
     function update(ag, dt) {
       if (ag.follow) return;
       if (!ag.leg) {
@@ -3308,6 +3376,7 @@ const RomanTownLife = (() => {
           // round a mill, pushing its bar
           if (L.circle) { const r = L.circle; r.t += dt * 0.42 / r.r; ag.x = r.x + Math.cos(r.t) * r.r; ag.y = r.y + Math.sin(r.t) * r.r; ag.a = r.t + Math.PI / 2; ag.pose = 'walk'; ag.anim = 'push'; ag.ph += dt * 0.42 / 1.1; }
           if (L.duel) duelStep(ag, L, dt);
+          if (L.hunt) { ag.anim = 'fight'; ag.armed = 'spear'; }
           // the flock come in to the gate; the flock all in at the new one
           if (L.gather && (gathered(L.gather) || now - L.gather.t0 > 180)) L.until = now;
           if (L.settle && L.settle.beasts.every(b => b.ds >= L.settle.sIn + 0.8)) L.until = Math.min(L.until, now + 3);
@@ -3542,8 +3611,8 @@ const RomanTownLife = (() => {
     // heading; where two overlap they are pushed apart, the lighter more,
     // what is sitting, lying or yoked not at all; walkers meeting step
     // aside to the right; and the timid get out of the way ----
-    const SIZE = { pig: [0.3, 0.26], sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
-    const HEAVY = { person: 1, pig: 1.2, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, horse: 4, donkey: 2.5, rider: 5 };
+    const SIZE = { lion: [0.5, 0.3], bear: [0.45, 0.4], elephant: [1.2, 0.9], ostrich: [0.15, 0.3], pig: [0.3, 0.26], sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
+    const HEAVY = { person: 1, lion: 3, bear: 4, elephant: 30, ostrich: 1.5, pig: 1.2, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, horse: 4, donkey: 2.5, rider: 5 };
     const SETTLED = new Set(['sit', 'lie', 'recline', 'kneel', 'squat', 'swim']);
     const sizeOf = ag => ag.kind === 'person' ? (ag.pose === 'lie' || ag.pose === 'recline' ? [0.55, 0.25] : [0, ag.age === 'child' ? 0.17 : ag.pose === 'sit' ? 0.3 : 0.23]) : SIZE[ag.kind] || [0, 0.3];
     function weight(ag) {
@@ -3738,6 +3807,7 @@ const RomanTownLife = (() => {
       figures.length = 0; lights.length = 0;
       for (const T of tables.values()) if (T.laid > now) figures.push(T);
       for (const Hd of herds) if (Hd.trough) figures.push(Hd.trough);
+      for (const c of cages) figures.push(c);
       for (const ag of all) {
         if (!ag.vis) continue;
         figures.push(ag);
@@ -3756,9 +3826,9 @@ const RomanTownLife = (() => {
       if (p.kind !== 'person') {
         // a beast: whose, and what it is about
         const H = p.herd, M = p.master || (H && H.shepherd) || (p.farm && p.farm.master);
-        const what = p.kind === 'dog' && p.stray ? 'a stray dog' : p.kind === 'cat' ? 'a cat' : `a ${p.kind}`;
+        const what = p.exotic ? ({ lion: p.male ? 'a lion, from Africa' : 'a lioness, from Africa', bear: 'a bear, from the mountains', elephant: 'an elephant, from Africa', ostrich: 'an ostrich, from Africa' })[p.kind] : p.kind === 'dog' && p.stray ? 'a stray dog' : p.kind === 'cat' ? 'a cat' : `a ${p.kind}`;
         const whose = M ? `${M.name}’s` : '';
-        const doing = p.drove || (H && H.mode !== 'graze') ? 'being moved to fresh grass' : p.pose === 'lie' ? 'lying down' : p.pose === 'graze' ? (H && p.leg && p.leg.drinking ? 'drinking at the trough' : H && grass[H.f.idx] < 0.25 ? 'nosing for the last of the grass' : 'grazing') : p.pose === 'walk' || p.pose === 'run' ? 'on the move' : '';
+        const doing = p.exotic ? (onSand(p) ? 'in the arena, for the hunt' : p.pose === 'walk' ? 'pacing its cage' : p.pose === 'lie' ? 'lying in its cage' : 'in its cage by the amphitheatre') : p.drove || (H && H.mode !== 'graze') ? 'being moved to fresh grass' : p.pose === 'lie' ? 'lying down' : p.pose === 'graze' ? (H && p.leg && p.leg.drinking ? 'drinking at the trough' : H && grass[H.f.idx] < 0.25 ? 'nosing for the last of the grass' : 'grazing') : p.pose === 'walk' || p.pose === 'run' ? 'on the move' : '';
         return { name: whose ? `${whose} ${p.kind}${H ? ', of the ' + (H.kind === 'sheep' || H.kind === 'goat' ? 'flock' : 'herd') : ''}` : what, title: '', doing, needs: '' };
       }
       const his = p.sex === 'f' ? 'her' : 'his';
@@ -3779,6 +3849,8 @@ const RomanTownLife = (() => {
       else if (L && L.k === 'hide') doing = act === 'inn' ? 'asleep upstairs at an inn' : act === 'travel' ? 'away on the road' : 'indoors';
       else if (L && L.watch) doing = p.anim === 'clap' ? 'applauding' : p.anim === 'cheer' ? 'on his feet, cheering' : L.watch === 'arena' ? 'watching the games' : 'watching the play';
       else if (L && L.food !== undefined) doing = act === 'cena' || p.pose === 'recline' ? 'at dinner' : 'eating';
+      else if (L && L.hunt) doing = `facing ${({ lion: 'a lion', bear: 'the bear', elephant: 'the elephant', ostrich: 'an ostrich' })[L.face && L.face.kind] || 'a beast'}, spear levelled`;
+      else if (L && L.k === 'chase' && p.job === 'venator') doing = 'closing in on a beast';
       else if (L && L.drink) doing = p.pose === 'kneel' ? 'drinking from the river' : p.pose === 'bend' ? 'drinking at the fountain' : L.atCounter ? 'a cup of wine at a tavern' : p.cl ? 'a drink of water' : `a drink from ${his} flask`;
       else if (L && L.ease) doing = p.pose === 'squat' ? 'answering a call of nature behind a bush' : !p.vis ? 'indoors' : L.sp && L.sp.cl && L.sp.cl.bs.some(b => b.trade === 'forica') ? (p.anim === 'talk' ? 'at the public latrine, chatting with a neighbour' : 'at the public latrine') : 'at the latrine';
       else if (L && L.rest) doing = p.pose === 'lie' ? 'having a nap' : 'resting';

@@ -5,6 +5,7 @@
 // their games, the pipes, a crowd at the play applauding, at the games roaring;
 // the beasts, each its own cry: sheep and goats bleating, cattle lowing,
 // horses whinnying, a donkey braying, dogs barking, cats, hens, pigs; the
+// arena's lions roaring, its elephant trumpeting, its bear growling; the
 // fountains and the river, the mills grinding, the carts' wheels; feet and
 // hooves, a whisper alone, a clatter when a crowd or a herd goes by; fires
 // roaring low and crackling, the ovens', the forges', the torches'; birds in
@@ -218,6 +219,26 @@ const RomanTownSound = (() => {
       n.connect(bp).connect(g);
       env(g, t, amp, 0.001, 0.012);
     },
+    // the arena's beasts: a lion's roar, swelling and rumbling away; an
+    // elephant's trumpet; a bear's growl
+    roar(ac, dest, t, amp, pan, r) {
+      const len = 1.4 + r() * 0.8, g = voice(ac, dest, t, pan, len + 0.3), o = osc(ac, 'sawtooth', 150 + r() * 40, t, len + 0.2), lp = filter(ac, 'lowpass', 700, 2), nz = noise(ac, t, len), nl = filter(ac, 'lowpass', 400);
+      o.frequency.linearRampToValueAtTime(90, t + len); wobble(ac, g.gain, 18, amp * 0.3, t, len);
+      o.connect(lp).connect(g); nz.connect(nl).connect(g);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(amp, t + len * 0.25); g.gain.linearRampToValueAtTime(0.0001, t + len);
+    },
+    trumpet(ac, dest, t, amp, pan, r) {
+      const len = 0.9 + r() * 0.6, f = 420 + r() * 160, g = voice(ac, dest, t, pan, len + 0.2), o = osc(ac, 'sawtooth', f, t, len + 0.1), b = osc(ac, 'square', f * 1.5, t, len + 0.1);
+      o.frequency.linearRampToValueAtTime(f * 1.35, t + len * 0.3); o.frequency.linearRampToValueAtTime(f * 1.1, t + len);
+      wobble(ac, o.frequency, 9, f * 0.04, t, len);
+      formants(ac, o, g, [[1200, 3, 1], [2600, 4, 0.5]]); b.connect(filter(ac, 'bandpass', 1800, 4)).connect(g);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(amp, t + 0.08); g.gain.setValueAtTime(amp, t + len * 0.6); g.gain.linearRampToValueAtTime(0.0001, t + len);
+    },
+    growl(ac, dest, t, amp, pan, r) {
+      const len = 0.8 + r() * 0.6, g = voice(ac, dest, t, pan, len + 0.2), o = osc(ac, 'sawtooth', 85 + r() * 25, t, len + 0.1), lp = filter(ac, 'lowpass', 500, 3), nz = noise(ac, t, len), nl = filter(ac, 'bandpass', 300, 1);
+      wobble(ac, g.gain, 26, amp * 0.4, t, len); o.connect(lp).connect(g); nz.connect(nl).connect(g);
+      env(g, t, amp, 0.1, len);
+    },
     // a footstep on stone or beaten earth: a soft scuff
     step(ac, dest, t, amp, pan, r) {
       const g = voice(ac, dest, t, pan, 0.1), n = noise(ac, t, 0.06), bp = filter(ac, 'bandpass', 900 + r() * 1400, 1.2), lp = filter(ac, 'lowpass', 3500);
@@ -310,6 +331,9 @@ const RomanTownSound = (() => {
     frog: { v: 'frog', rate: 1 / 3, w: 0.12, E: 0.0015, pk: 0.58 },
     owl: { v: 'owl', rate: 1 / 90, w: 0.4, E: 0.1125, pk: 0.71 },
     crackle: { v: 'crackle', rate: 5, w: 0.25, E: 5e-05, pk: 0.44 },
+    roar: { v: 'roar', rate: 1 / 60, w: 1.2, E: 0.0894, pk: 1.2 },
+    trumpet: { v: 'trumpet', rate: 1 / 120, w: 1.2, E: 0.0293, pk: 0.66 },
+    growl: { v: 'growl', rate: 1 / 50, w: 0.6, E: 0.0359, pk: 1.22 },
     step: { v: 'step', rate: 1.8, w: 0.02, E: 0.0001, pk: 0.36, cap: 24 },
     hoof: { v: 'hoof', rate: 1.6, w: 0.08, E: 0.0019, pk: 0.73, cap: 16 },
     creak: { v: 'creak', rate: 0.5, w: 0.25, E: 0.0003, pk: 0.17 },
@@ -395,12 +419,15 @@ const RomanTownSound = (() => {
           case 'donkey': add('bray', f.x, f.y, resting); break;
           case 'dog': add('bark', f.x, f.y, f.pose === 'run' ? 3 : resting); break;
           case 'cat': add('meow', f.x, f.y, resting); break;
+          case 'lion': add('roar', f.x, f.y, resting * (f.male ? 1 : 0.6)); break;
+          case 'elephant': add('trumpet', f.x, f.y, resting); break;
+          case 'bear': add('growl', f.x, f.y, resting * (f.pose === 'rear' ? 4 : 1)); break;
           case 'hen': add('cluck', f.x, f.y); break;
           case 'pig': add('oink', f.x, f.y, f.pose === 'lie' ? resting * 2 : 1); break;
           case 'cart': if (f.pose === 'walk') { add('carts', f.x, f.y); add('creak', f.x, f.y); } break;
         }
         // (and the hooves of whatever big goes by, the feet of the small)
-        if ((f.kind === 'horse' || f.kind === 'rider' || f.kind === 'donkey' || f.kind === 'cow' || f.kind === 'ox') && (f.pose === 'walk' || f.pose === 'run')) add('hoof', f.x, f.y, f.pose === 'run' ? 2 : 1);
+        if ((f.kind === 'horse' || f.kind === 'rider' || f.kind === 'donkey' || f.kind === 'cow' || f.kind === 'ox' || f.kind === 'elephant') && (f.pose === 'walk' || f.pose === 'run')) add('hoof', f.x, f.y, f.pose === 'run' ? 2 : 1);
         if ((f.kind === 'sheep' || f.kind === 'goat' || f.kind === 'pig') && (f.pose === 'walk' || f.pose === 'run')) add('step', f.x, f.y, 0.6);
       }
       for (const [x, y, n] of fountains) if (inView(x, y)) add('water', x, y, n);

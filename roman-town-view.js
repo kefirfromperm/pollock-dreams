@@ -880,6 +880,17 @@ const RomanTownView = (() => {
       case 'stone': E(0, 0, 0.32, 0.5, 0.32, 0.32, C(204, 196, 178), 0, 0); E(-0.2, 0.15, 0.03, 0.3, 0.25, 0.02, C(220, 214, 200)); return;
       case 'log': E(0, 0, 0.17, 0.62, 0.17, 0.16, BARK[id % BARK.length], 0, 2); E(0.6, 0, 0.17, 0.03, 0.16, 0.15, SPLIT); E(0.3, 0.35, 0.05, 0.2, 0.07, 0.05, SPLIT, 0.7); return;
       case 'desk': E(0, 0, 0.7, 0.28, 0.24, 0.025, WOOD); E(0, 0, 0.35, 0.035, 0.035, 0.34, DARKWOOD); return;
+      // a beast's cage: a floor of boards, posts at its corners, bars round it, a roof of planks over
+      case 'cage': {
+        const L = f.big ? 3.2 : 1.9, D = f.big ? 2.2 : 1.3, h = f.big ? 3.3 : 1.8;
+        E(0, 0, 0.06, L, D, 0.06, DARKWOOD);
+        for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) E(a * L, b * D, h / 2, 0.08, 0.08, h / 2, DARKWOOD);
+        for (let k = -6; k <= 6; k++) for (const sg of [-1, 1]) E(k / 6.5 * L, sg * D, h / 2, 0.025, 0.025, h / 2, WOOD);
+        for (let k = -3; k <= 3; k++) for (const sg of [-1, 1]) E(sg * L, k / 3.5 * D, h / 2, 0.025, 0.025, h / 2, WOOD);
+        for (const sg of [-1, 1]) E(0, sg * D, h, L, 0.05, 0.05, DARKWOOD);
+        for (let k = -3; k <= 3; k += 2) E(k / 3.5 * L, 0, h + 0.04, 0.16, D, 0.03, WOOD);
+        return;
+      }
       // a herd's trough: a hollowed log, water in it
       case 'trough': E(0, 0, 0.22, 1.0, 0.32, 0.22, DARKWOOD); E(0, 0, 0.4, 0.88, 0.22, 0.04, C(70, 110, 112)); return;
       default: return beastBodies(f, E, lod, fine);
@@ -1066,6 +1077,7 @@ const RomanTownView = (() => {
   // sword; a net-fighter, bareheaded, his trident and his net
   function gear(f, S, fighting, hz) {
     const thrust = fighting ? 0.2 * Math.max(0, Math.sin((f.ph || 0) * Math.PI * 2 * 1.6)) : 0;
+    if (f.armed === 'spear') { S(0.7 + thrust, 0.22, 1.2, 1.1, 0.02, 0.02, WOOD, 0); S(1.82 + thrust, 0.22, 1.2, 0.12, 0.03, 0.015, IRON); return; }
     if (f.armed === 'net') {
       S(0.55 + thrust, 0.25, fighting ? 1.3 : 1.0, 0.85, 0.02, 0.02, WOOD); S(1.4 + thrust, 0.25, fighting ? 1.3 : 1.0, 0.06, 0.07, 0.015, IRON);
       S(0.25, -0.32, 0.95, 0.15, 0.12, 0.2, NET);
@@ -1251,6 +1263,54 @@ const RomanTownView = (() => {
       }
     }
   }
+  // the arena's beasts: a lion (the male's mane dark and shaggy), a bear
+  // (up on its hind legs at the hunters), an elephant (ears, trunk, tusks),
+  // an ostrich (its long bare neck and legs, black and white feathers)
+  function wildBodies(f, E, lod, fine) {
+    const id = f.id || 1, ph = f.ph || 0, T = Math.PI * 2, kind = f.kind, pose = f.pose, lie = pose === 'lie', walking = pose === 'walk' || pose === 'run';
+    const sw = o => walking ? Math.sin((ph + o) * T) : 0;
+    const legs = (L, Wd, h, r, col, gait) => { if (lie) return; for (const [fx, sg, o] of [[L, 1, 0], [L, -1, 0.5], [-L, 1, 0.5], [-L, -1, 0]]) E(fx + gait * sw(o), sg * Wd, h / 2, r, r * 0.9, h / 2, col); };
+    if (kind === 'lion') {
+      const coat = C(196, 150, 86), mane = C(110, 70, 36), z = lie ? 0.3 : 0.62;
+      E(0, 0, z, 0.72, 0.26, lie ? 0.24 : 0.28, coat);
+      E(0.78, 0, z + (lie ? 0.05 : 0.18), 0.2, 0.16, 0.17, coat); E(0.96, 0, z + (lie ? 0.02 : 0.14), 0.09, 0.08, 0.07, C(172, 128, 76));
+      if (f.male) E(0.62, 0, z + (lie ? 0.1 : 0.22), 0.26, 0.3, 0.3, mane);
+      if (lod) return;
+      legs(0.48, 0.15, z - 0.05, 0.07, coat, 0.25);
+      E(-0.95, 0, z + 0.05, 0.36, 0.03, 0.03, coat, 0.3); E(-1.28, 0.08, z + 0.02, 0.06, 0.05, 0.05, mane);
+      if (fine) for (const sg of [-1, 1]) { E(0.82, sg * 0.13, z + 0.3, 0.04, 0.04, 0.04, coat.map(v => v * 0.8)); E(0.95, sg * 0.06, z + 0.2, 0.015, 0.015, 0.015, C(30, 24, 16)); }
+      return;
+    }
+    if (kind === 'bear') {
+      const coat = C(84, 60, 42), rear = pose === 'rear';
+      if (rear) { E(0, 0, 1.1, 0.32, 0.36, 0.7, coat); E(0.12, 0, 1.85, 0.2, 0.2, 0.2, coat); E(0.3, 0, 1.82, 0.1, 0.08, 0.08, C(110, 84, 62)); for (const sg of [-1, 1]) { E(0.3, sg * 0.32, 1.45, 0.25, 0.08, 0.08, coat); E(0, sg * 0.18, 0.25, 0.12, 0.12, 0.25, coat); } return; }
+      const z = lie ? 0.35 : 0.72;
+      E(0, 0, z, 0.75, 0.42, lie ? 0.32 : 0.42, coat); E(0.78, 0, z + (lie ? 0 : 0.05), 0.24, 0.2, 0.2, coat); E(0.98, 0, z - 0.02, 0.1, 0.08, 0.08, C(110, 84, 62));
+      if (lod) return;
+      legs(0.45, 0.24, z - 0.1, 0.12, coat, 0.2);
+      if (fine) for (const sg of [-1, 1]) E(0.72, sg * 0.15, z + 0.22, 0.05, 0.05, 0.04, coat);
+      return;
+    }
+    if (kind === 'elephant') {
+      const skin = C(132, 126, 120), z = 1.9;
+      E(0, 0, z, 1.5, 0.95, 0.95, skin);
+      E(1.55, 0, z + 0.25, 0.55, 0.5, 0.55, skin);
+      for (const sg of [-1, 1]) E(1.35, sg * 0.75, z + 0.25, 0.25, 0.45, 0.55, skin.map(v => v * 0.92), sg * (0.25 + 0.15 * Math.sin(ph * T * 0.3)));
+      if (lod) return;
+      const tr = 0.25 * Math.sin(ph * T * 0.4);
+      E(2.05, tr * 0.4, z - 0.35, 0.12, 0.12, 0.6, skin, tr); E(2.15, tr * 0.6, z - 1.0, 0.09, 0.09, 0.3, skin);
+      for (const sg of [-1, 1]) E(2.1, sg * 0.25, z - 0.25, 0.35, 0.05, 0.05, C(236, 228, 206), sg * 0.2);
+      legs(0.9, 0.55, z - 0.4, 0.28, skin, 0.3);
+      E(-1.55, 0, z - 0.2, 0.05, 0.04, 0.55, skin);
+      return;
+    }
+    // the ostrich
+    const black = C(34, 30, 30), white = C(236, 230, 220), legC = C(214, 168, 150), run = pose === 'run';
+    E(0, 0, 1.05, 0.42, 0.3, 0.26, black); E(-0.38, 0, 1.12, 0.16, 0.24, 0.16, white);
+    E(0.42, 0, 1.55, 0.05, 0.05, 0.45, legC, 0); E(0.52, 0, 2.0, 0.1, 0.07, 0.07, legC); E(0.62, 0, 1.98, 0.06, 0.03, 0.025, C(190, 150, 110));
+    if (lod) return;
+    for (const sg of [-1, 1]) { const o = sg > 0 ? 0 : 0.5; E(0.05 + (run ? 0.3 : 0.15) * sw(o), sg * 0.12, 0.45, 0.05, 0.05, 0.45, legC); E(0.12 + (run ? 0.3 : 0.15) * sw(o), sg * 0.12, 0.03, 0.1, 0.05, 0.03, legC); }
+  }
   function beastBodies(f, E, lod, fine) {
     const id = f.id || 1, ph = f.ph || 0, T = Math.PI * 2, kind = f.kind, coat = pick(COATS[kind] || COATS.dog, id, 21);
     const pose = f.pose, lie = pose === 'lie', graze = pose === 'graze', sit = pose === 'sit', walking = pose === 'walk' || pose === 'run';
@@ -1323,6 +1383,7 @@ const RomanTownView = (() => {
       }
       return;
     }
+    if (kind === 'lion' || kind === 'bear' || kind === 'elephant' || kind === 'ostrich') return wildBodies(f, E, lod, fine);
     if (kind === 'pig') {
       // a long round body on short legs, the head low, a flat snout, ears
       // flopped forward, a curl of a tail; caked with mud after a wallow
