@@ -14,12 +14,17 @@
 //     in the way, the sky's light, less of it in hollows and narrow streets
 //     (from the heights about, the whole world's, found once), lamps at night.
 //
+// And the living (roman-town-life.js), drawn afresh each frame as they are
+// at that moment: people, beasts and their things, each a few round bodies
+// posed as it stands, walks, sits, lies or works, casting its own shadow;
+// the torches they carry lit at night.
+//
 //   const view = RomanTownView.create(canvas, town, { seed })
-//   view.draw([x0, y0, w, h], sky, t)   the canvas filled with that rectangle of
+//   view.draw([x0, y0, w, h], sky, t, life)   the canvas filled with that rectangle of
 //     the world, lit as the sky is: { sun: { az, el }, moon: { az, el, lit } },
 //     azimuths from north (up) clockwise, elevations, radians; lit, the
 //     moon's lit part; t, seconds, for what moves: the wind in the grass,
-//     the crops, the torches' flames
+//     the crops, the torches' flames; life, if any, { figures, lights }
 const RomanTownView = (() => {
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -403,7 +408,7 @@ const RomanTownView = (() => {
   // the light, every pixel
   const LIGHT_FS = `
     uniform sampler2D uAlb, uNrm, uHgt, uNear, uFar;
-    uniform sampler2DShadow uShadow;
+    uniform sampler2DShadow uShadow, uShadowM; uniform int uMov; uniform float uBiasM; uniform mat4 uLightM;
     uniform vec4 uView; uniform vec2 uSize, uWorld;
     uniform mat4 uLight; uniform float uBias, uTexel, uShTexel;
     uniform vec3 uL, uSun, uSky; uniform float uGrey, uZbase;
@@ -445,6 +450,12 @@ const RomanTownView = (() => {
         for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++)
           lit += texture(uShadow, vec3(s.xy + vec2(x, y) * uShTexel * 1.2, s.z - uBias));
         lit /= 9.0;
+      }
+      // and the living's shadows, drawn each moment apart (one look,
+      // softened by the card between its four nearest)
+      if (uMov == 1) {
+        vec3 sm = (uLightM * vec4(P + n * 0.02, 1.0)).xyz * 0.5 + 0.5;
+        if (all(greaterThan(sm, vec3(0.0))) && all(lessThan(sm, vec3(1.0)))) lit = min(lit, texture(uShadowM, vec3(sm.xy, sm.z - uBiasM)));
       }
       float ndl = max(0.0, dot(n, uL)) * lit;
       // the sky, less of it below the heights about
@@ -536,6 +547,257 @@ const RomanTownView = (() => {
       L: bySun ? dir(sun.az, sun.el) : dir(moon.az, moon.el), col: bySun ? sunC : moonC,
       sky: mixc(night, dusk, day), grey: 0.75 * (1 - day), lamps: 1 - sm(-0.1, 0.03, sun.el),
     };
+  }
+
+  // ---- the living, as round bodies: a person a dozen or so, head, body,
+  // skirts, arms and legs, posed; a beast its body, head, neck and legs; a
+  // cart, a boat; each body [x, y, z, radii, colour, turn] ----
+  const rgbs = a => a.map(c => c.map(v => v / 255));
+  const SKIN = rgbs([[204, 158, 120], [184, 136, 100], [158, 112, 80], [216, 176, 142], [140, 98, 70]]);
+  const HAIR = rgbs([[26, 20, 18], [46, 32, 24], [74, 52, 34], [100, 58, 32], [58, 42, 30], [146, 120, 78], [34, 26, 22]]);
+  const TUNIC = rgbs([[222, 212, 188], [204, 190, 160], [186, 184, 176], [132, 100, 72], [164, 88, 60], [192, 154, 86], [110, 128, 148], [130, 142, 108], [154, 60, 48], [214, 204, 178], [170, 150, 120]]);
+  const STOLA = rgbs([[222, 172, 82], [204, 132, 130], [142, 168, 200], [126, 154, 110], [146, 118, 164], [228, 216, 192], [192, 152, 92], [180, 72, 66], [96, 120, 160]]);
+  const SLAVE = rgbs([[142, 122, 100], [124, 116, 108], [156, 142, 118], [112, 94, 74], [168, 156, 132]]);
+  const CLOAK = rgbs([[104, 86, 68], [92, 92, 98], [122, 98, 66], [72, 62, 54], [130, 74, 50]]);
+  const COATS = {
+    sheep: rgbs([[232, 226, 210], [224, 218, 200], [214, 206, 186], [226, 220, 206], [70, 62, 56]]), goat: rgbs([[150, 120, 92], [62, 54, 48], [226, 220, 208], [118, 90, 64], [180, 150, 112]]),
+    cow: rgbs([[132, 88, 58], [98, 66, 46], [44, 40, 38], [198, 160, 112], [150, 110, 76]]), ox: rgbs([[208, 202, 190], [190, 184, 172], [176, 166, 150], [222, 214, 200]]),
+    horse: rgbs([[116, 76, 48], [70, 48, 36], [150, 92, 54], [178, 168, 156], [44, 36, 32], [168, 130, 88]]), donkey: rgbs([[128, 118, 108], [150, 136, 118], [104, 92, 80]]),
+    dog: rgbs([[176, 136, 90], [96, 70, 48], [40, 36, 34], [214, 204, 186], [150, 112, 70]]), cat: rgbs([[170, 120, 70], [80, 74, 70], [40, 36, 34], [200, 190, 176]]),
+    hen: rgbs([[150, 90, 50], [196, 150, 96], [236, 228, 212], [60, 48, 40], [170, 70, 40]]),
+  };
+  const C = (r, g, b) => [r / 255, g / 255, b / 255];
+  const WOOD = C(118, 86, 56), DARKWOOD = C(76, 56, 40), CLAY = C(180, 98, 62), WICKER = C(176, 146, 92), IRON = C(90, 90, 96), HOOF = C(46, 40, 36), HORN = C(214, 204, 176), STRAW = C(206, 178, 104);
+  const pick = (list, id, k) => list[Math.floor(hash(id, k, 4441) * list.length) % list.length];
+  // bodies for one figure, through E(forward, aside, up, rx, ry, rz, colour, turn) in its own frame
+  function figureBodies(f, E, lod) {
+    const id = f.id || 1, ph = f.ph || 0, sw = Math.sin(ph * Math.PI * 2), cw = Math.cos(ph * Math.PI * 2);
+    switch (f.kind) {
+      case 'person': return personBodies(f, E, lod);
+      case 'rider': {
+        beastBodies({ kind: 'horse', id, ph, pose: f.pose === 'walk' || f.pose === 'run' ? 'walk' : 'stand' }, E, lod);
+        const cl = pick(f.dress === 'cloak' ? CLOAK : TUNIC, id, 3), sk = pick(SKIN, id, 1), hr = pick(HAIR, id, 2);
+        E(-0.05, 0, 1.78, 0.14, 0.2, 0.3, cl); E(0, 0, 2.2, 0.11, 0.1, 0.12, hr); E(0.03, 0, 2.17, 0.09, 0.085, 0.09, sk);
+        for (const sg of [-1, 1]) { E(0.12, sg * 0.24, 1.4, 0.18, 0.07, 0.24, cl); E(0.18, sg * 0.25, 1.75, 0.16, 0.06, 0.06, sk, sg * 0.4); }
+        return;
+      }
+      case 'cart': {
+        // a bed of boards on two wheels, a pole to the yoke, and its load
+        E(0, 0, 0.98, 1.35, 0.74, 0.1, WOOD); E(2.1, 0, 0.8, 1.05, 0.05, 0.05, DARKWOOD);
+        for (const sg of [-1, 1]) { E(0, sg * 0.7, 1.12, 1.35, 0.05, 0.16, DARKWOOD); E(0, sg * 0.88, 0.55, 0.56, 0.07, 0.56, DARKWOOD); E(0, sg * 0.88, 0.55, 0.12, 0.09, 0.12, IRON); }
+        const L = f.load;
+        if (L === 'amphorae') for (let i = -2; i <= 2; i++) for (const j of [-0.32, 0, 0.32]) E(i * 0.45, j, 1.22, 0.2, 0.15, 0.15, CLAY, 0.1 * j);
+        else if (L === 'sacks') for (let i = -1; i <= 1; i++) for (const j of [-0.28, 0.28]) E(i * 0.75, j, 1.25, 0.35, 0.24, 0.2, C(206, 192, 160));
+        else if (L === 'hay') E(0, 0, 1.4, 1.5, 0.9, 0.55, STRAW);
+        else if (L === 'stone') for (let i = -1; i <= 1; i++) E(i * 0.8, (i % 2) * 0.15, 1.25, 0.35, 0.4, 0.22, C(198, 192, 180));
+        else for (const j of [-0.3, 0, 0.3]) E(0, j, 1.22, 1.5, 0.14, 0.14, C(120, 92, 62));
+        return;
+      }
+      case 'boat': {
+        // a riverboat, its cargo amidships, the boatman poling at the stern
+        const rowing = f.pose === 'row';
+        E(0, 0, 0.0, 3.6, 0.95, 0.5, WOOD); E(0.15, 0, 0.18, 3.2, 0.72, 0.36, DARKWOOD); E(3.3, 0, 0.42, 0.35, 0.16, 0.12, WOOD);
+        if (f.load === 'amphorae') for (let i = -2; i <= 2; i++) for (const j of [-0.26, 0.26]) E(i * 0.42, j, 0.62, 0.18, 0.14, 0.14, CLAY);
+        else if (f.load === 'sacks') for (let i = -1; i <= 1; i++) E(i * 0.7, 0, 0.62, 0.33, 0.4, 0.2, C(206, 192, 160));
+        personBodies({ kind: 'person', id: id * 7 + 1, sex: 'm', age: 'adult', dress: 'work', pose: 'stand', ph, anim: rowing ? 'pole' : null }, (fw, a, z, rx, ry, rz, c, t) => E(fw - 2.7, a, z + 0.25, rx, ry, rz, c, t), lod);
+        if (rowing) E(-2.3, 0.4, 1.1 + 0.3 * sw, 1.6, 0.03, 0.03, WOOD, 0.4 + 0.3 * cw);
+        return;
+      }
+      case 'basket': E(0, 0, 0.18, 0.26, 0.26, 0.18, WICKER); E(0, 0, 0.33, 0.2, 0.2, 0.07, pick(rgbs([[150, 40, 40], [110, 140, 60], [200, 160, 60], [90, 60, 110], [170, 170, 160]]), id, 9)); return;
+      default: return beastBodies(f, E, lod);
+    }
+  }
+  function personBodies(f, E, lod) {
+    const id = f.id, ph = f.ph || 0, T = Math.PI * 2, sw = Math.sin(ph * T), cw = Math.cos(ph * T);
+    const k = f.age === 'child' ? 0.66 : f.age === 'old' ? 0.95 : 1, fem = f.sex === 'f';
+    const skin = pick(SKIN, id, 1), hair = f.age === 'old' ? C(160, 154, 146) : pick(HAIR, id, 2);
+    const dress = f.dress, under = pick(TUNIC, id, 3);
+    const cl = dress === 'toga' ? C(236, 232, 222) : dress === 'stola' ? pick(STOLA, id, 4) : dress === 'slave' ? pick(SLAVE, id, 5) : dress === 'cloak' ? pick(CLOAK, id, 6) : dress === 'work' ? pick(SLAVE, id, 7) : under;
+    const palla = fem ? pick(STOLA, id, 8) : cl, veiled = fem && hash(id, 9, 77) > 0.55 && f.pose !== 'lie';
+    const long = dress === 'toga' || fem, legC = skin, foot = C(96, 70, 48);
+    // (a body in the figure's frame, its size by the figure's)
+    const S = (fw, a, z, rx, ry, rz, c, t = 0) => E(fw * k, a * k, z * k, rx * k, ry * k, rz * k, c, t);
+    const head = (fw, z) => {
+      S(fw, 0, z, 0.11, 0.1, 0.12, veiled ? palla : hair);
+      S(fw + 0.035, 0, z - 0.02, 0.085, 0.085, 0.095, skin);
+      if (veiled) S(fw - 0.02, 0, z + 0.02, 0.125, 0.115, 0.12, palla);
+    };
+    if (lod) { S(0, 0, 0.82, 0.16, 0.22, 0.72, cl); S(0, 0, 1.52, 0.11, 0.1, 0.12, veiled ? palla : hair); return; }
+    const pose = f.pose, anim = f.anim;
+    const carry = f.carry;
+    // what is carried
+    const carried = (hz) => {
+      if (carry === 'jar-full') { S(0, 0, hz + 0.24, 0.15, 0.15, 0.19, CLAY); S(0.04, 0.17, hz + 0.02, 0.05, 0.05, 0.2, skin); }
+      else if (carry === 'jar') S(0.02, 0.24, 0.95, 0.13, 0.13, 0.17, CLAY);
+      else if (carry === 'amphora') S(-0.02, -0.12, 1.5, 0.14, 0.44, 0.14, CLAY, 0.5);
+      else if (carry === 'basket') { if (hash(id, 11, 3) < 0.5) { S(0, 0, hz + 0.15, 0.22, 0.22, 0.09, WICKER); S(0, 0, hz + 0.23, 0.17, 0.17, 0.05, pick(rgbs([[150, 40, 40], [110, 140, 60], [200, 160, 60]]), id, 12)); } else S(0.05, 0.27, 0.92, 0.18, 0.14, 0.12, WICKER); }
+      else if (carry === 'bundle') S(-0.2, 0, 1.25, 0.15, 0.2, 0.2, pick(CLOAK, id, 13));
+      else if (carry === 'torch') { S(0.3, 0.32, 1.72, 0.03, 0.03, 0.32, DARKWOOD); S(0.18, 0.3, 1.38, 0.06, 0.06, 0.2, skin); }
+      else if (carry === 'staff' || carry === 'spear') S(0.08, 0.3, 1.0, 0.025, 0.025, carry === 'spear' ? 1.1 : 0.9, WOOD);
+      else if (carry === 'rod') S(0.2, 0.25, 1.3, 0.9, 0.02, 0.02, WOOD, 0.2);
+      else if (carry === 'bag') S(0.05, -0.22, 0.95, 0.14, 0.1, 0.15, C(200, 186, 150));
+      else if (carry) S(-0.05, 0.18, 1.45, 0.7, 0.025, 0.025, WOOD, 0.12); // a tool on the shoulder
+    };
+    switch (pose) {
+      case 'lie': {
+        // the length of it, a blanket over, the head on the pillow
+        const cov = f.z > 0.3 ? pick(STOLA, id, 14).map(v => v * 0.8) : cl;
+        S(0.72, 0, 0.13, 0.12, 0.1, 0.1, hair); S(0.28, 0, 0.13, 0.36, 0.21, 0.12, cov); S(-0.42, 0, 0.11, 0.5, 0.18, 0.1, cov);
+        return;
+      }
+      case 'recline': {
+        // propped on the left elbow, towards the table
+        S(0.55, 0.06, 0.48, 0.11, 0.1, 0.12, hair); S(0.59, 0.06, 0.46, 0.085, 0.085, 0.09, skin);
+        S(0.22, 0, 0.28, 0.32, 0.22, 0.17, cl); S(-0.5, -0.05, 0.12, 0.52, 0.2, 0.1, cl); S(0.35, 0.22, 0.2, 0.18, 0.06, 0.06, skin);
+        S(0.45 + 0.05 * sw, -0.22, 0.35, 0.16, 0.05, 0.05, skin, 0.4);
+        return;
+      }
+      case 'swim': {
+        S(0.12, 0, 0.18, 0.11, 0.1, 0.11, hair); S(0, 0, 0.04, 0.15, 0.23, 0.08, skin);
+        for (const sg of [-1, 1]) S(0.15 + 0.2 * Math.sin(ph * T + (sg > 0 ? 0 : Math.PI)), sg * 0.32, 0.03, 0.2, 0.05, 0.05, skin, sg * 0.5);
+        return;
+      }
+      case 'sit': {
+        const s = (f.seat || 0) / k;
+        // (on a stool, if not on a bench or the ground)
+        if (f.stool) { S(-0.04, 0, s * 0.5, 0.17, 0.17, s * 0.5, WOOD); }
+        S(-0.02, 0, s + 0.4, 0.13, 0.2, 0.27, cl); head(0, s + 0.8);
+        S(0.16, 0, s + 0.1, 0.26, 0.21, 0.11, long ? cl : under);
+        for (const sg of [-1, 1]) {
+          if (s > 0.12) { S(0.42, sg * 0.1, s / 2, 0.07, 0.065, s / 2, long ? cl : legC); S(0.48, sg * 0.1, 0.04, 0.12, 0.05, 0.04, foot); }
+          else { S(0.62, sg * 0.1, 0.07, 0.25, 0.07, 0.07, long ? cl : legC); S(0.88, sg * 0.1, 0.08, 0.05, 0.05, 0.08, foot); }
+          // the hands at work, or on the knees
+          const busy = anim === 'craft' || anim === 'sell' || anim === 'talk';
+          S(busy ? 0.3 + 0.06 * Math.sin(ph * T * (anim === 'craft' ? 2 : 1) + sg) : 0.22, sg * 0.18, s + (busy ? 0.42 : 0.3), 0.14, 0.055, 0.06, skin, -sg * 0.4);
+        }
+        if (anim === 'craft') S(0.42, 0, s + 0.38, 0.12, 0.1, 0.04, WOOD);
+        return;
+      }
+      case 'kneel': case 'squat': {
+        const kn = pose === 'kneel';
+        const lean = kn ? 0.12 : 0.05;
+        S(lean, 0, kn ? 0.66 : 0.6, 0.15, 0.2, 0.25, cl); head(lean + 0.14, kn ? 0.98 : 0.92);
+        for (const sg of [-1, 1]) {
+          if (kn) { S(-0.16, sg * 0.11, 0.1, 0.26, 0.07, 0.08, long ? cl : legC); S(0.05, sg * 0.11, 0.28, 0.12, 0.07, 0.17, long ? cl : legC); }
+          else { S(0.22, sg * 0.12, 0.36, 0.2, 0.07, 0.08, long ? cl : legC); S(0.32, sg * 0.12, 0.18, 0.07, 0.065, 0.18, legC); }
+          const work = anim === 'wash' || anim === 'gather' || anim === 'fill';
+          S(0.36 + (work ? 0.08 * Math.sin(ph * T * 1.5 + sg * 1.3) : 0), sg * 0.16, work ? 0.3 : 0.42, 0.16, 0.05, 0.05, skin, -sg * 0.3);
+        }
+        if (anim === 'wash') S(0.62, 0, 0.12, 0.3, 0.26, 0.05, pick(TUNIC, id, 15));
+        if (anim === 'gather') S(0.5, 0.3, 0.12, 0.2, 0.2, 0.12, WICKER);
+        carried(1.0);
+        return;
+      }
+      case 'bend': {
+        // bent over the work: the hoe, the sickle, the broom, the jar at the fountain
+        const bob = anim === 'hoe' || anim === 'dig' ? Math.max(0, sw) : 0;
+        S(0.2 - 0.04 * bob, 0, 1.0 + 0.1 * bob, 0.28, 0.2, 0.17, cl); head(0.47 - 0.08 * bob, 0.98 + 0.18 * bob);
+        S(0.02, 0, 0.74, 0.17, 0.2, 0.2, long ? cl : under);
+        for (const sg of [-1, 1]) { S(-0.02, sg * 0.09, 0.3, 0.07, 0.065, 0.3, long ? cl : legC); S(0.05, sg * 0.09, 0.04, 0.12, 0.05, 0.04, foot); }
+        const reach = anim === 'reap' ? 0.15 * sw : 0;
+        for (const sg of [-1, 1]) S(0.5 + 0.12 * bob, sg * 0.15 + reach, 0.62 + 0.35 * bob, 0.07, 0.06, 0.24, skin);
+        if (anim === 'hoe' || anim === 'dig') S(0.78 + 0.15 * bob, 0, 0.3 + 0.55 * bob, 0.5, 0.03, 0.03, WOOD);
+        if (anim === 'reap') S(0.62, 0.28 * sw, 0.35, 0.14, 0.05, 0.02, IRON, sw);
+        if (anim === 'sweep') S(0.72, 0.2 * sw, 0.22, 0.5, 0.06, 0.04, STRAW, 0.4 * sw);
+        if (anim === 'fill' || f.carry === 'jar' || f.carry === 'jar-full') S(0.55, 0, 0.62, 0.14, 0.14, 0.17, CLAY);
+        if (anim === 'pick') S(0.3, -0.3, 0.6, 0.18, 0.15, 0.12, WICKER);
+        return;
+      }
+      default: {
+        // standing, walking or running
+        const walking = pose === 'walk' || pose === 'run', run = pose === 'run';
+        const st = walking ? (run ? 0.34 : 0.2) * sw : 0, lean = run ? 0.07 : 0;
+        const bob = walking ? 0.025 * Math.abs(cw) : 0;
+        const turnH = anim === 'talk' ? 0.35 * Math.sin(ph * T * 0.37) : 0;
+        S(lean, 0, 1.17 + bob, 0.125, dress === 'toga' ? 0.24 : 0.2, 0.27, cl); head(lean + 0.01, 1.52 + bob);
+        if (turnH) S(0.06, turnH * 0.15, 1.5 + bob, 0.04, 0.04, 0.04, skin);
+        if (fem && !veiled) S(-0.02, 0, 1.36 + bob, 0.15, 0.24, 0.12, palla);
+        if (dress === 'toga') S(0.01, 0.07, 1.22 + bob, 0.15, 0.2, 0.25, cl, 0.25);
+        S(0.01, 0, long ? 0.6 : 0.78, 0.17, 0.21, long ? 0.44 : 0.22, long ? cl : under);
+        for (const sg of [-1, 1]) {
+          const leg = st * sg;
+          S(leg, sg * 0.085, 0.32, 0.07, 0.065, 0.32, long ? cl : legC);
+          S(leg * 1.3 + 0.05, sg * 0.085, 0.04, 0.12, 0.05, 0.04, foot);
+          // the arms: swinging, or at their work
+          let ax = -leg * 0.6, az = 1.12, arx = 0.06, arz = 0.27;
+          if (anim === 'talk' && sg > 0) { ax = 0.17 + 0.07 * Math.sin(ph * T * 0.8); az = 1.22; arx = 0.17; arz = 0.07; }
+          if (anim === 'sell' && sg > 0) { ax = 0.15; az = 1.05; arx = 0.15; arz = 0.06; }
+          if (anim === 'pray') { ax = 0.16; az = 1.48; arx = 0.08; arz = 0.18; }
+          if (anim === 'cook' || anim === 'eat') { ax = 0.2 + (anim === 'cook' ? 0.06 * Math.sin(ph * T + sg) : 0); az = 1.0 + (anim === 'eat' && sg > 0 ? 0.3 * Math.max(0, sw) : 0); arx = 0.17; arz = 0.07; }
+          if (anim === 'ball' && sg > 0) { ax = 0.1; az = 1.5 + 0.2 * Math.max(0, sw); arx = 0.06; arz = 0.25; }
+          if (anim === 'beat' || anim === 'prune' || anim === 'pole') { ax = 0.15; az = 1.55; arx = 0.07; arz = 0.25; }
+          if (anim === 'scythe') { ax = 0.32; az = 0.95; arx = 0.2; arz = 0.06; }
+          if (anim === 'sow' && sg > 0) { ax = 0.22 * sw; az = 1.05; arx = 0.15; arz = 0.07; }
+          if (anim === 'plough') { ax = 0.32; az = 0.95; arx = 0.2; arz = 0.06; }
+          if (anim === 'fish' && sg > 0) { ax = 0.2; az = 1.2; arx = 0.17; arz = 0.07; }
+          if (!(carry === 'torch' && sg > 0) && !(carry === 'jar-full' && sg > 0)) S(lean + ax, sg * 0.25, az + bob, arx, 0.055, arz, cl === under || dress === 'tunic' || dress === 'work' || dress === 'slave' ? skin : cl);
+        }
+        // the work's tools
+        if (anim === 'beat' || anim === 'pole') S(0.6, 0.15 * sw, 2.3, 1.1, 0.03, 0.03, WOOD, 0.5 * sw);
+        if (anim === 'prune') S(0.32, 0, 1.75, 0.12, 0.03, 0.03, IRON);
+        if (anim === 'scythe') S(0.8, 0.5 * Math.sin(ph * T * 0.7), 0.3, 0.75, 0.05, 0.03, IRON, 0.8 * Math.sin(ph * T * 0.7));
+        if (anim === 'fish') S(1.9, 0.12, 1.45, 1.6, 0.015, 0.015, WOOD, 0.08);
+        if (anim === 'plough') { S(0.75, 0, 0.75, 0.32, 0.25, 0.04, WOOD); S(1.2, 0, 0.45, 0.4, 0.06, 0.25, DARKWOOD); S(2.1, 0, 0.6, 0.9, 0.04, 0.04, WOOD); }
+        if (!walking && f.carry === 'jar-full') S(0, 0, 1.76, 0.15, 0.15, 0.19, CLAY);
+        if (walking || !anim) carried(1.52 + bob);
+      }
+    }
+  }
+  function beastBodies(f, E, lod) {
+    const id = f.id || 1, ph = f.ph || 0, T = Math.PI * 2, kind = f.kind, coat = pick(COATS[kind] || COATS.dog, id, 21);
+    const pose = f.pose, lie = pose === 'lie', graze = pose === 'graze', sit = pose === 'sit', walking = pose === 'walk' || pose === 'run';
+    const legs = (L, Wd, h, r, col, gait) => {
+      if (lie) return;
+      for (const [fx, sg, o] of [[L, 1, 0], [L, -1, 0.5], [-L, 1, 0.5], [-L, -1, 0]]) {
+        const sw = walking ? gait * Math.sin((ph + o) * T) : 0;
+        E(fx + sw, sg * Wd, h / 2, r, r * 0.9, h / 2, col);
+      }
+    };
+    const dark = coat.map(v => v * 0.55);
+    if (kind === 'sheep' || kind === 'goat') {
+      const g = kind === 'goat', s = g ? 0.95 : 1, face = !g && hash(id, 22, 5) < 0.3 ? C(60, 52, 46) : coat.map(v => v * 0.9);
+      const hz = graze ? 0.2 : lie ? 0.38 : g ? 0.8 : 0.66, hf = graze ? 0.66 : lie ? 0.5 : 0.6;
+      E(0, 0, lie ? 0.28 : g ? 0.62 : 0.56, 0.52 * s, g ? 0.21 : 0.3, lie ? 0.24 : g ? 0.24 : 0.3, coat);
+      if (!lod) {
+        E(hf, 0, hz, 0.15, 0.085, 0.1, face);
+        if (g) for (const sg of [-1, 1]) E(hf - 0.07, sg * 0.05, hz + 0.1, 0.09, 0.02, 0.03, HORN, sg * 0.4);
+        legs(0.3, 0.13, g ? 0.48 : 0.36, 0.04, g ? coat.map(v => v * 0.8) : C(70, 62, 56), 0.12);
+        E(-0.5, 0, (lie ? 0.3 : g ? 0.72 : 0.55), 0.08, 0.05, 0.06, coat);
+      }
+      return;
+    }
+    if (kind === 'cow' || kind === 'ox' || kind === 'horse' || kind === 'donkey') {
+      const horse = kind === 'horse' || kind === 'donkey', s = kind === 'donkey' ? 0.72 : 1;
+      const S = (fw, a, z, rx, ry, rz, c, t) => E(fw * s, a * s, z * s, rx * s, ry * s, rz * s, c, t);
+      const bz = lie ? 0.48 : horse ? 1.18 : 1.0;
+      S(0, 0, bz, horse ? 0.92 : 1.05, horse ? 0.32 : 0.42, horse ? 0.34 : 0.42, coat);
+      if (lod) { S(graze ? 1.2 : 1.15, 0, graze ? 0.35 : horse ? 1.55 : 1.05, 0.26, 0.14, 0.15, coat); return; }
+      const nz = graze ? 0.75 : lie ? 0.7 : horse ? 1.5 : 1.1, hz = graze ? 0.32 : lie ? 0.6 : horse ? 1.62 : 1.05;
+      S(0.88, 0, nz, 0.32, horse ? 0.14 : 0.2, horse ? 0.3 : 0.22, coat, 0);
+      S(graze ? 1.2 : 1.2, 0, hz, horse ? 0.3 : 0.27, horse ? 0.12 : 0.15, horse ? 0.12 : 0.16, horse ? coat.map(v => v * 0.92) : coat);
+      if (horse) S(0.78, 0, nz + 0.14, 0.32, 0.05, 0.1, dark);
+      if (kind === 'ox' || (kind === 'cow' && hash(id, 23, 1) < 0.7)) for (const sg of [-1, 1]) S(1.12, sg * 0.2, hz + 0.12, 0.05, 0.16, 0.04, HORN, sg * 0.5);
+      if (kind === 'donkey') for (const sg of [-1, 1]) S(1.05, sg * 0.08, hz + 0.25, 0.04, 0.03, 0.15, coat, 0);
+      legs(horse ? 0.62 : 0.66, horse ? 0.18 : 0.24, horse ? 0.95 : 0.78, horse ? 0.07 : 0.09, horse ? coat.map(v => v * 0.75) : coat.map(v => v * 0.85), 0.28);
+      S(-1.0, 0, horse ? 1.0 : 0.72, horse ? 0.12 : 0.05, horse ? 0.08 : 0.04, horse ? 0.32 : 0.3, horse ? dark : coat);
+      if (f.laden || kind === 'donkey' && hash(id, 24, 1) < 0.5) for (const sg of [-1, 1]) S(0, sg * 0.42, bz - 0.15, 0.3, 0.14, 0.22, WICKER);
+      return;
+    }
+    if (kind === 'dog' || kind === 'cat') {
+      const s = kind === 'cat' ? 0.55 : 1, S = (fw, a, z, rx, ry, rz, c, t) => E(fw * s, a * s, z * s, rx * s, ry * s, rz * s, c, t);
+      if (lie) { S(0, 0, 0.14, 0.32, 0.2, 0.14, coat); S(0.22, 0.14, 0.14, 0.12, 0.09, 0.08, coat); S(-0.1, -0.2, 0.08, 0.2, 0.05, 0.04, coat, -1); return; }
+      if (sit) { S(-0.1, 0, 0.32, 0.22, 0.14, 0.22, coat); S(0.12, 0, 0.6, 0.13, 0.085, 0.09, coat); S(0.02, 0, 0.22, 0.12, 0.1, 0.22, coat); S(-0.3, 0, 0.06, 0.2, 0.04, 0.04, coat); return; }
+      S(0, 0, 0.44, 0.36, 0.14, 0.15, coat); S(0.42, 0, 0.56, 0.14, 0.08, 0.09, coat); S(0.55, 0, 0.53, 0.06, 0.04, 0.04, dark);
+      if (!lod) { legs(0.24, 0.08, 0.36, 0.035, coat, 0.15); S(-0.45, 0, 0.55, 0.18, 0.03, 0.03, coat, 0); }
+      return;
+    }
+    if (kind === 'hen') {
+      const peck = graze && Math.sin(ph * T * 2.3) > 0.3;
+      E(0, 0, 0.22, 0.15, 0.1, 0.11, coat); E(-0.13, 0, 0.3, 0.07, 0.05, 0.08, coat.map(v => v * 0.8));
+      E(peck ? 0.19 : 0.13, 0, peck ? 0.08 : 0.33, 0.05, 0.04, 0.045, coat); E(peck ? 0.2 : 0.14, 0, peck ? 0.11 : 0.37, 0.03, 0.01, 0.02, C(190, 40, 30));
+      if (!lod) for (const sg of [-1, 1]) E(0, sg * 0.04, 0.06, 0.015, 0.015, 0.06, C(200, 160, 60));
+      return;
+    }
   }
 
   function create(canvas, town, { seed = 1 } = {}) {
@@ -1054,6 +1316,45 @@ const RomanTownView = (() => {
       return vao;
     });
     const BS = 14, instData = new Float32Array(Math.max(1, bodies.length) * BS);
+    // the living: drawn afresh each frame, into a buffer of their own
+    const movBuf = gl.createBuffer();
+    const movVAOs = spheres.map(sp => {
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, sp.vbo);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, movBuf);
+      for (const [loc, size, off] of [[1, 3, 0], [2, 3, 12], [3, 4, 24], [4, 2, 40], [5, 2, 48]]) {
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 56, off);
+        gl.vertexAttribDivisor(loc, 1);
+      }
+      return vao;
+    });
+    let movData = new Float32Array(BS * 8192), movN = 0, movZ = [0, 0];
+    // the figures within a rectangle (and a margin, for their shadows) as bodies
+    function movers(life, x0, y0, x1, y1, scale) {
+      movN = 0; movZ = [Infinity, -Infinity];
+      if (!life) return 0;
+      const lod = scale < 3.2;
+      for (const f of life.figures) {
+        if (f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
+        const ca = Math.cos(f.a || 0), sa = Math.sin(f.a || 0), fz = f.z || 0;
+        if (fz < movZ[0]) movZ[0] = fz;
+        if (fz > movZ[1]) movZ[1] = fz;
+        figureBodies(f, (fw, aside, up, rx, ry, rz, col, t = 0) => {
+          if (movN * BS + BS > movData.length) { const d = new Float32Array(movData.length * 2); d.set(movData); movData = d; }
+          const o = BS * movN++;
+          movData[o] = f.x + ca * fw - sa * aside; movData[o + 1] = f.y + sa * fw + ca * aside; movData[o + 2] = fz + up;
+          movData[o + 3] = rx; movData[o + 4] = ry; movData[o + 5] = rz;
+          movData[o + 6] = col[0]; movData[o + 7] = col[1]; movData[o + 8] = col[2]; movData[o + 9] = 0;
+          movData[o + 10] = (f.a || 0) + t; movData[o + 11] = 0; movData[o + 12] = fz; movData[o + 13] = 2;
+        }, lod);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, movBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, movData.subarray(0, BS * Math.max(movN, 1)), gl.DYNAMIC_DRAW);
+      return movN;
+    }
     // the bodies within a rectangle, into the instance buffer
     function bodiesIn(x0, y0, x1, y1) {
       let n = 0;
@@ -1104,6 +1405,18 @@ const RomanTownView = (() => {
     for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+    const MSH = Math.min(1024, SH), mShadowTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, mShadowTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT32F, MSH, MSH);
+    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+    const mShadowFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, mShadowFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, mShadowTex, 0);
+    gl.drawBuffers([gl.NONE]);
+    gl.readBuffer(gl.NONE);
     const shadowFBO = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFBO);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTex, 0);
@@ -1116,7 +1429,8 @@ const RomanTownView = (() => {
       return new Float32Array([2 / w, 0, 0, 0, 0, -2 / h, 0, 0, 0, 0, -2 / (zhi - zlo), 0, -2 * x0 / w - 1, 2 * y0 / h + 1, 1 + 2 * zlo / (zhi - zlo), 1]);
     }
     // the light's: looking along it at whatever it falls on in the rectangle
-    function lightView(L, x0, y0, w, h) {
+    // (or, tight, only as deep as from zl to zh over the rectangle: the living's)
+    function lightView(L, x0, y0, w, h, zl = zlo, zh = zhi, tight = false) {
       const f = [-L[0], -L[1], -L[2]];
       let r = [f[1], -f[0], 0];
       const rl = Math.hypot(r[0], r[1]);
@@ -1124,11 +1438,12 @@ const RomanTownView = (() => {
       const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
       const dot = (a, p) => a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
       let ax = Infinity, bx = -Infinity, ay = Infinity, by = -Infinity, az = Infinity, bz = -Infinity;
-      for (const x of [x0, x0 + w]) for (const y of [y0, y0 + h]) for (const z of [zlo, zhi]) {
+      for (const x of [x0, x0 + w]) for (const y of [y0, y0 + h]) for (const z of [zl, zh]) {
         const p = [x, y, z];
         ax = Math.min(ax, dot(r, p)); bx = Math.max(bx, dot(r, p)); ay = Math.min(ay, dot(u, p)); by = Math.max(by, dot(u, p));
+        if (tight) { const d = dot(f, p); az = Math.min(az, d); bz = Math.max(bz, d); }
       }
-      for (const x of [0, W]) for (const y of [0, H]) for (const z of [zlo, zhi]) { const d = dot(f, [x, y, z]); az = Math.min(az, d); bz = Math.max(bz, d); }
+      if (!tight) for (const x of [0, W]) for (const y of [0, H]) for (const z of [zlo, zhi]) { const d = dot(f, [x, y, z]); az = Math.min(az, d); bz = Math.max(bz, d); }
       az -= 10; bz += 10;
       const sx = 2 / (bx - ax), sy = 2 / (by - ay), sz = 2 / (bz - az);
       // clip = ((r·p − ax)·sx − 1, (u·p − ay)·sy − 1, (f·p − az)·sz − 1), by columns
@@ -1185,6 +1500,14 @@ const RomanTownView = (() => {
         gl.bindVertexArray(bodyVAOs[k]);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[k].n, nb);
       }
+      if (movN) {
+        gl.useProgram(P.body.p);
+        gl.uniformMatrix4fv(P.body.loc.uMVP, false, mvp);
+        gl.uniform1f(P.body.loc.uPx, rect[2] / g.w);
+        setWind(P.body);
+        gl.bindVertexArray(movVAOs[scale > 40 ? 2 : scale > 8 ? 1 : 0]);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[scale > 40 ? 2 : scale > 8 ? 1 : 0].n, movN);
+      }
       gl.bindVertexArray(null);
     }
     function drawShadows(lv, rect) {
@@ -1213,6 +1536,28 @@ const RomanTownView = (() => {
         gl.bindVertexArray(bodyVAOs[0]);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[0].n, nb);
       }
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+      gl.bindVertexArray(null);
+    }
+    // the living's shadows, each frame, as the light falls
+    let mlv = null;
+    function drawMoverShadows(L, rect) {
+      // the light's view of them alone: the rectangle only as deep as they stand, so it is fine
+      const m = 30, lv = mlv = lightView(L, rect[0] - m, rect[1] - m, rect[2] + 2 * m, rect[3] + 2 * m, movZ[0] - 1.5, movZ[1] + 4, true);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, mShadowFBO);
+      gl.viewport(0, 0, MSH, MSH);
+      gl.clearDepth(1);
+      gl.depthMask(true);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LESS);
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(1.5, 3);
+      gl.useProgram(P.bodyDepth.p);
+      gl.uniformMatrix4fv(P.bodyDepth.loc.uMVP, false, lv.m);
+      setWind(P.bodyDepth);
+      gl.bindVertexArray(movVAOs[1]);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, spheres[1].n, movN);
       gl.disable(gl.POLYGON_OFFSET_FILL);
       gl.bindVertexArray(null);
     }
@@ -1255,15 +1600,19 @@ const RomanTownView = (() => {
 
     // the shadows drawn again only when the view or the light has moved
     let shadowKey = '', lv = null;
-    function draw(rect, sky, t = 0) {
+    function draw(rect, sky, t = 0, life = null) {
       time = t % 3600;
       const lt = lightOf(sky), scale = canvas.width / rect[2];
+      // the living about, a little beyond the edges too, for their shadows
+      const mm = 24;
+      movers(life, rect[0] - mm, rect[1] - mm, rect[0] + rect[2] + mm, rect[1] + rect[3] + mm, scale);
       // roofs off when close, as a plan is drawn (a little either way, so it
       // does not flicker at the edge)
       if (S === ROOFED && rect[2] < INSIDE * 0.95) S = CUTAWAY;
       else if (S === CUTAWAY && rect[2] > INSIDE * 1.05) S = ROOFED;
       const key = rect.join() + lt.L.join() + (S === CUTAWAY);
       if (key !== shadowKey) { lv = lightView(lt.L, ...rect); drawShadows(lv, rect); shadowKey = key; }
+      if (movN) drawMoverShadows(lt.L, rect);
       drawScene(G, topDown(...rect), rect, scale);
       // the light
       gl.disable(gl.DEPTH_TEST);
@@ -1271,7 +1620,7 @@ const RomanTownView = (() => {
       gl.viewport(0, 0, G.w, G.h);
       gl.useProgram(P.light.p);
       const L = P.light.loc;
-      [[G.alb, 'uAlb'], [G.nrm, 'uNrm'], [G.hgt, 'uHgt'], [aoNear, 'uNear'], [aoFar, 'uFar'], [shadowTex, 'uShadow']].forEach(([t, name], i) => {
+      [[G.alb, 'uAlb'], [G.nrm, 'uNrm'], [G.hgt, 'uHgt'], [aoNear, 'uNear'], [aoFar, 'uFar'], [shadowTex, 'uShadow'], [mShadowTex, 'uShadowM']].forEach(([t, name], i) => {
         gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(L[name], i);
       });
       gl.uniform4f(L.uView, ...rect);
@@ -1281,11 +1630,21 @@ const RomanTownView = (() => {
       gl.uniform1f(L.uTexel, lv.texel);
       gl.uniform1f(L.uShTexel, 1 / SH);
       gl.uniform1f(L.uBias, (0.04 + lv.texel * 0.5) / lv.depth);
+      gl.uniform1i(L.uMov, movN ? 1 : 0);
+      if (movN) {
+        gl.uniformMatrix4fv(L.uLightM, false, mlv.m);
+        gl.uniform1f(L.uBiasM, (0.02 + mlv.texel * SH / MSH * 0.6) / mlv.depth);
+      }
       gl.uniform3f(L.uL, ...lt.L); gl.uniform3f(L.uSun, ...lt.col); gl.uniform3f(L.uSky, ...lt.sky);
       gl.uniform1f(L.uGrey, lt.grey); gl.uniform1f(L.uZbase, zbase);
       setWind(P.light);
       // the lamps near enough to light it
       let nl = 0;
+      // the torches carried first
+      if (life && lt.lamps > 0.01) for (const l of life.lights) {
+        if (nl >= 128 || l.x < rect[0] - 16 || l.x > rect[0] + rect[2] + 16 || l.y < rect[1] - 16 || l.y > rect[1] + rect[3] + 16) continue;
+        lampData.set([l.x, l.y, l.z, l.power * lt.lamps], 4 * nl++);
+      }
       if (lt.lamps > 0.01) for (const l of town.lamps || []) {
         if (nl >= 128 || l.x < rect[0] - 16 || l.x > rect[0] + rect[2] + 16 || l.y < rect[1] - 16 || l.y > rect[1] + rect[3] + 16) continue;
         lampData.set([l.x, l.y, l.z, l.power * lt.lamps], 4 * nl++);

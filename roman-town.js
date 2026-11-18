@@ -48,6 +48,12 @@
 //   animals              [{ x, y, z0, angle, kind }] grazing, kind: sheep, goat, cow, horse
 //   rocks                [{ x, y, z0, r, h, angle }] boulders, r across, h high, sunk a little
 //   lamps                [{ x, y, z, power }] where a lamp or a fire burns at night, z its height
+//   places               [{ kind, poly, x, y, angle }] the town's public places, their ground: forum,
+//                        market, baths, theatre, nymphaeum, temple
+//   (a box with rooms says too where it is gone into from outside, entrances [{ s, t, nx, ny, w,
+//   kind }] from its corner, nx, ny pointing out, kind front, back or open; its interior, every
+//   doorway in its walls, gaps [[s, t, w, ux, uy]], ux, uy along the wall; a pasture its gate,
+//   gate [x, y], where the gap is left in its wall)
 const RomanTown = (() => {
   const TAU = Math.PI * 2;
   // no beasts in the pastures for now (true puts the flocks and herds back)
@@ -382,7 +388,7 @@ const RomanTown = (() => {
   }
 
   function town(rng, { W, H }) {
-    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], rocks: [], lamps: [], gates: [] };
+    const out = { W, H, river: null, grounds: [], fields: [], roads: [], buildings: [], trees: [], animals: [], rocks: [], lamps: [], gates: [], places: [] };
 
     // ---- the site, as big as the world allows, turned by the augur ----
     const th = range(rng, -0.35, 0.35), ar = range(rng, 1.05, 1.45);
@@ -577,6 +583,11 @@ const RomanTown = (() => {
       }
       forum(group(members, 'forum'));
     }
+    // a public place: its ground, in the world
+    function place(kind, r, angle = th) {
+      const [x, y] = P((r[0] + r[2]) / 2, (r[1] + r[3]) / 2);
+      out.places.push({ kind, poly: rectPoly(r), x, y, angle });
+    }
     function group0(members) { return [Math.min(...members.map(b => b.r[0])), Math.min(...members.map(b => b.r[1])), Math.max(...members.map(b => b.r[2])), Math.max(...members.map(b => b.r[3]))]; }
 
     // the theatre, two blocks away from the middle
@@ -628,6 +639,7 @@ const RomanTown = (() => {
       const F = lf(g.r, along, rng() < 0.5, false), L = F.S, S = F.D;
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       ground(g.r, 'paving', true);
+      place('forum', g.r, F.angle('s'));
       const pd = 5.5, shops = S > 46 ? 5 : 0;
       const bD = clamp(0.22 * L, 14, 26), a = bD * 0.26;
       // the basilica across one end: a high nave between lower aisles
@@ -668,6 +680,7 @@ const RomanTown = (() => {
       const R = Math.min(L / 2 - 3, S - 17, 44);
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       ground(g.r, 'garden', true);
+      place('theatre', g.r, F.angle('t'));
       // plane trees in the garden about the seats
       for (let k = 0; k < 40; k++) {
         const s2 = range(rng, 3, L - 3), t2 = range(rng, 11, S - 3);
@@ -687,6 +700,7 @@ const RomanTown = (() => {
       const F = lf(g.r, along, rng() < 0.5, rng() < 0.5), L = F.S, S = F.D;
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       ground(g.r, 'paving', true);
+      place('baths', g.r, F.angle('s'));
       const Lb = clamp(0.52 * L, 16, 42), n = S > 34 ? 3 : 2;
       for (let k = 0; k < n; k++) {
         const t1 = k * S / n + 0.5, t2 = (k + 1) * S / n - 0.5;
@@ -708,6 +722,7 @@ const RomanTown = (() => {
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       const [x, y] = dims(g.r), k = Math.min(9, Math.min(x, y) * 0.28);
       ground(g.r, 'paving', true);
+      place('market', g.r);
       const ways = x >= y ? ['-u', '+u'] : ['-v', '+v'];
       box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k], front: ways[0], back: ways[1] }, true);
       const [mx, my] = P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2);
@@ -730,6 +745,7 @@ const RomanTown = (() => {
       const wl = clamp((S - 2 * R) / 2 - 4, 1.5, 5), Wb = 2 * R + 1.4 * wl;
       const W2 = (s, t) => P(...F.pt(s, t));
       ground(F.rect(0, 0, S, Dn), 'paving', true);
+      place('nymphaeum', F.rect(0, 0, S, Dn), F.angle('t'));
       // the apse: a half ring of wall, in pieces
       const Rw = R + 0.6, n = Math.ceil(Math.PI * Rw / 2);
       for (let k = 0; k < n; k++) {
@@ -788,6 +804,7 @@ const RomanTown = (() => {
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       const k = 5;
       ground(g.r, 'paving', true);
+      place('temple', g.r, F.angle('s'));
       box(F.rect(0.5, 0.5, L - 0.5, S - 0.5), { use: 'portico', h: 5.5, z0, roof: 'court', hole: F.rect(k, k, L - k, S - k), front: F.low('+s') }, true);
       if (rng() < 0.25) {
         const [mx, my] = P(...F.pt(L / 2, S / 2));
@@ -1216,11 +1233,11 @@ const RomanTown = (() => {
           q++;
         }
       }
-      if (crop === 'pasture') pasture(pr);
+      if (crop === 'pasture') pasture(pr, out.fields[out.fields.length - 1]);
     }
     // a pasture: a dry-stone wall about it, a gap for a gate, a shade tree, a
     // trough's well maybe, and a flock or a herd
-    function pasture(pr) {
+    function pasture(pr, field) {
       const [u1, v1, u2, v2] = pr, edges = [[u1, v1, u2, v1], [u2, v1, u2, v2], [u2, v2, u1, v2], [u1, v2, u1, v1]];
       // its gate on a side open to the country or a road, not on the next field, if it can be
       const outside = e => {
@@ -1235,6 +1252,7 @@ const RomanTown = (() => {
         const mu = (u1 + u2) / 2, mv = (v1 + v2) / 2;
         const n = gateEdge % 2 === 0 ? [0, Math.sign(gv - mv)] : [Math.sign(gu - mu), 0];
         reach.push({ at: [2.5, 3.5, 4.5].map(o => P(gu + n[0] * o, gv + n[1] * o)), end: P(gu, gv), kind: 'gate' });
+        field.gate = P(gu, gv);
       }
       edges.forEach(([a, b, c, d], e) => {
         const L = Math.hypot(c - a, d - b), n = Math.max(1, Math.ceil(L / 6));
@@ -1596,6 +1614,13 @@ const RomanTown = (() => {
           grid.get(k).push(o);
         }
     }
+    for (const [b] of walled) b.entrances = [];
+    // a way in, from its corner: where, which way out, how wide
+    const NRM = { '-d': [0, -1], '+d': [0, 1], '-w': [-1, 0], '+w': [1, 0] };
+    const entrance = (b, side, p, w, kind) => {
+      const [s, t] = sidePt(b, side, p, 0);
+      b.entrances.push({ s, t, nx: NRM[side][0], ny: NRM[side][1], w, kind });
+    };
     const blocked = (self, x, y) => (grid.get(key(Math.floor(x / cell), Math.floor(y / cell))) || []).some(o => o !== self && onBuilding(o, x, y, 0));
     // along each side, where it is clear just outside
     for (const [b, P] of walled) for (const side of SIDES) {
@@ -1658,15 +1683,16 @@ const RomanTown = (() => {
         const st = clearSegs(b, P, side, 0.35);
         if (b.use === 'shop') {
           const fronts = st.filter(([lo, hi]) => hi - lo > 1.8);
-          for (const [lo, hi] of fronts) P.open[side].push([(lo + hi) / 2, (hi - lo) * 0.85, 0]);
+          for (const [lo, hi] of fronts) { P.open[side].push([(lo + hi) / 2, (hi - lo) * 0.85, 0]); entrance(b, side, (lo + hi) / 2, (hi - lo) * 0.85, 'front'); }
           if (fronts.length) return side;
           continue;
         }
         const w = b.use === 'basilica' ? Math.max(DOOR + 0.3, sideLen(b, side) * 0.3) : DOOR + 0.3;
         const fit = st.filter(([lo, hi]) => hi - lo >= DOOR + 0.3);
         if (!fit.length) continue;
-        const [lo, hi] = fit[rng() * fit.length | 0], ww = Math.min(w, hi - lo);
-        P.open[side].push([within(rng, lo, hi, ww), ww, b.use === 'basilica' ? 0 : 2]);
+        const [lo, hi] = fit[rng() * fit.length | 0], ww = Math.min(w, hi - lo), p = within(rng, lo, hi, ww);
+        P.open[side].push([p, ww, b.use === 'basilica' ? 0 : 2]);
+        entrance(b, side, p, ww, 'front');
         return side;
       }
       return null;
@@ -1682,12 +1708,14 @@ const RomanTown = (() => {
       // and out the back
       if (b.back && b.back !== side && b.use !== 'shop') {
         const fit = clearSegs(b, P, b.back, 0.35).filter(([lo, hi]) => hi - lo >= DOOR);
-        if (fit.length) { const [lo, hi] = fit[rng() * fit.length | 0]; P.open[b.back].push([within(rng, lo, hi, DOOR), DOOR, 1]); }
+        if (fit.length) { const [lo, hi] = fit[rng() * fit.length | 0], p = within(rng, lo, hi, DOOR); P.open[b.back].push([p, DOOR, 1]); entrance(b, b.back, p, DOOR, 'back'); }
       }
     }
     // a part its house's doors don't reach: a door of its own
     for (const b of order) if (b.part && !inside.has(find(b)) && enter(b, plans.get(b))) inside.add(find(b));
 
+    // a side left open: gone into all along it
+    for (const [b] of walled) if (b.open) entrance(b, b.open, sideLen(b, b.open) / 2, sideLen(b, b.open) - 1, 'open');
     for (const [b, P] of plans) b.interior = finish(rng, b, P, lamps);
   }
 
@@ -1712,7 +1740,7 @@ const RomanTown = (() => {
         const [g1, g2] = [at(t - w / 2), at(t + w / 2)];
         if (what === 'window') windows.push([...g1, ...g2]);
         else {
-          gaps.push([(g1[0] + g2[0]) / 2, (g1[1] + g2[1]) / 2, w]);
+          gaps.push([(g1[0] + g2[0]) / 2, (g1[1] + g2[1]) / 2, w, ux, uy]);
           // its leaf, hinged at one jamb, standing ajar or shut
           if (leaf) {
             const flip = rng() < 0.5, hinge = flip ? g2 : g1, dir = Math.atan2(uy, ux) + (flip ? Math.PI : 0);
@@ -1828,7 +1856,7 @@ const RomanTown = (() => {
         colRow(s1, t1, s2, t1, step, r); colRow(s2, t1, s2, t2, step, r); colRow(s2, t2, s1, t2, step, r); colRow(s1, t2, s1, t1, step, r);
         if (b.use === 'market') for (let k = 0; k < 6; k++) furnish([0, 0, W, t1]).against('stall', range(rng, 1.4, 2.2), 0.8);
       }
-      return { floors, walls, columns, doors, windows, furniture };
+      return { floors, walls, columns, doors, windows, furniture, gaps };
     }
     if (b.use === 'temple') {
       // columns all round, the cella within, its door at the front, the god at the back
@@ -1842,7 +1870,7 @@ const RomanTown = (() => {
       for (const side of SIDES) wall(...lines[side], side === front ? [[L / 2, 2, 1]] : []);
       const back = { '+w': [c[0] + 1.4, (c[1] + c[3]) / 2], '-w': [c[2] - 1.4, (c[1] + c[3]) / 2], '+d': [(c[0] + c[2]) / 2, c[1] + 1.4], '-d': [(c[0] + c[2]) / 2, c[3] - 1.4] }[front];
       furniture.push({ k: 'plinth', a: back[0], c: back[1], w: 1.6, d: 1.6 }, { k: 'statue', a: back[0], c: back[1], r: 0.45 });
-      return { floors, walls, columns, doors, windows, furniture };
+      return { floors, walls, columns, doors, windows, furniture, gaps };
     }
     if (b.use === 'basilica') {
       floors.push([0, 0, W, D, 'marble']);
@@ -1852,12 +1880,12 @@ const RomanTown = (() => {
         if (W >= D) { colRow(0.6, 0.6, W - 0.6, 0.6, 3, 0.4); colRow(0.6, D - 0.6, W - 0.6, D - 0.6, 3, 0.4); furniture.push({ k: 'tribunal', a: W - 2.2, c: D / 2, w: 3.4, d: D * 0.5 }); }
         else { colRow(0.6, 0.6, 0.6, D - 0.6, 3, 0.4); colRow(W - 0.6, 0.6, W - 0.6, D - 0.6, 3, 0.4); furniture.push({ k: 'tribunal', a: W / 2, c: D - 2.2, w: W * 0.5, d: 3.4 }); }
       } else outline();
-      return { floors, walls, columns, doors, windows, furniture };
+      return { floors, walls, columns, doors, windows, furniture, gaps };
     }
     if (b.use === 'portico') {
       floors.push([0, 0, W, D, 'paving']);
       if (W >= D) colRow(0.5, D / 2, W - 0.5, D / 2, 2.8, 0.32); else colRow(W / 2, 0.5, W / 2, D - 0.5, 2.8, 0.32);
-      return { floors, walls, columns, doors, windows, furniture };
+      return { floors, walls, columns, doors, windows, furniture, gaps };
     }
     // rooms: a door through the walls between, enough to reach them all,
     // through the widest stretches first, and here and there one more
@@ -1913,8 +1941,8 @@ const RomanTown = (() => {
         case 'scaena': if (rng() < 0.5) r.against('chest', 1.2, 0.7); break;
       }
     });
-    return { floors, walls, columns, doors, windows, furniture };
+    return { floors, walls, columns, doors, windows, furniture, gaps };
   }
 
-  return { town, heightAt };
+  return { town, heightAt, onBuilding };
 })();

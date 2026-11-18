@@ -15,7 +15,7 @@
 <title>Roman Town</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river.">
+<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river; and its people and their beasts about whatever the hour of the Roman day has them about, on and on.">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1915; }
   canvas {
@@ -39,6 +39,7 @@
 <script src="roman-town.js"></script>
 <script src="roman-town-view.js"></script>
 <script src="roman-town-sky.js"></script>
+<script src="roman-town-life.js"></script>
 <script>
 (() => {
   const PD = PollockDreams;
@@ -63,8 +64,10 @@
 
   // ---- the hour: north up, the sun and the moon where they stand now by the
   // visitor's clock (or at ?time=2026-06-21T19:30), the light following them ----
+  // (a time given runs on from there as the page does)
   const at = new URLSearchParams(location.search).get('time');
-  const clock = () => at ? new Date(at) : new Date();
+  let clockT = 0;
+  const clock = () => at ? new Date(new Date(at).getTime() + clockT * 1000) : new Date();
   let sky = RomanTownSky.local(clock());
   setInterval(() => {
     const next = RomanTownSky.local(clock()), deg = Math.PI / 180;
@@ -73,8 +76,8 @@
     if (moved) sky = next;
   }, 10000);
 
-  // ---- the view: the whole world at zoom 1, up to 32 times closer ----
-  const ZMAX = 32, sFit = DW / W; // device px a metre at zoom 1
+  // ---- the view: the whole world at zoom 1, up to 64 times closer (a person a hand's breadth) ----
+  const ZMAX = 64, sFit = DW / W; // device px a metre at zoom 1
   let zoom = 1, cx = W / 2, cy = H / 2;
   const scale = () => sFit * zoom;
   // the canvas, centred, may be bigger than the window: what is seen of it
@@ -104,17 +107,21 @@
   let view = null, dirty = true, started = false;
   try { view = RomanTownView.create(canvas, town, opts); }
   catch (e) { hint.textContent = e.message; }
+  // ---- its people and beasts, about whatever the hour has them about ----
+  const life = RomanTownLife.create(town, { seed, date: clock() });
+  window.life = life;
   function changed() { dirty = true; }
   // drawn again and again, for the wind and the flames, up to 30 times a
   // second; still while paused (P, or ?still)
-  let last = 0, paused = new URLSearchParams(location.search).has('still'), clockT = 0, before = performance.now();
+  let last = 0, paused = new URLSearchParams(location.search).has('still'), before = performance.now();
   function loop(now) {
-    if (!paused) clockT += (now - before) / 1000;
+    const dt = Math.max(0, (now - before) / 1000);
+    if (!paused) { clockT += dt; life.step(dt, clock()); }
     before = now;
     if (view && (dirty || (!paused && now - last > 32))) {
       dirty = false;
       last = now;
-      view.draw(viewRect(), sky, clockT);
+      view.draw(viewRect(), sky, clockT, life);
       if (!started) {
         started = true;
         const t = clock(), hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
