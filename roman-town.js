@@ -28,7 +28,9 @@
 //                        its eaves h above z0; roof: flat, hip, gable (ridge along axis 'w' or 'd'),
 //                        shed (its low edge on side low: '+w', '-w', '+d', '-d'), court (open over
 //                        hole [s1, t1, s2, t2], from its corner, every side sloping down to it); pitch
-//                        the rise per metre; and inside, if it has rooms:
+//                        the rise per metre; front, back: the sides its doors are on if they can be,
+//                        open: a side without a wall, part: the house it is one part of (a number);
+//                        and inside, if it has rooms:
 //                        interior { floors: [[s1, t1, s2, t2, kind]], walls: [[s1, t1, s2, t2]],
 //                        columns: [[s, t, r]] } all from its corner (s along w, t along d); floors
 //                        mosaic, signinum, earth, marble, paving, pool; walls as lines, doorways
@@ -424,6 +426,13 @@ const RomanTown = (() => {
       if (p.axis) b.axis = p.axis === 'u' ? 'w' : 'd';
       if (p.low) b.low = p.low[0] + (p.low[1] === 'u' ? 'w' : 'd');
       if (p.hole) b.hole = [p.hole[0] - u1, p.hole[1] - v1, p.hole[2] - u1, p.hole[3] - v1];
+      // the side its door is on, if it can be, and another out the back; a
+      // side left open; the house it is a part of
+      const side = q => q[0] + (q[1] === 'u' ? 'w' : 'd');
+      if (p.front) b.front = side(p.front);
+      if (p.back) b.back = side(p.back);
+      if (p.open) b.open = side(p.open);
+      if (p.part) b.part = p.part;
       B.push(b);
       return b;
     }
@@ -462,7 +471,7 @@ const RomanTown = (() => {
         S, D, pt: map,
         rect(s1, t1, s2, t2) { const a = map(s1, t1), b = map(s2, t2); return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]; },
         axis,
-        // the side a roof is low on, '+t' and so on, in the plan
+        // the side a roof is low on, '+t' and so on, in the plan (or a door is on)
         low(dir) {
           const flip = dir[1] === 's' ? flipS : flipT, sign = (dir[0] === '+') !== flip ? '+' : '-';
           return sign + axis(dir[1]);
@@ -542,6 +551,7 @@ const RomanTown = (() => {
         { ground([r[0] + 0.25, r[1] + 0.25, r[2] - 0.25, r[3] - 0.25], 'pool'); if (rng() < 0.4) lamp(u, v, 2.6, 0.8); }
     }
     const groups = [];
+    let parts = 0;
     function group(members, kind) {
       const r = [Math.min(...members.map(b => b.r[0])), Math.min(...members.map(b => b.r[1])), Math.max(...members.map(b => b.r[2])), Math.max(...members.map(b => b.r[3]))];
       const g = { members, r, poly: true, kind };
@@ -616,20 +626,21 @@ const RomanTown = (() => {
       const bD = clamp(0.22 * L, 14, 26), a = bD * 0.26;
       // the basilica across one end: a high nave between lower aisles
       box(F.rect(L - bD + a, 0, L - a, S), { use: 'basilica', h: 13, z0, roof: 'gable', axis: F.axis('t') });
-      box(F.rect(L - bD, 0, L - bD + a, S), { use: 'basilica', h: 8, z0, roof: 'shed', low: F.low('-s') });
-      box(F.rect(L - a, 0, L, S), { use: 'basilica', h: 8, z0, roof: 'shed', low: F.low('+s') });
+      // (open to the nave, their doors on the square and on the street behind)
+      box(F.rect(L - bD, 0, L - bD + a, S), { use: 'basilica', h: 8, z0, roof: 'shed', low: F.low('-s'), front: F.low('-s'), open: F.low('+s') });
+      box(F.rect(L - a, 0, L, S), { use: 'basilica', h: 8, z0, roof: 'shed', low: F.low('+s'), front: F.low('+s'), open: F.low('-s') });
       // shops behind porticoes along both sides
       const e = L - bD - 2;
       for (const flip of [false, true]) {
         const t = (t1, t2) => flip ? [S - t2, S - t1] : [t1, t2];
-        if (shops) { const [a1, a2] = t(0, shops); box(F.rect(0, a1, e, a2), { use: 'shop', h: 6.5, z0, roof: 'gable', axis: F.axis('s') }); }
+        if (shops) { const [a1, a2] = t(0, shops); box(F.rect(0, a1, e, a2), { use: 'shop', h: 6.5, z0, roof: 'gable', axis: F.axis('s'), front: F.low(flip ? '-t' : '+t') }); }
         const [p1, p2] = t(shops, shops + pd);
         box(F.rect(0, p1, e, p2), { use: 'portico', h: 6, z0, roof: 'shed', low: F.low(flip ? '-t' : '+t') });
       }
       // the Capitolium at the other end, on its podium, facing down the square
       const tw = clamp(0.42 * (S - 2 * (shops + pd)), 10, 21), tl = Math.min(tw * 1.75, 0.38 * L);
       const tc = S / 2;
-      box(F.rect(2, tc - tw / 2, 2 + tl, tc + tw / 2), { use: 'temple', h: 13, z0, roof: 'gable', axis: F.axis('s'), pitch: 0.36 });
+      box(F.rect(2, tc - tw / 2, 2 + tl, tc + tw / 2), { use: 'temple', h: 13, z0, roof: 'gable', axis: F.axis('s'), pitch: 0.36, front: F.low('+s') });
       box(F.rect(2 + tl, tc - tw / 2 + 1, 2 + tl + 4, tc + tw / 2 - 1), { use: 'steps', h: 1.8, z0, mat: 'marble' });
       box(F.rect(2 + tl + 7, tc - 1.5, 2 + tl + 9, tc + 1.5), { use: 'altar', h: 1.3, z0, mat: 'marble' });
       lamp(...F.pt(2 + tl + 8, tc), 1.8, 1.4);
@@ -658,7 +669,7 @@ const RomanTown = (() => {
         const [u, v] = F.pt(s2, t2);
         tree(u, v, rng() < 0.75 ? 'plane' : 'cypress', range(rng, 2.5, 4.5), range(rng, 9, 14), true);
       }
-      box(F.rect(L / 2 - R - 3, 1, L / 2 + R + 3, 8), { use: 'scaena', h: 15, z0, roof: 'gable', axis: F.axis('s') });
+      box(F.rect(L / 2 - R - 3, 1, L / 2 + R + 3, 8), { use: 'scaena', h: 15, z0, roof: 'gable', axis: F.axis('s'), front: F.low('+t'), back: F.low('-t') });
       box(F.rect(L / 2 - R * 0.8, 8, L / 2 + R * 0.8, 13.5), { use: 'stage', h: 1.5, z0, mat: 'timber' });
       const [cx2, cy2] = P(...F.pt(L / 2, 13.5));
       B.push({ shape: 'cavea', use: 'theatre', mat: 'stone', x: cx2, y: cy2, angle: F.angle('t'), r0: R * 0.27, r1: R, z0, h: R * 0.42 });
@@ -673,14 +684,14 @@ const RomanTown = (() => {
       const Lb = clamp(0.52 * L, 16, 42), n = S > 34 ? 3 : 2;
       for (let k = 0; k < n; k++) {
         const t1 = k * S / n + 0.5, t2 = (k + 1) * S / n - 0.5;
-        const b = box(F.rect(1, t1, Lb, t2), { use: 'baths', h: range(rng, 9, 12), z0, roof: k === n - 1 ? 'hip' : 'gable', axis: F.axis('s') }, true);
+        const b = box(F.rect(1, t1, Lb, t2), { use: 'baths', h: range(rng, 9, 12), z0, roof: k === n - 1 ? 'hip' : 'gable', axis: F.axis('s'), front: F.low('+s'), back: F.low('-s') }, true);
         if (b && k === 0 && rng() < 0.6) {
           const r = Math.min(t2 - t1, Lb) * 0.3, [ux, uy] = P(...F.pt(Lb / 2, (t1 + t2) / 2));
           B.push({ shape: 'round', use: 'baths', mat: 'tile', x: ux, y: uy, r, z0: z0 + b.h - 1, h: 0, roof: 'dome', pitch: 0.7 });
         }
       }
       const c = F.rect(Lb + 1, 1, L - 1, S - 1);
-      box(c, { use: 'palaestra', h: 5.5, z0, roof: 'court', hole: F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5) }, true);
+      box(c, { use: 'palaestra', h: 5.5, z0, roof: 'court', hole: F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5), front: F.low('-s'), back: F.low('+s') }, true);
       ground(F.rect(Lb + 5.5, 5.5, L - 5.5, S - 5.5), 'sand', true);
       const pl = (L - Lb - 11) * 0.5, pw = (S - 11) * 0.45, ps = (Lb + L) / 2, pt = S / 2;
       if (pl > 4 && pw > 3) ground(F.rect(ps - pl / 2, pt - pw / 2, ps + pl / 2, pt + pw / 2), 'pool', true);
@@ -691,7 +702,8 @@ const RomanTown = (() => {
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       const [x, y] = dims(g.r), k = Math.min(9, Math.min(x, y) * 0.28);
       ground(g.r, 'paving', true);
-      box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k] }, true);
+      const ways = x >= y ? ['-u', '+u'] : ['-v', '+v'];
+      box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k], front: ways[0], back: ways[1] }, true);
       const [mx, my] = P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2);
       B.push({ shape: 'round', use: 'tholos', mat: 'tile', x: mx, y: my, r: Math.min(5.5, Math.min(x, y) * 0.14), z0, h: 5, roof: 'cone', pitch: 0.55 });
     }
@@ -703,13 +715,13 @@ const RomanTown = (() => {
       const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
       const k = 5;
       ground(g.r, 'paving', true);
-      box(F.rect(0.5, 0.5, L - 0.5, S - 0.5), { use: 'portico', h: 5.5, z0, roof: 'court', hole: F.rect(k, k, L - k, S - k) }, true);
+      box(F.rect(0.5, 0.5, L - 0.5, S - 0.5), { use: 'portico', h: 5.5, z0, roof: 'court', hole: F.rect(k, k, L - k, S - k), front: F.low('+s') }, true);
       if (rng() < 0.25) {
         const [mx, my] = P(...F.pt(L / 2, S / 2));
         B.push({ shape: 'round', use: 'temple', mat: 'tile', x: mx, y: my, r: Math.min(8, S * 0.2), z0, h: 9, roof: 'cone', pitch: 0.5 });
       } else {
         const tw = clamp(0.36 * S, 8, 16), tl = Math.min(tw * 1.7, L - 2 * k - 12), s0 = (L - tl) / 2 - 2;
-        box(F.rect(s0, S / 2 - tw / 2, s0 + tl, S / 2 + tw / 2), { use: 'temple', h: 11, z0, roof: 'gable', axis: F.axis('s'), pitch: 0.36 });
+        box(F.rect(s0, S / 2 - tw / 2, s0 + tl, S / 2 + tw / 2), { use: 'temple', h: 11, z0, roof: 'gable', axis: F.axis('s'), pitch: 0.36, front: F.low('+s') });
         box(F.rect(s0 + tl, S / 2 - tw / 2 + 1, s0 + tl + 3, S / 2 + tw / 2 - 1), { use: 'steps', h: 1.6, z0, mat: 'marble' });
         box(F.rect(s0 + tl + 5, S / 2 - 1.2, s0 + tl + 6.6, S / 2 + 1.2), { use: 'altar', h: 1.2, z0, mat: 'marble' });
         lamp(...F.pt(s0 + tl + 5.8, S / 2), 1.7, 1.2);
@@ -773,7 +785,7 @@ const RomanTown = (() => {
         // an apartment block, four or five floors, a light well if it is big
         const D = Math.min(d, range(rng, 15, 22)), hole = w >= 18 && D >= 17;
         const h = range(rng, 11, 16);
-        return box(R(0, 0, w, D), hole ? { use: 'insula', h, z0, roof: 'court', hole: R(w / 2 - 2.5, D / 2 - 2.5, w / 2 + 2.5, D / 2 + 2.5) } : { use: 'insula', h, z0, roof: 'hip' }, within);
+        return box(R(0, 0, w, D), hole ? { use: 'insula', h, z0, roof: 'court', hole: R(w / 2 - 2.5, D / 2 - 2.5, w / 2 + 2.5, D / 2 + 2.5), front: F.low('-t') } : { use: 'insula', h, z0, roof: 'hip', front: F.low('-t') }, within);
       }
       if (r > 0.9 - 0.12 * (1 - cen)) {
         // a shop on the street, its garden behind it
@@ -783,14 +795,16 @@ const RomanTown = (() => {
           const [u, v] = F.pt(s0 + range(rng, 2, w - 2), range(rng, sd + 2, d - 2));
           tree(u, v, pick(rng, { fruit: 3, olive: 1, cypress: 1, shrub: 1 }), range(rng, 1.5, 3), range(rng, 4, 8), within);
         }
-        return box(R(0.5, 0, w - 0.5, sd), { use: 'shop', h: range(rng, 4, 5.5), z0, roof: 'gable', axis: sA }, within);
+        return box(R(0.5, 0, w - 0.5, sd), { use: 'shop', h: range(rng, 4, 5.5), z0, roof: 'gable', axis: sA, front: F.low('-t') }, within);
       }
       // a house: front rooms on the street, maybe more behind a yard
-      const D = Math.min(d, range(rng, 8, 14)), h = range(rng, 5, 8.5);
-      box(R(0, 0, w, D), { use: 'house', h, z0, roof: rng() < 0.5 ? 'hip' : 'gable', axis: sA }, within);
-      if (d - D > 6) {
-        if (rng() < 0.45) box(R(0, D + 3, Math.min(w, range(rng, 5, 9)), d - 0.5), { use: 'house', h: h - 1.5, z0, roof: 'shed', low: F.low('+s') }, within);
-        else if (rng() < 0.6) {
+      // (a door out the back to what is behind it, a house across a yard or a garden)
+      const D = Math.min(d, range(rng, 8, 14)), h = range(rng, 5, 8.5), roof = rng() < 0.5 ? 'hip' : 'gable';
+      const behind = d - D > 6 ? (rng() < 0.45 ? 'house' : rng() < 0.6 ? 'garden' : null) : null;
+      box(R(0, 0, w, D), { use: 'house', h, z0, roof, axis: sA, front: F.low('-t'), back: behind ? F.low('+t') : null }, within);
+      if (behind) {
+        if (behind === 'house') box(R(0, D + 3, Math.min(w, range(rng, 5, 9)), d - 0.5), { use: 'house', h: h - 1.5, z0, roof: 'shed', low: F.low('+s'), front: F.low('-t') }, within);
+        else {
           ground(R(0, D, w, d), 'garden', within);
           if (rng() < 0.4) well(...F.pt(s0 + range(rng, 1.2, w - 1.2), D + 1.3), within);
           const [u, v] = F.pt(s0 + w / 2, (D + d) / 2);
@@ -803,27 +817,27 @@ const RomanTown = (() => {
     // about it, and at the back a garden in a colonnade
     function domus(F, s0, w, d, z0, within) {
       const R = (a, t1, b, t2) => F.rect(s0 + a, t1, s0 + b, t2);
-      const h = range(rng, 5.5, 7.5), sA = F.axis('s'), tA = F.axis('t');
+      const h = range(rng, 5.5, 7.5), sA = F.axis('s'), tA = F.axis('t'), part = ++parts;
       const f = clamp(d * 0.18, 5, 7.5);
-      box(R(0, 0, w, f), { use: 'domus', h, z0, roof: 'gable', axis: sA }, within);
+      box(R(0, 0, w, f), { use: 'domus', h, z0, roof: 'gable', axis: sA, front: F.low('-t'), part }, within);
       const A = clamp(Math.min(w - 2, (d - f) * 0.45), 8, 14), sA1 = clamp(w / 2 - A / 2 + range(rng, -2, 2), 0, w - A), sA2 = sA1 + A;
       const o = A * 0.32;
-      box(R(sA1, f, sA2, f + A), { use: 'domus', h: h - 0.5, z0, roof: 'court', hole: R(sA1 + o, f + o, sA2 - o, f + A - o) }, within);
+      box(R(sA1, f, sA2, f + A), { use: 'domus', h: h - 0.5, z0, roof: 'court', hole: R(sA1 + o, f + o, sA2 - o, f + A - o), part }, within);
       ground(R(sA1 + o, f + o, sA2 - o, f + A - o), 'floor', within);
       ground(R(sA1 + o + 0.6, f + o + 0.6, sA2 - o - 0.6, f + A - o - 0.6), 'pool', within);
       if (rng() < 0.5) lamp(...F.pt(s0 + sA1 + o + 0.4, f + o + 0.4), 1.6, 0.6, within);
-      if (sA1 > 2.5) box(R(0, f, sA1, f + A), { use: 'domus', h: h - 0.3, z0, roof: 'gable', axis: tA }, within);
-      if (w - sA2 > 2.5) box(R(sA2, f, w, f + A), { use: 'domus', h: h - 0.3, z0, roof: 'gable', axis: tA }, within);
+      if (sA1 > 2.5) box(R(0, f, sA1, f + A), { use: 'domus', h: h - 0.3, z0, roof: 'gable', axis: tA, part }, within);
+      if (w - sA2 > 2.5) box(R(sA2, f, w, f + A), { use: 'domus', h: h - 0.3, z0, roof: 'gable', axis: tA, part }, within);
       let t = f + A;
       if (d - t < 6) return;
-      box(R(0, t, w, t + 5), { use: 'domus', h, z0, roof: 'gable', axis: sA }, within);
+      box(R(0, t, w, t + 5), { use: 'domus', h, z0, roof: 'gable', axis: sA, part }, within);
       t += 5;
       const back = d - t > 22 ? 5 : 0, Pd = d - t - back;
       if (Pd >= 8) {
         // the peristyle, rooms down one side if it is wide
         const side = w > 22 ? 6 : 0, k = Math.min(3.2, Pd * 0.25);
-        box(R(0, t, w - side, t + Pd), { use: 'peristyle', h: 4, z0, roof: 'court', hole: R(k, t + k, w - side - k, t + Pd - k) }, within);
-        if (side) box(R(w - side, t, w, t + Pd), { use: 'domus', h: h - 0.5, z0, roof: 'gable', axis: tA }, within);
+        box(R(0, t, w - side, t + Pd), { use: 'peristyle', h: 4, z0, roof: 'court', hole: R(k, t + k, w - side - k, t + Pd - k), part }, within);
+        if (side) box(R(w - side, t, w, t + Pd), { use: 'domus', h: h - 0.5, z0, roof: 'gable', axis: tA, part }, within);
         ground(R(k, t + k, w - side - k, t + Pd - k), 'garden', within);
         const gw = w - side - 2 * k, gd = Pd - 2 * k;
         if (rng() < 0.4 && gw > 6 && gd > 5) ground(R(k + gw * 0.35, t + k + gd * 0.35, k + gw * 0.65, t + k + gd * 0.65), 'pool', within);
@@ -833,7 +847,7 @@ const RomanTown = (() => {
           tree(u, v, pick(rng, { fruit: 3, shrub: 3, cypress: 1, plane: 1 }), range(rng, 1, 2.6), range(rng, 3, 7), within);
         }
       } else if (Pd > 0) ground(R(0, t, w, t + Pd), 'garden', within);
-      if (back) box(R(0, d - back, w, d), { use: 'domus', h: h - 1, z0, roof: 'gable', axis: sA }, within);
+      if (back) box(R(0, d - back, w, d), { use: 'domus', h: h - 1, z0, roof: 'gable', axis: sA, part }, within);
     }
 
     // ---- the walls, their towers and gates ----
@@ -971,12 +985,12 @@ const RomanTown = (() => {
       if (tsd(x, y) < 110 || riverD(x, y) < 30 || !occ.free(x, y, 42)) continue;
       const [u, v] = T.loc(x, y), A = range(rng, 26, 40), Bd = A * range(rng, 0.75, 1), k = range(rng, 7, 9);
       const z0 = hAt(x, y);
-      box([u - A / 2, v - Bd / 2, u + A / 2, v + Bd / 2], { use: 'villa', h: 6, z0, roof: 'court', hole: [u - A / 2 + k, v - Bd / 2 + k, u + A / 2 - k, v + Bd / 2 - k] });
+      box([u - A / 2, v - Bd / 2, u + A / 2, v + Bd / 2], { use: 'villa', h: 6, z0, roof: 'court', hole: [u - A / 2 + k, v - Bd / 2 + k, u + A / 2 - k, v + Bd / 2 - k], front: '+u' });
       ground([u - A / 2 + k, v - Bd / 2 + k, u + A / 2 - k, v + Bd / 2 - k], 'yard');
       well(u + range(rng, -2, 2), v + range(rng, -2, 2));
       lamp(u - A / 2 + k + 0.8, v, 2.2, 0.8);
       const bx = u + A / 2 + 8, barn = [bx, v - Bd / 2, bx + 9, v - Bd / 2 + range(rng, 16, 26)];
-      box(barn, { use: 'barn', h: 6.5, z0: hAt(...P(bx + 4, v)), roof: 'gable', axis: 'v' });
+      box(barn, { use: 'barn', h: 6.5, z0: hAt(...P(bx + 4, v)), roof: 'gable', axis: 'v', front: '-u' });
       const orch = [u - A / 2 - 6, v + Bd / 2 + 2, u + A / 2, v + Bd / 2 + 16];
       ground(orch, 'garden');
       for (let q = 0; q < 6; q++) tree(u - A / 2 - 6 + range(rng, 2, A + 4), v + Bd / 2 + range(rng, 4, 14), 'fruit', range(rng, 2, 3), range(rng, 4, 6));
@@ -1214,8 +1228,8 @@ const RomanTown = (() => {
       });
     }
 
-    // and inside every building with rooms
-    for (const b of B) if (b.shape === 'box') { const i = interior(rng, b, out.lamps); if (i) b.interior = i; }
+    // and inside every building with rooms: its rooms, its doors, its furniture
+    inhabit(rng, B, out.lamps);
 
     return out;
   }
@@ -1229,10 +1243,200 @@ const RomanTown = (() => {
     basilica: [0, 'marble'], temple: [0, 'marble'],
     portico: [0, 'paving'], peristyle: [0, 'mosaic'], palaestra: [0, 'paving'], market: [0, 'paving'],
   };
-  function interior(rng, b, lamps) {
+  const DOOR = 1.1;
+  // what a door can't open onto: anything walled and higher than a man (an
+  // open colonnade, a temple's, a stage, steps, a field wall can be walked
+  // past or up onto)
+  const OPEN = new Set(['stage', 'steps', 'altar', 'statue', 'fountain', 'drystone', 'well', 'bridge', 'temple']);
+  const solid = b => b.h >= 2.5 && !OPEN.has(b.use) && !(b.use === 'portico' && !b.hole) && !(b.use === 'basilica' && b.roof === 'gable');
+  // a box's four sides: '-d' along its corner's edge (t = 0), '+w' (s = w),
+  // '+d' (t = d), '-w' (s = 0); each by its own coordinate along it, s or t
+  const SIDES = ['-d', '+w', '+d', '-w'];
+  const sideLen = (b, side) => side[1] === 'd' ? b.w : b.d;
+  const sidePt = (b, side, p, off) => side === '-d' ? [p, -off] : side === '+d' ? [p, b.d + off] : side === '-w' ? [-off, p] : [b.w + off, p];
+  const sideLine = (b, side) => side === '-d' ? [0, 0, b.w, 0] : side === '+d' ? [0, b.d, b.w, b.d] : side === '-w' ? [0, 0, 0, b.d] : [b.w, 0, b.w, b.d];
+  // a room's stretch of a side, if it is on it
+  const onSide = (b, r, side) => side === '-d' ? (r[1] === 0 ? [r[0], r[2]] : null) : side === '+d' ? (r[3] === b.d ? [r[0], r[2]] : null)
+    : side === '-w' ? (r[0] === 0 ? [r[1], r[3]] : null) : (r[2] === b.w ? [r[1], r[3]] : null);
+  const toWorld = (b, s, t) => {
+    const c = Math.cos(b.angle), sn = Math.sin(b.angle);
+    return [b.x + (s - b.w / 2) * c - (t - b.d / 2) * sn, b.y + (s - b.w / 2) * sn + (t - b.d / 2) * c];
+  };
+
+  // the rooms of a building: its floor halved and halved again, and where
+  // each split runs (s or t its line, lo to hi along it); a court's ring, a
+  // hall, one room; bare, what has no walls round it to go in through
+  function plan(rng, b) {
+    const spec = ROOMS[b.use], W = b.w, D = b.d;
+    const P = { leaves: [[0, 0, W, D]], splits: [], open: { '-d': [], '+w': [], '+d': [], '-w': [] }, free: {} };
+    P.bare = b.use === 'temple' || (b.use === 'portico' && !b.hole) || (b.use === 'basilica' && b.roof === 'gable');
+    if (P.bare || (b.roof === 'court' && b.hole) || !spec[0]) return P;
+    P.leaves = [];
+    const stack = [[0, 0, W, D]];
+    while (stack.length) {
+      const r = stack.pop(), w = r[2] - r[0], d = r[3] - r[1];
+      if (w * d <= spec[0] * range(rng, 0.7, 1.4) || Math.max(w, d) < 4.5) { P.leaves.push(r); continue; }
+      if (w >= d) {
+        const x = r[0] + w * range(rng, 0.35, 0.65);
+        stack.push([r[0], r[1], x, r[3]], [x, r[1], r[2], r[3]]);
+        P.splits.push({ s: x, lo: r[1], hi: r[3] });
+      } else {
+        const y = r[1] + d * range(rng, 0.35, 0.65);
+        stack.push([r[0], r[1], r[2], y], [r[0], y, r[2], r[3]]);
+        P.splits.push({ t: y, lo: r[0], hi: r[2] });
+      }
+    }
+    return P;
+  }
+  // the rooms either side of a split, and the stretch of it each two share
+  function across(P, sp) {
+    const v = sp.s !== undefined, at = v ? sp.s : sp.t, out = [];
+    const lo = r => v ? r[1] : r[0], hi = r => v ? r[3] : r[2];
+    const on = r => lo(r) < sp.hi && hi(r) > sp.lo;
+    const A = P.leaves.filter(r => (v ? r[2] : r[3]) === at && on(r)), C = P.leaves.filter(r => (v ? r[0] : r[1]) === at && on(r));
+    for (const a of A) for (const c of C) {
+      const l = Math.max(lo(a), lo(c), sp.lo), h = Math.min(hi(a), hi(c), sp.hi);
+      if (h - l > 0.05) out.push({ sp, lo: l, hi: h, a, c });
+    }
+    return out;
+  }
+  // where along a side a door can go: within one room's stretch of it, m
+  // clear of the walls at its ends; and, going out, where it is clear outside
+  const segs = (b, P, side, m) => P.leaves.map(r => onSide(b, r, side)).filter(q => q && q[1] - q[0] > 2 * m).map(q => [q[0] + m, q[1] - m]);
+  function clearSegs(b, P, side, m) {
+    const out = [];
+    for (const [a, c] of segs(b, P, side, m)) for (const [f1, f2] of P.free[side]) {
+      const lo = Math.max(a, f1 + 0.15), hi = Math.min(c, f2 - 0.15);
+      if (hi > lo) out.push([lo, hi]);
+    }
+    return out;
+  }
+  // somewhere along [lo, hi] for an opening w wide, about the middle
+  const within = (rng, lo, hi, w) => (lo + hi) / 2 + (rng() - 0.5) * Math.max(0, hi - lo - w) * 0.7;
+  const shuffle = (rng, a) => { const c = a.slice(); for (let i = c.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; [c[i], c[j]] = [c[j], c[i]]; } return c; };
+
+  // every building with rooms: first its rooms; then what is outside each
+  // wall, open ground or another building; the doors between the parts of
+  // one house, through the walls they share, enough to go all through it;
+  // a way in from outside for each house, its front door where it should
+  // be if it can be, another out the back; last its walls, windows and
+  // furniture
+  function inhabit(rng, B, lamps) {
+    const plans = new Map();
+    for (const b of B) if (b.shape === 'box' && ROOMS[b.use]) plans.set(b, plan(rng, b));
+    const walled = [...plans].filter(([, P]) => !P.bare);
+    // what stands about, by cells
+    const cell = 16, grid = new Map(), key = (i, j) => i * 4099 + j;
+    for (const o of B) {
+      if (!solid(o)) continue;
+      const R = o.shape === 'box' ? Math.hypot(o.w, o.d) / 2 : o.shape === 'round' ? o.r : o.shape === 'cavea' ? o.r1 : Math.max(o.a, o.b);
+      for (let i = Math.floor((o.x - R - 1) / cell); i <= Math.floor((o.x + R + 1) / cell); i++)
+        for (let j = Math.floor((o.y - R - 1) / cell); j <= Math.floor((o.y + R + 1) / cell); j++) {
+          const k = key(i, j);
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push(o);
+        }
+    }
+    const blocked = (self, x, y) => (grid.get(key(Math.floor(x / cell), Math.floor(y / cell))) || []).some(o => o !== self && onBuilding(o, x, y, 0));
+    // along each side, where it is clear just outside
+    for (const [b, P] of walled) for (const side of SIDES) {
+      const L = sideLen(b, side), iv = [];
+      let start = null, end = null;
+      for (let p = 0.1; p <= L - 0.1 + 1e-9; p += 0.25) {
+        if (!blocked(b, ...toWorld(b, ...sidePt(b, side, p, 0.6)))) { if (start === null) start = p; end = p; }
+        else if (start !== null) { iv.push([start, end]); start = null; }
+      }
+      if (start !== null) iv.push([start, end]);
+      P.free[side] = iv;
+    }
+
+    // the parts of a house that share a wall, and where a door can go through it
+    function shared(b1, b2) {
+      if (Math.abs(b1.angle - b2.angle) > 1e-6) return null;
+      const c = Math.cos(b1.angle), sn = Math.sin(b1.angle), dx = b2.x - b1.x, dy = b2.y - b1.y;
+      const os = dx * c + dy * sn + b1.w / 2 - b2.w / 2, ot = -dx * sn + dy * c + b1.d / 2 - b2.d / 2;
+      let side1, side2, off;
+      if (Math.abs(ot + b2.d) < 0.3) [side1, side2, off] = ['-d', '+d', os];
+      else if (Math.abs(ot - b1.d) < 0.3) [side1, side2, off] = ['+d', '-d', os];
+      else if (Math.abs(os + b2.w) < 0.3) [side1, side2, off] = ['-w', '+w', ot];
+      else if (Math.abs(os - b1.w) < 0.3) [side1, side2, off] = ['+w', '-w', ot];
+      else return null;
+      const ok = [];
+      for (const [a1, c1] of segs(b1, plans.get(b1), side1, 0.35)) for (const [a2, c2] of segs(b2, plans.get(b2), side2, 0.35)) {
+        const lo = Math.max(a1, a2 + off), hi = Math.min(c1, c2 + off);
+        if (hi - lo >= DOOR) ok.push([lo, hi]);
+      }
+      if (!ok.length) return null;
+      const [lo, hi] = ok[rng() * ok.length | 0], p = within(rng, lo, hi, DOOR);
+      return { b1, b2, side1, side2, p1: p, p2: p - off };
+    }
+    const comp = new Map([...plans.keys()].map(b => [b, b]));
+    const find = b => comp.get(b) === b ? b : find(comp.get(b));
+    const parts = new Map();
+    for (const [b] of walled) if (b.part) { if (!parts.has(b.part)) parts.set(b.part, []); parts.get(b.part).push(b); }
+    for (const members of parts.values()) {
+      const pairs = [];
+      for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) {
+        const sh = shared(members[i], members[j]);
+        if (sh) pairs.push([sh, (sh.b1.hole || sh.b2.hole ? 0 : 1) + rng()]);
+      }
+      // from the atrium and the peristyle first
+      for (const [sh] of pairs.sort((x, y) => x[1] - y[1])) {
+        const r1 = find(sh.b1), r2 = find(sh.b2);
+        if (r1 === r2 && rng() > 0.25) continue;
+        comp.set(r1, r2);
+        plans.get(sh.b1).open[sh.side1].push([sh.p1, DOOR, 1]);
+        plans.get(sh.b2).open[sh.side2].push([sh.p2, DOOR, 0]);
+      }
+    }
+
+    // a way in from outside: on its front if that is clear, or any side
+    // that is, its door mostly shut; a shop's every room open on it; a
+    // hall's doors wide
+    function enter(b, P) {
+      const sides = SIDES.filter(s => s !== b.open && s !== b.front);
+      for (const side of b.front ? [b.front, ...shuffle(rng, sides)] : shuffle(rng, sides)) {
+        const st = clearSegs(b, P, side, 0.35);
+        if (b.use === 'shop') {
+          const fronts = st.filter(([lo, hi]) => hi - lo > 1.8);
+          for (const [lo, hi] of fronts) P.open[side].push([(lo + hi) / 2, (hi - lo) * 0.85, 0]);
+          if (fronts.length) return side;
+          continue;
+        }
+        const w = b.use === 'basilica' ? Math.max(DOOR + 0.3, sideLen(b, side) * 0.3) : DOOR + 0.3;
+        const fit = st.filter(([lo, hi]) => hi - lo >= DOOR + 0.3);
+        if (!fit.length) continue;
+        const [lo, hi] = fit[rng() * fit.length | 0], ww = Math.min(w, hi - lo);
+        P.open[side].push([within(rng, lo, hi, ww), ww, b.use === 'basilica' ? 0 : 2]);
+        return side;
+      }
+      return null;
+    }
+    const inside = new Set();
+    const order = walled.map(([b]) => b).sort((p, q) => !!q.front - !!p.front);
+    for (const b of order) {
+      const P = plans.get(b);
+      // a part of a house is gone into through the house, if it can be
+      if (b.part && !b.front) continue;
+      const side = enter(b, P);
+      if (side) inside.add(find(b));
+      // and out the back
+      if (b.back && b.back !== side && b.use !== 'shop') {
+        const fit = clearSegs(b, P, b.back, 0.35).filter(([lo, hi]) => hi - lo >= DOOR);
+        if (fit.length) { const [lo, hi] = fit[rng() * fit.length | 0]; P.open[b.back].push([within(rng, lo, hi, DOOR), DOOR, 1]); }
+      }
+    }
+    // a part its house's doors don't reach: a door of its own
+    for (const b of order) if (b.part && !inside.has(find(b)) && enter(b, plans.get(b))) inside.add(find(b));
+
+    for (const [b, P] of plans) b.interior = finish(rng, b, P, lamps);
+  }
+
+  // a building's walls, its doors and windows, its floors and columns, and
+  // what is in each room
+  function finish(rng, b, P, lamps) {
     const spec = ROOMS[b.use];
-    if (!spec) return null;
-    const W = b.w, D = b.d, floors = [], walls = [], columns = [], doors = [], windows = [], furniture = [], DOOR = 1.1;
+    const W = b.w, D = b.d, floors = [], walls = [], columns = [], doors = [], windows = [], furniture = [];
     const gaps = []; // every doorway's middle and width, to keep furniture out of the way
     const windowed = { house: 1, domus: 1, insula: 1, villa: 1, baths: 1, basilica: 1, shed: 0.4, barn: 0.4 }[b.use] || 0;
     // a straight wall, gaps left in it: doors [where along it, how wide, leaf?
@@ -1244,8 +1448,8 @@ const RomanTown = (() => {
       const all = gapsIn.map(([t, w, leaf = 1]) => [t, w, 'door', leaf]).concat(wins.map(([t, w]) => [t, w, 'window']));
       let t0 = 0;
       for (const [t, w, what, leaf] of all.sort((p, q) => p[0] - q[0])) {
-        if (t - w / 2 < t0 + 0.2) continue;
-        walls.push([...at(t0), ...at(t - w / 2)]);
+        if (what === 'window' && (t - w / 2 < t0 + 0.3 || t + w / 2 > L - 0.3)) continue;
+        if (t - w / 2 > t0 + 0.05) walls.push([...at(t0), ...at(t - w / 2)]);
         const [g1, g2] = [at(t - w / 2), at(t + w / 2)];
         if (what === 'window') windows.push([...g1, ...g2]);
         else {
@@ -1257,33 +1461,29 @@ const RomanTown = (() => {
             doors.push([hinge[0], hinge[1], dir + open, w]);
           }
         }
-        t0 = t + w / 2;
+        t0 = Math.max(t0, t + w / 2);
       }
-      if (L - t0 > 0.2) walls.push([...at(t0), ...at(L)]);
+      if (L - t0 > 0.05) walls.push([...at(t0), ...at(L)]);
     }
-    // the outside walls, a way in on one side (a shop's open to the street),
-    // windows along them, small and few
-    function outline(x1, y1, x2, y2, wide = 0) {
-      const edges = [[x1, y1, x2, y1], [x2, y1, x2, y2], [x2, y2, x1, y2], [x1, y2, x1, y1]];
-      const e = rng() * 4 | 0;
-      edges.forEach(([a, c, a2, c2], k) => {
-        const L = Math.abs(a2 - a) + Math.abs(c2 - c);
-        const door = k === e ? [[L * (wide ? 0.5 : range(rng, 0.3, 0.7)), wide ? L * wide : DOOR + 0.3, wide ? 0 : 2]] : [];
-        const wins = [];
-        if (windowed && rng() < windowed) for (let t = range(rng, 1.5, 3); t < L - 1.2; t += range(rng, 2.8, 4.5)) {
-          if (door.some(([dt, dw]) => Math.abs(t - dt) < dw / 2 + 1)) continue;
-          wins.push([t, range(rng, 0.7, 1.1)]);
+    // the outside walls, with the ways in and through to the next part, and
+    // windows, small and few, where it is clear outside (none on a side left open)
+    function outline() {
+      for (const side of SIDES) {
+        if (side === b.open) continue;
+        const ops = P.open[side], wins = [];
+        if (windowed && rng() < windowed) for (const [lo, hi] of clearSegs(b, P, side, 0.6)) {
+          for (let t = lo + range(rng, 0.6, 1.8); t < hi - 0.5; t += range(rng, 2.8, 4.5)) {
+            if (ops.some(([p, w]) => Math.abs(t - p) < w / 2 + 1)) continue;
+            wins.push([t, range(rng, 0.7, 1.1)]);
+          }
         }
-        wall(a, c, a2, c2, door, wins);
-      });
+        const [a1, c1, a2, c2] = sideLine(b, side);
+        wall(a1, c1, a2, c2, ops, wins);
+      }
     }
     const colRow = (a1, c1, a2, c2, step, r) => {
       const L = Math.hypot(a2 - a1, c2 - c1), n = Math.max(1, Math.round(L / step));
       for (let k = 0; k <= n; k++) columns.push([a1 + (a2 - a1) * k / n, c1 + (c2 - c1) * k / n, r]);
-    };
-    const toWorld = (a, c) => {
-      const ca = Math.cos(b.angle), sa = Math.sin(b.angle);
-      return [b.x + (a - W / 2) * ca - (c - D / 2) * sa, b.y + (a - W / 2) * sa + (c - D / 2) * ca];
     };
 
     // ---- furniture: pieces against the walls or in the middle, clear of the doors ----
@@ -1330,19 +1530,21 @@ const RomanTown = (() => {
           furniture.push({ k: big ? 'dolium' : 'amphora', a: a + range(rng, -0.04, 0.04), c: c + range(rng, -0.04, 0.04), r: rad * range(rng, 0.9, 1.1) });
         }
       }
-      return { against, middle, store, area: (x2 - x1) * (y2 - y1), room };
+      return { against, middle, store, clear, put, area: (x2 - x1) * (y2 - y1), room };
     }
     const hearth = r => {
       const h = r.against('hearth', 1.2, 0.8);
-      if (h) { const [x, y] = toWorld((h[0] + h[2]) / 2, (h[1] + h[3]) / 2); lamps.push({ x, y, z: b.z0 + 0.6, power: 0.5, hearth: true }); }
+      if (h) { const [x, y] = toWorld(b, (h[0] + h[2]) / 2, (h[1] + h[3]) / 2); lamps.push({ x, y, z: b.z0 + 0.6, power: 0.5, hearth: true }); }
     };
     const bedroom = r => { r.against('bed', 2.0, range(rng, 0.9, 1.2)); if (rng() < 0.7) r.against('chest', range(rng, 0.8, 1.1), 0.5); };
     const dining = r => {
-      // three couches round three sides of a small table
+      // three couches round three sides of a small table, the fourth open
+      // (towards a door, if one is near), none across a doorway
       const [x1, y1, x2, y2] = r.room, cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, L = 1.9, Wd = 0.85, g = 0.85;
-      r.middle('table', 0.8, 0.8, { round: true });
-      const open = rng() * 4 | 0, couch = [[cx - L / 2, cy - g - Wd, cx + L / 2, cy - g], [cx + g, cy - L / 2, cx + g + Wd, cy + L / 2], [cx - L / 2, cy + g, cx + L / 2, cy + g + Wd], [cx - g - Wd, cy - L / 2, cx - g, cy + L / 2]];
-      couch.forEach((c, k) => { if (k !== open && c[0] > x1 + 0.35 && c[1] > y1 + 0.35 && c[2] < x2 - 0.35 && c[3] < y2 - 0.35) furniture.push({ k: 'couch', a: (c[0] + c[2]) / 2, c: (c[1] + c[3]) / 2, w: c[2] - c[0], d: c[3] - c[1], side: k }); });
+      if (!r.middle('table', 0.8, 0.8, { round: true })) return;
+      const couch = [[cx - L / 2, cy - g - Wd, cx + L / 2, cy - g], [cx + g, cy - L / 2, cx + g + Wd, cy + L / 2], [cx - L / 2, cy + g, cx + L / 2, cy + g + Wd], [cx - g - Wd, cy - L / 2, cx - g, cy + L / 2]];
+      const open = rng() * 4 | 0;
+      couch.forEach((c, k) => { if (k !== open && r.clear(c)) r.put('couch', c, { side: k }); });
     };
     const study = r => { r.middle('table', range(rng, 1.3, 1.8), range(rng, 0.8, 1)); r.against('chest', 1, 0.55); if (rng() < 0.6) r.against('bench', range(rng, 1.4, 2.2), 0.45); };
     const kitchen = r => { hearth(r); r.middle('table', range(rng, 1.1, 1.6), 0.8); r.against('bench', range(rng, 1.4, 2), 0.42); if (rng() < 0.6) r.store(false); };
@@ -1351,7 +1553,7 @@ const RomanTown = (() => {
       const [s1, t1, s2, t2] = b.hole;
       const kind = b.use === 'domus' && rng() < 0.4 ? 'signinum' : spec[1];
       floors.push([0, 0, W, t1, kind], [0, t2, W, D, kind], [0, t1, s1, t2, kind], [s2, t1, W, t2, kind]);
-      outline(0, 0, W, D);
+      outline();
       if (b.use === 'domus') {
         // the atrium's four columns at the corners of its opening; a strongbox
         for (const [a, c] of [[s1, t1], [s2, t1], [s2, t2], [s1, t2]]) columns.push([a, c, 0.32]);
@@ -1370,17 +1572,17 @@ const RomanTown = (() => {
       return { floors, walls, columns, doors, windows, furniture };
     }
     if (b.use === 'temple') {
-      // columns all round, the cella within, its door to one end, the god at the other
+      // columns all round, the cella within, its door at the front, the god at the back
       const k = Math.min(1, Math.min(W, D) * 0.08);
       floors.push([0, 0, W, D, 'marble']);
       colRow(k, k, W - k, k, 2.2, 0.4); colRow(W - k, k, W - k, D - k, 2.2, 0.4); colRow(W - k, D - k, k, D - k, 2.2, 0.4); colRow(k, D - k, k, k, 2.2, 0.4);
-      const m = Math.min(W, D) * 0.2, longW = W >= D;
-      const c1 = longW ? [m, m, W - m * 2.5, D - m] : [m, m, W - m, D - m * 2.5];
-      const L = longW ? c1[3] - c1[1] : c1[2] - c1[0];
-      wall(c1[0], c1[1], c1[2], c1[1]); wall(c1[0], c1[3], c1[2], c1[3]); wall(c1[0], c1[1], c1[0], c1[3]);
-      if (longW) { wall(c1[2], c1[1], c1[2], c1[3], [[L / 2, 2, 1]]); } else { wall(c1[0], c1[3], c1[2], c1[3], [[L / 2, 2, 1]]); }
-      const sa = longW ? c1[0] + 1.4 : (c1[0] + c1[2]) / 2, sc = longW ? (c1[1] + c1[3]) / 2 : c1[1] + 1.4;
-      furniture.push({ k: 'plinth', a: sa, c: sc, w: 1.6, d: 1.6 }, { k: 'statue', a: sa, c: sc, r: 0.45 });
+      const m = Math.min(W, D) * 0.2, front = b.front || (W >= D ? '+w' : '+d'), M = m * 2.5;
+      const c = front === '+w' ? [m, m, W - M, D - m] : front === '-w' ? [M, m, W - m, D - m] : front === '+d' ? [m, m, W - m, D - M] : [m, M, W - m, D - m];
+      const L = front[1] === 'w' ? c[3] - c[1] : c[2] - c[0];
+      const lines = { '-d': [c[0], c[1], c[2], c[1]], '+d': [c[0], c[3], c[2], c[3]], '-w': [c[0], c[1], c[0], c[3]], '+w': [c[2], c[1], c[2], c[3]] };
+      for (const side of SIDES) wall(...lines[side], side === front ? [[L / 2, 2, 1]] : []);
+      const back = { '+w': [c[0] + 1.4, (c[1] + c[3]) / 2], '-w': [c[2] - 1.4, (c[1] + c[3]) / 2], '+d': [(c[0] + c[2]) / 2, c[1] + 1.4], '-d': [(c[0] + c[2]) / 2, c[3] - 1.4] }[front];
+      furniture.push({ k: 'plinth', a: back[0], c: back[1], w: 1.6, d: 1.6 }, { k: 'statue', a: back[0], c: back[1], r: 0.45 });
       return { floors, walls, columns, doors, windows, furniture };
     }
     if (b.use === 'basilica') {
@@ -1390,7 +1592,7 @@ const RomanTown = (() => {
         // magistrates' platform at one end
         if (W >= D) { colRow(0.6, 0.6, W - 0.6, 0.6, 3, 0.4); colRow(0.6, D - 0.6, W - 0.6, D - 0.6, 3, 0.4); furniture.push({ k: 'tribunal', a: W - 2.2, c: D / 2, w: 3.4, d: D * 0.5 }); }
         else { colRow(0.6, 0.6, 0.6, D - 0.6, 3, 0.4); colRow(W - 0.6, 0.6, W - 0.6, D - 0.6, 3, 0.4); furniture.push({ k: 'tribunal', a: W / 2, c: D - 2.2, w: W * 0.5, d: 3.4 }); }
-      } else outline(0, 0, W, D, 0.3);
+      } else outline();
       return { floors, walls, columns, doors, windows, furniture };
     }
     if (b.use === 'portico') {
@@ -1398,20 +1600,22 @@ const RomanTown = (() => {
       if (W >= D) colRow(0.5, D / 2, W - 0.5, D / 2, 2.8, 0.32); else colRow(W / 2, 0.5, W / 2, D - 0.5, 2.8, 0.32);
       return { floors, walls, columns, doors, windows, furniture };
     }
-    // rooms: the floor halved and halved again, a door through every wall between
-    const leaves = [], stack = [[0, 0, W, D]];
-    while (stack.length) {
-      const r = stack.pop(), w = r[2] - r[0], d = r[3] - r[1];
-      if (w * d <= spec[0] * range(rng, 0.7, 1.4) || Math.max(w, d) < 4.5) { leaves.push(r); continue; }
-      if (w >= d) {
-        const x = r[0] + w * range(rng, 0.35, 0.65);
-        stack.push([r[0], r[1], x, r[3]], [x, r[1], r[2], r[3]]);
-        wall(x, r[1], x, r[3], [[d * range(rng, 0.25, 0.75), DOOR]]);
-      } else {
-        const y = r[1] + d * range(rng, 0.35, 0.65);
-        stack.push([r[0], r[1], r[2], y], [r[0], y, r[2], r[3]]);
-        wall(r[0], y, r[2], y, [[w * range(rng, 0.25, 0.75), DOOR]]);
-      }
+    // rooms: a door through the walls between, enough to reach them all,
+    // through the widest stretches first, and here and there one more
+    const leaves = P.leaves, idx = new Map(leaves.map((r, i) => [r, i])), root = leaves.map((_, i) => i);
+    const find = i => root[i] === i ? i : (root[i] = find(root[i]));
+    const through = new Map(P.splits.map(sp => [sp, []]));
+    const pairs = P.splits.flatMap(sp => across(P, sp)).map(e => [e, (e.hi - e.lo >= DOOR + 0.7 ? 0 : 2) + rng()]).sort((x, y) => x[1] - y[1]);
+    for (const [e] of pairs) {
+      const i = find(idx.get(e.a)), j = find(idx.get(e.c)), len = e.hi - e.lo;
+      if (i === j && (len < DOOR + 0.7 || rng() > 0.15)) continue;
+      root[i] = j;
+      const w = Math.min(DOOR, Math.max(0.6, len - 0.5)), m = Math.min(0.25, Math.max(0, (len - w) / 2));
+      through.get(e.sp).push([within(rng, e.lo + m, e.hi - m, w) - e.sp.lo, w]);
+    }
+    for (const sp of P.splits) {
+      if (sp.s !== undefined) wall(sp.s, sp.lo, sp.s, sp.hi, through.get(sp));
+      else wall(sp.lo, sp.t, sp.hi, sp.t, through.get(sp));
     }
     let pool = b.use === 'baths';
     const pools = new Set();
@@ -1423,7 +1627,7 @@ const RomanTown = (() => {
       // a warm pool in the baths
       if (pool && (r[2] - r[0]) > 5 && (r[3] - r[1]) > 5) { floors.push([r[0] + 1, r[1] + 1, r[2] - 1, r[3] - 1, 'pool']); pool = false; pools.add(r); }
     }
-    outline(0, 0, W, D, b.use === 'shop' ? 0.7 : 0);
+    outline();
     // and what is in each room, by the house and the room
     const byArea = leaves.slice().sort((p, q) => (q[2] - q[0]) * (q[3] - q[1]) - (p[2] - p[0]) * (p[3] - p[1]));
     byArea.forEach((room, i) => {
