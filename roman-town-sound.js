@@ -280,7 +280,7 @@ const RomanTownSound = (() => {
     };
     bed('wind', [filter(ac, 'lowpass', 380, 0.7)]).k = 14.45;
     bed('fire', [filter(ac, 'lowpass', 600, 0.8), filter(ac, 'highpass', 70)]).k = 11.17;
-    bed('water', [filter(ac, 'highpass', 900), filter(ac, 'peaking', 2500, 1)]).k = 2.44;
+    bed('water', [filter(ac, 'highpass', 700), filter(ac, 'peaking', 2000, 1), filter(ac, 'lowpass', 4500, 0.7)]).k = 4.19;
     bed('river', [filter(ac, 'lowpass', 1400), filter(ac, 'highpass', 200)]).k = 7.23;
     bed('voices', [filter(ac, 'bandpass', 520, 1.4), filter(ac, 'peaking', 1600, 2)]).k = 15.11;
     bed('crowd', [filter(ac, 'bandpass', 700, 0.8)]).k = 10.08;
@@ -452,8 +452,9 @@ const RomanTownSound = (() => {
         if (s) { let sx = 0, sn = 0; for (const [x, , n] of s.at) { sx += x * n; sn += n; } b.p.pan.setTargetAtTime(panOf(sx / sn), now, 0.3); }
         // (the wind rising and falling of itself)
         const gust = k === 'wind' ? 0.75 + 0.25 * Math.sin(now * 0.31 + Math.sin(now * 0.13) * 2) : k === 'fire' ? 0.7 + 0.6 * r() : 1;
-        // (the wind counted in the whole, so that nothing is ever all there is, but itself kept low: a breath behind it all)
-        b.g.gain.setTargetAtTime(LEVEL * b.k * Math.sqrt(share) * gust * (k === 'wind' ? 0.35 : 1), now, 0.25);
+        // (the wind and the water counted in the whole, so that nothing is
+        // ever all there is, but themselves kept low: behind it all)
+        b.g.gain.setTargetAtTime(LEVEL * b.k * Math.sqrt(share) * gust * (QUIET[k] || 1), now, 0.25);
       }
       for (const k in src) {
         const K = KIND[k];
@@ -474,6 +475,7 @@ const RomanTownSound = (() => {
     return { toggle, update, get on() { return on; } };
   }
   // how loud a bed is of the whole, for each that makes it
+  const QUIET = { wind: 0.35, water: 0.45, river: 0.6 };
   const BEDW = { fire: 0.25, wind: 1.2, water: 0.6, river: 0.35, voices: 0.12, crowd: 0.12, mill: 0.35, carts: 0.5, applause: 0.2 };
   return { create, V, KIND, beds };
 })();

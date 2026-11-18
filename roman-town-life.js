@@ -2534,7 +2534,8 @@ const RomanTownLife = (() => {
         let c = null;
         const G = all.filter(a => a.job === 'gladiator'), k = G.indexOf(ag) >> 1;
         if (where === 'court' && bath.court.length) c = bath.court[(k * 7) % bath.court.length];
-        else if (amph) { const r = amph.a0 * 0.45, t = amph.angle + k * TAU / 3 + 0.4; c = [amph.x + Math.cos(t) * r, amph.y + Math.sin(t) * r * (amph.b0 / amph.a0)]; }
+        // (out toward the edge of the sand, round it, the beasts' hunt in the middle)
+        else if (amph) { const t = k * TAU / 3 + 0.4, u = Math.cos(t) * amph.a0 * 0.68, v = Math.sin(t) * amph.b0 * 0.68, ca = Math.cos(amph.angle), sa = Math.sin(amph.angle); c = [amph.x + u * ca - v * sa, amph.y + u * sa + v * ca]; }
         if (!c) return ACT.forum(ag, { act: 'forum' }, until);
         D = { c, cl: where === 'court' ? bath.C : null, z: where === 'court' ? fz(bath.pal) : NaN, th: rng() * TAU, k: rng() * 9, practice, end: 0, fall: null, rest: 0 };
         duels.set(key, D);
@@ -3007,10 +3008,11 @@ const RomanTownLife = (() => {
       if (huntOn()) {
         // on the sand: the lion prowling and turning on the hunters, the bear
         // up on its hind legs at them, the elephant ambling, the ostriches running
-        if (!onSand(ag)) { const [x, y] = sandAt(0.6); ag.legs.push({ k: 'go', sp: spot(x, y, NaN, 0, 'stand', { cl: null }) }); return; }
+        if (!onSand(ag)) { const [x, y] = sandAt(0.3); ag.legs.push({ k: 'go', sp: spot(x, y, NaN, 0, 'stand', { cl: null }) }); return; }
         const near = all.find(a => a.job === 'venator' && a.vis && Math.hypot(a.x - ag.x, a.y - ag.y) < 9);
         if (k === 'lion' && near && chance(0.4)) { ag.legs.push({ k: 'chase', who: near, until: now + range(3, 6), near: 2.2 }); ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + range(4, 10), face: near }); return; }
-        const [x, y] = sandAt(0.85), run = k === 'ostrich' ? chance(0.6) : k === 'lion' && chance(0.3);
+        // (in the middle of the sand, where all the seats can see them)
+        const [x, y] = sandAt(0.42), run = k === 'ostrich' ? chance(0.6) : k === 'lion' && chance(0.3);
         ag.legs.push({ k: 'trot', x, y, speed: run ? (k === 'ostrich' ? 4.5 : 3.5) : ag.speed * 0.8, pose: run ? 'run' : 'walk' });
         ag.legs.push({ k: 'stay', sp: null, pose: k === 'bear' && near ? 'rear' : k === 'lion' && chance(0.3) ? 'lie' : 'stand', until: now + range(5, 25), face: near || null });
         return;
@@ -3031,7 +3033,7 @@ const RomanTownLife = (() => {
       hunt(ag, e, until) {
         if (!amph || !zoo.length) return ACT.show(ag, e, until);
         const prey = zoo[(all.filter(a => a.job === 'venator').indexOf(ag) + Math.floor(now / 90)) % zoo.length];
-        if (!onSand(ag)) { const [x, y] = sandAt(0.5); go(ag, spot(x, y, NaN, 0, 'stand', { anim: 'fight', cl: null }), { carry: null }); return; }
+        if (!onSand(ag)) { const [x, y] = sandAt(0.35); go(ag, spot(x, y, NaN, 0, 'stand', { anim: 'fight', cl: null }), { carry: null }); return; }
         ag.legs.push({ k: 'chase', who: prey, until: now + range(6, 14), near: 3.2 });
         ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: Math.min(until, now + range(5, 12)), face: prey, hunt: true });
       },
