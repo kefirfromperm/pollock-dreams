@@ -108,13 +108,20 @@ const RomanTownView = (() => {
       }
       return h;
     }
-    // the wind: gusts going over, downwind at 5 m/s, streaks longer across
-    // the wind than along it
+    // the wind in the grass: the grass rooted, nothing of it sliding; each
+    // tuft swaying where it stands, bowed downwind and springing back, and
+    // the swaying passing over as waves do, downwind at 3 m/s, crests 6 m
+    // apart across the wind, bent and breaking, made and unmade as they go;
+    // strong where a gust is, the gusts swelling and dying away. How far it
+    // is bowed: about 0 standing up, 1 bowed over, its paler blades shown
     uniform vec2 uWind; uniform float uTime;
-    float gust(vec2 p) {
-      vec2 w = normalize(uWind);
-      vec2 q = vec2(dot(p, w) - uTime * 5.0, dot(p, vec2(-w.y, w.x)));
-      return fnoise(q / vec2(18.0, 42.0), 41);
+    float sway(vec2 p) {
+      vec2 w = normalize(uWind), q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x)));
+      float gu = smoothstep(0.3, 0.7, vnoise3(vec3((q.x - uTime * 3.0) / 28.0, q.y / 40.0, uTime / 9.0), 41));
+      float ph = TAU * (q.x - uTime * 3.0) / 6.0 + 7.0 * vnoise3(vec3(p / 16.0, uTime / 7.0), 42);
+      float wave = pow(0.5 + 0.5 * sin(ph), 1.6);
+      float trem = vnoise3(vec3(p / 1.6, uTime * 1.3), 43) - 0.5;
+      return (0.25 + 0.75 * gu) * (1.3 * wave - 0.35) + 0.35 * trem;
     }
   `;
   const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
@@ -209,10 +216,8 @@ const RomanTownView = (() => {
       if (m == 10) grass = 1.4; // (wheat, taller, waves more)
       if (m == 5) grass = 0.4;
       if (grass > 0.0) {
-        // grass in the wind: bent over where a gust goes, its paler blades
-        // showing, rippling; its blades, fine, fractal
-        float gu = gust(p), rip = fnoise((p - uWind * uTime * 5.0) / 2.5, 43);
-        float bend = grass * (1.6 * (gu - 0.42) + 0.5 * (rip - 0.5));
+        // grass in the wind, swaying; its blades, fine, fractal, staying put
+        float bend = grass * sway(p);
         n = normalize(n + vec3(uWind * bend * 1.1, 0.0));
         f *= 1.0 + 0.32 * bend;
         f *= 1.0 + min(grass, 1.0) * 0.14 * (fnoise(p / 0.35, uSeed + 47) - 0.5 + 0.5 * (fnoise(p / 0.12, uSeed + 49) - 0.5));
