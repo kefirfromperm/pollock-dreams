@@ -108,20 +108,28 @@ const RomanTownView = (() => {
       }
       return h;
     }
-    // the wind in the grass: the grass rooted, nothing of it sliding; each
-    // tuft swaying where it stands, bowed downwind and springing back, and
-    // the swaying passing over as waves do, downwind at 3 m/s, crests 6 m
-    // apart across the wind, bent and breaking, made and unmade as they go;
-    // strong where a gust is, the gusts swelling and dying away. How far it
-    // is bowed: about 0 standing up, 1 bowed over, its paler blades shown
+    // the wind in the grass and the crops, as it is on a field (honami): no
+    // train of waves, but gusts sweeping down on it here and there, each
+    // pressing a patch of it over, paler, the patch running downwind faster
+    // than the wind down among the stalks blows, growing and dying away in a
+    // few seconds, few at a time; behind it the stalks springing back,
+    // overshooting and swinging back a little, at their own beat, and
+    // between the gusts only quivering where they stand. Nothing slides.
+    // How far it is pressed over: 0 standing, about 1 pressed flat
     uniform vec2 uWind; uniform float uTime;
+    float pressed(vec2 q, float t, float c) {
+      float x = q.x - c * t;
+      float g = 0.65 * vnoise3(vec3(x / 7.0, q.y / 11.0, t / 2.5), 41) + 0.35 * vnoise3(vec3(x / 2.6, q.y / 4.0, t / 1.4), 42);
+      return smoothstep(0.6, 0.82, g);
+    }
     float sway(vec2 p) {
-      vec2 w = normalize(uWind), q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x)));
-      float gu = smoothstep(0.3, 0.7, vnoise3(vec3((q.x - uTime * 3.0) / 28.0, q.y / 40.0, uTime / 9.0), 41));
-      float ph = TAU * (q.x - uTime * 3.0) / 6.0 + 7.0 * vnoise3(vec3(p / 16.0, uTime / 7.0), 42);
-      float wave = pow(0.5 + 0.5 * sin(ph), 1.6);
-      float trem = vnoise3(vec3(p / 1.6, uTime * 1.3), 43) - 0.5;
-      return (0.25 + 0.75 * gu) * (1.3 * wave - 0.35) + 0.35 * trem;
+      float s = length(uWind), c = 4.0 * s; // (s 0.6 to 1.2, the gusts 2.4 to 4.8 m/s)
+      vec2 w = uWind / s, q = vec2(dot(p, w), dot(p, vec2(-w.y, w.x)));
+      // (the stalks' beat about 1.5 a second: pressed now, overshooting back
+      // half a beat after, over again a beat after)
+      float b = pressed(q, uTime, c) - 0.45 * pressed(q, uTime - 0.33, c) + 0.18 * pressed(q, uTime - 0.67, c);
+      float quiver = vnoise3(vec3(p / 0.8, uTime * 1.5), 44) - 0.5;
+      return b * (0.6 + 0.5 * s) + 0.12 * s * quiver;
     }
   `;
   const OUT = 'layout(location = 0) out vec4 oAlb;\nlayout(location = 1) out vec4 oNrm;\nlayout(location = 2) out float oH;\n';
@@ -212,12 +220,17 @@ const RomanTownView = (() => {
         c = rgb(52.0, 82.0, 80.0); f = 0.92 + 0.12 * fnoise(p / 9.0, uSeed + 17);
       }
       else if (m == 22) { f = 0.75; }
-      if (m == 13 || m == 15) grass = 1.0;
-      if (m == 10) grass = 1.4; // (wheat, taller, waves more)
-      if (m == 5) grass = 0.4;
+      // and how tall it stands, so how much the wind shows on it: wheat most,
+      // a meadow's long grass, the hills' rough grass; a pasture, grazed
+      // short, and a garden's, hardly
+      float tall = 0.55 * grass;
+      if (m == 13) { grass = 1.0; tall = 1.0; }
+      if (m == 15) { grass = 1.0; tall = 0.12; }
+      if (m == 10) { grass = 1.4; tall = 1.4; }
+      if (m == 5) { grass = 0.4; tall = 0.1; }
       if (grass > 0.0) {
-        // grass in the wind, swaying; its blades, fine, fractal, staying put
-        float bend = grass * sway(p);
+        // its blades, fine, fractal, staying put; it bent over by the wind
+        float bend = tall * sway(p);
         n = normalize(n + vec3(uWind * bend * 1.1, 0.0));
         f *= 1.0 + 0.32 * bend;
         f *= 1.0 + min(grass, 1.0) * 0.14 * (fnoise(p / 0.35, uSeed + 47) - 0.5 + 0.5 * (fnoise(p / 0.12, uSeed + 49) - 0.5));
