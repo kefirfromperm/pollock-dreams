@@ -8,7 +8,9 @@
 // that, once, it peoples the town: a household in every house, a family and
 // its slaves in every atrium house, more upstairs in the apartment blocks,
 // farm folk at the farms; flocks and herds in the pastures, dogs, hens,
-// travellers on the roads, boats on the river. Then, moment by moment, each
+// travellers on the roads, carts bringing in firewood, hay, vegetables,
+// fruit and grain, unloaded by night into the storehouse's rooms or at the
+// market's stalls, boats on the river. Then, moment by moment, each
 // does what is done at that hour of the Roman day, the hours counted from
 // sunrise as the Romans counted them, twelve to the day and twelve to the
 // night whatever their length: up before dawn, water from the fountain, the
@@ -751,6 +753,25 @@ const RomanTownLife = (() => {
       }
       return { b: m, C: clusterOf(m), pts };
     })();
+    // where the carts' loads are put away: the storehouse's rooms, by what
+    // each keeps, each with the step outside its door on the court and a
+    // spot just inside it; the market's stalls, for the produce
+    const stores = {};
+    for (const b of byUse('horreum')) {
+      const C = clusterOf(b), e = b.entrances && b.entrances[0], ent = C && C.ents.find(q => q.b === b);
+      if (!e || !ent || !ent.ok) continue;
+      const [ix, iy] = toWorld(b, e.s - e.nx * 1.1, e.t - e.ny * 1.1);
+      (stores[b.goods] || (stores[b.goods] = [])).push({ b, out: ent.out, drop: () => spot(ix, iy, NaN, Math.atan2(iy - ent.out[1], ix - ent.out[0]), 'bend', { cl: C }) });
+    }
+    if (market) {
+      const ent = market.C && market.C.ents.find(q => q.ok), mine = stalls.filter(c => c.b === market.b);
+      if (ent && mine.length) stores.market = [{ b: market.b, out: ent.out, drop: () => { const c = choice(mine); return spot(c.sell.x, c.sell.y, c.sell.z, c.sell.a, 'bend', { cl: market.C }); } }];
+    }
+    const storeFor = load => {
+      const produce = load === 'vegetables' || load === 'fruit';
+      const list = (produce && stores.market) || stores[produce ? 'produce' : load] || Object.values(stores).flat();
+      return list.length ? choice(list) : null;
+    };
     // the theatre's seats and stage, the amphitheatre's seats and sand
     const cavea = byUse('theatre').find(b => b.shape === 'cavea');
     const stage = byUse('stage')[0], scaena = byUse('scaena')[0];
@@ -1049,7 +1070,11 @@ const RomanTownLife = (() => {
         }
       }
     }
-    // travellers: on foot, on horseback, with donkeys, with carts
+    // travellers: on foot, on horseback, with donkeys, with carts; a cart
+    // laden with what the country sends the town, and what the one
+    // unloading it carries in at a time
+    const LOADS = ['firewood', 'hay', 'vegetables', 'fruit', 'grain'];
+    const ITEM = { firewood: 'wood', hay: 'hay', vegetables: 'basket', fruit: 'basket', grain: 'sack' };
     const travellers = [];
     // (country folk come in by day to the market, the forum, the shops, the temples)
     if (ends.length) for (let k = 0, n = 34 + (rng() * 16 | 0); k < n; k++) {
@@ -1061,7 +1086,7 @@ const RomanTownLife = (() => {
       if (type === 'donkeys') t.train = Array.from({ length: 1 + (rng() * 3 | 0) }, () => being('donkey', { follow: t, speed: 1.1, look: rng(), laden: true, vis: false }));
       if (type === 'cart') {
         t.train = [being('ox', { follow: t, speed: 0.9, look: rng(), yoke: -1, vis: false }), being('ox', { follow: t, speed: 0.9, look: rng(), yoke: 1, vis: false })];
-        t.cart = being('cart', { follow: t, look: rng(), load: choice(['amphorae', 'sacks', 'hay', 'stone', 'logs']), vis: false });
+        t.cart = being('cart', { follow: t, look: rng(), load: choice(LOADS), left: 1, vis: false });
         t.speed = 0.85;
       }
       if (type === 'walker') t.carry = chance(0.6) ? 'bundle' : null;
@@ -1759,6 +1784,7 @@ const RomanTownLife = (() => {
       const T = ag.trip || (ag.trip = { stage: 'away' });
       if (T.stage === 'away') {
         T.from = choice(ends); T.to = choice(ends);
+        if (ag.cart) { ag.cart.load = choice(LOADS); ag.cart.left = 1; }
         if (warm && rng() < 0.6) {
           // already on the road in
           const pts = T.from.road.points, p = pts[Math.min(T.from.q, 3 + (rng() * Math.max(1, T.from.q - 3) | 0))];
@@ -1782,6 +1808,9 @@ const RomanTownLife = (() => {
           go(ag, sp); stay(ag, sp, now + range(900, 2400));
           return;
         }
+        // a cart to the storehouse, or with produce to the market, to be unloaded
+        const U = ag.cart && ag.cart.left > 0 ? storeFor(ag.cart.load) : null;
+        if (U) { go(ag, spot(U.out[0], U.out[1], NaN, 0, 'stand', { cl: null })); call(ag, () => unload(ag, U)); T.stage = 'leave'; return; }
         let dest = null;
         if (G && (ag.traveller === 'cart' || ag.traveller === 'donkeys' || ag.traveller === 'rider')) {
           // up the main street a way, to unload at the shops
@@ -1816,6 +1845,37 @@ const RomanTownLife = (() => {
       go(ag, spot(T.to.x, T.to.y, NaN, 0, 'walk', { cl: null }));
       call(ag, () => show(false));
       T.stage = 'away';
+    }
+
+    // a cart unloaded: the oxen and the cart left standing, the carter to
+    // its side and back and forth to the door with a load at a time,
+    // bending to take it up and to set it down, till the cart is empty;
+    // then back to his oxen
+    function unload(ag, U) {
+      const cart = ag.cart, item = ITEM[cart.load] || 'sack', x0 = ag.x, y0 = ag.y, a0 = ag.a, trail = ag.trail ? ag.trail.slice() : null, torchy = ag.torchy;
+      ag.parked = true; ag.torchy = false;
+      const px = -Math.sin(cart.a), py = Math.cos(cart.a);
+      const side = [1, -1].map(sg => [cart.x + px * sg * 1.3, cart.y + py * sg * 1.3]).filter(p => way.costAt(...p) < Infinity)
+        .sort((p, q) => Math.hypot(p[0] - U.out[0], p[1] - U.out[1]) - Math.hypot(q[0] - U.out[0], q[1] - U.out[1]))[0] || [x0, y0];
+      const at = spot(side[0], side[1], NaN, Math.atan2(cart.y - side[1], cart.x - side[0]), 'bend', { cl: null });
+      const n = 5 + (rng() * 4 | 0);
+      // (a while bent there, then on)
+      const pause = (sp, secs, next) => call(ag, () => { stay(ag, sp, now + secs); call(ag, next); });
+      const trip = k => {
+        if (k >= n) {
+          go(ag, spot(x0, y0, NaN, a0, 'stand', { cl: null }));
+          call(ag, () => { ag.x = x0; ag.y = y0; ag.a = a0; ag.trail = trail; ag.parked = false; ag.torchy = torchy; ag.carry = null; });
+          return;
+        }
+        go(ag, at, { carry: null });
+        pause(at, range(3, 6), () => {
+          ag.carry = item; cart.left = 1 - (k + 1) / n;
+          const d = U.drop();
+          go(ag, d);
+          pause(d, range(2, 4), () => { ag.carry = null; trip(k + 1); });
+        });
+      };
+      trip(0);
     }
 
     // ================= the beasts, each its own way =================
@@ -2179,6 +2239,8 @@ const RomanTownLife = (() => {
       const m = ag.follow, T = m.trail;
       ag.vis = m.vis;
       if (ag.ploughing) return;
+      // (left standing while the cart is unloaded)
+      if (m.parked) { ag.vis = true; ag.pose = 'stand'; return; }
       const back = ag.kind === 'cart' ? 4.6 : ag.yoke ? 1.2 : 1.8 + 1.7 * Math.max(0, (m.train || []).indexOf(ag));
       const lat = ag.yoke ? ag.yoke * 0.65 - 1.1 : ag.kind === 'cart' ? -1.1 : 0;
       // back along the leader's trail
@@ -2486,7 +2548,7 @@ const RomanTownLife = (() => {
         update(ag, dt);
         ag.mv = ag.x !== x0 || ag.y !== y0 || ag.pose !== p0;
         // the leaders' trails, for their followers
-        if (ag.train || ag.cart) {
+        if ((ag.train || ag.cart) && !ag.parked) {
           const T = ag.trail || (ag.trail = []), last = T[T.length - 1];
           if (!last || Math.hypot(ag.x - last[0], ag.y - last[1]) > 0.3) { T.push([ag.x, ag.y]); if (T.length > 60) T.shift(); }
         }

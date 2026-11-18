@@ -37,7 +37,9 @@
 //                        and windows left out of them; doors: [[s, t, angle, width]] a leaf from its
 //                        hinge; windows: [[s1, t1, s2, t2]]; furniture: [{ k, a, c, w, d } or
 //                        { k, a, c, r }] k: bed, couch, table (round?), bench, chest, hearth,
-//                        counter (jars), stall, plinth, statue, tribunal, hay, amphora, dolium
+//                        counter (jars), stall, plinth, statue, tribunal, hay, amphora, dolium, grain (a
+//                        heap), sacks, woodpile (tall), baskets; goods: a storeroom's (grain, firewood,
+//                        hay, jars, produce)
 //     round              { x, y, r, h, roof: flat | cone | dome, pitch, hole } hole: an open
 //                        middle that radius (a well's curb)
 //     cavea              { x, y, angle, r0, r1, h } a theatre's seats: a half ring about its orchestra
@@ -51,7 +53,7 @@
 //   jets                 [{ x, y, sx, sy, z, h }] water falling into a basin: where it falls in (x, y),
 //                        from a spout at (sx, sy) h above the water, its surface at z
 //   places               [{ kind, poly, x, y, angle }] the town's public places, their ground: forum,
-//                        market, baths, theatre, nymphaeum, temple
+//                        market, baths, theatre, nymphaeum, temple, horreum
 //   (a pasture its gateway too, gateway { a, b, z, inside } the posts the gate hangs between and a
 //   point inside; a gate's box the width of its passage, passage; a door, [s, t, angle, width, shut] its
 //   angle as it stands, shut its angle closed;
@@ -444,6 +446,7 @@ const RomanTown = (() => {
       if (p.back) b.back = side(p.back);
       if (p.open) b.open = side(p.open);
       if (p.part) b.part = p.part;
+      if (p.goods) b.goods = p.goods;
       B.push(b);
       return b;
     }
@@ -636,6 +639,12 @@ const RomanTown = (() => {
       const b = shuffled(c).sort((p, q) => central(q) - central(p))[0];
       if (b) nymphaeum(group([b], 'nymphaeum'), b);
     }
+    // a storehouse, on a main street, the nearest it can be to a gate
+    {
+      const c = blocks.filter(b => free(b) && (b.i === ic - 1 || b.i === ic || b.j === jc - 1 || b.j === jc) && Math.min(...dims(b.r)) > 26);
+      const b = c.sort((p, q) => central(p) - central(q))[0];
+      if (b) horreum(group([b], 'horreum'), b);
+    }
     // a temple or two in their precincts
     for (let k = 0, n = 1 + (rng() < 0.6); k < n; k++) {
       const b = shuffled(blocks.filter(free))[0];
@@ -743,6 +752,44 @@ const RomanTown = (() => {
       box(g.r, { use: 'market', h: 6, z0, roof: 'court', hole: [g.r[0] + k, g.r[1] + k, g.r[2] - k, g.r[3] - k], front: ways[0], back: ways[1] }, true);
       const [mx, my] = P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2);
       B.push({ shape: 'round', use: 'tholos', mat: 'tile', x: mx, y: my, r: Math.min(5.5, Math.min(x, y) * 0.14), z0, h: 5, roof: 'cone', pitch: 0.55 });
+    }
+
+    // ---- a storehouse (horreum): storerooms all round a paved court, a
+    // way in from the main street wide enough for a cart; each room its
+    // one kind of goods, its door on the court: grain, firewood, hay, oil
+    // and wine in their jars, the market's produce ----
+    function horreum(g, blk) {
+      const faces = [];
+      if (blk.i === ic - 1) faces.push(['v', true]); if (blk.i === ic) faces.push(['v', false]);
+      if (blk.j === jc - 1) faces.push(['u', true]); if (blk.j === jc) faces.push(['u', false]);
+      const [along, flipT] = faces[0];
+      const F = lf(g.r, along, false, flipT), S = F.S, D = F.D, k = 5.5, gw = 5.5, cw = 4.2, h = 5;
+      const z0 = hAt(...P((g.r[0] + g.r[2]) / 2, (g.r[1] + g.r[3]) / 2));
+      ground(g.r, 'yard', true);
+      place('horreum', g.r, F.angle('t'));
+      ground(F.rect(k, k, S - k, D - k), 'paving', true);
+      ground(F.rect(S / 2 - gw / 2, 0, S / 2 + gw / 2, k), 'paving', true);
+      const GOODS = ['grain', 'firewood', 'hay', 'grain', 'jars', 'produce', 'firewood', 'grain', 'hay', 'produce'];
+      let n = 0;
+      // a row of rooms between a and b along s (or t), each about cw wide,
+      // the end ones wider round the court's corners
+      const row = (a, b, room) => { if (b - a < 2.6) return; const m = Math.max(1, Math.round((b - a) / cw)); for (let q = 0; q < m; q++) room(a + (b - a) * q / m, a + (b - a) * (q + 1) / m); };
+      const cell = (r, front, low) => box(r, { use: 'horreum', mat: 'tile', h, z0, roof: 'shed', low: F.low(low), front: F.low(front), goods: GOODS[n++ % GOODS.length] }, true);
+      // the back: the corners in its end rooms
+      const ends = (a, b, t1, t2, front) => {
+        cell(F.rect(a, t1, k + 3.4, t2), front, front);
+        row(k + 3.4, S - k - 3.4, (s1, s2) => cell(F.rect(s1, t1, s2, t2), front, front));
+        cell(F.rect(S - k - 3.4, t1, b, t2), front, front);
+      };
+      ends(0, S, D - k, D, '-t');
+      // the front, either side of the way in
+      cell(F.rect(0, 0, k + 3.4, k), '+t', '+t');
+      row(k + 3.4, S / 2 - gw / 2, (s1, s2) => cell(F.rect(s1, 0, s2, k), '+t', '+t'));
+      row(S / 2 + gw / 2, S - k - 3.4, (s1, s2) => cell(F.rect(s1, 0, s2, k), '+t', '+t'));
+      cell(F.rect(S - k - 3.4, 0, S, k), '+t', '+t');
+      // the sides
+      row(k, D - k, (t1, t2) => { cell(F.rect(0, t1, k, t2), '+s', '+s'); cell(F.rect(S - k, t1, S, t2), '-s', '-s'); });
+      lamp(...F.pt(S / 2, k + 0.6), 2.4, 0.9, true);
     }
 
     // ---- a nymphaeum: the town's grand fountain, a little square open to
@@ -1575,7 +1622,7 @@ const RomanTown = (() => {
     house: [24, 'signinum'], domus: [26, 'mosaic'], shop: [40, 'earth'], insula: [22, 'signinum'], villa: [30, 'earth'],
     barn: [70, 'earth'], shed: [30, 'earth'], baths: [55, 'mosaic'], scaena: [45, 'marble'],
     basilica: [0, 'marble'], temple: [0, 'marble'],
-    portico: [0, 'paving'], peristyle: [0, 'mosaic'], palaestra: [0, 'paving'], market: [0, 'paving'],
+    portico: [0, 'paving'], peristyle: [0, 'mosaic'], palaestra: [0, 'paving'], market: [0, 'paving'], horreum: [0, 'signinum'],
   };
   const DOOR = 1.1;
   // what a door can't open onto: anything walled and higher than a man (an
@@ -1878,6 +1925,17 @@ const RomanTown = (() => {
       }
       return { against, middle, store, clear, put, area: (x2 - x1) * (y2 - y1), room };
     }
+    // a storeroom's goods: grain heaped on the floor and in sacks along the
+    // walls; firewood stacked to the roof along them; hay in heaps; oil and
+    // wine in their jars; baskets of the market's produce
+    const stock = (r, goods) => {
+      const [x1, y1, x2, y2] = r.room, long = x2 - x1 >= y2 - y1, L = (long ? x2 - x1 : y2 - y1) - 1.2;
+      if (goods === 'grain') { r.middle('grain', (x2 - x1) * 0.45, (y2 - y1) * 0.4); for (let k = 0; k < 3; k++) r.against('sacks', range(rng, 1.2, 2.2), 0.8); }
+      else if (goods === 'firewood') { for (let k = 0; k < 4; k++) r.against('woodpile', range(rng, 1.4, 2.6), 0.9, { tall: range(rng, 1.2, 1.9) }); }
+      else if (goods === 'hay') { r.middle('hay', (x2 - x1) * 0.6, (y2 - y1) * 0.55); r.against('hay', Math.max(1.5, L * 0.5), 1.4); }
+      else if (goods === 'jars') { r.store(true); r.store(false); r.store(false); }
+      else { for (let k = 0; k < 4; k++) r.against('baskets', range(rng, 1.2, 2.2), 0.65); }
+    };
     const hearth = r => {
       const h = r.against('hearth', 1.2, 0.8);
       if (h) { const [x, y] = toWorld(b, (h[0] + h[2]) / 2, (h[1] + h[3]) / 2); lamps.push({ x, y, z: b.z0 + 0.6, power: 0.5, hearth: true }); }
@@ -1997,6 +2055,7 @@ const RomanTown = (() => {
         case 'baths': if (!pools.has(room)) for (let k = 0; k < 3; k++) r.against('bench', range(rng, 2, 3.5), 0.5); break;
         case 'barn': for (let k = 0, n = 2 + (rng() * 3 | 0); k < n; k++) r.middle('hay', range(rng, 2, 3.5), range(rng, 2, 3.5)); r.store(true); break;
         case 'shed': r.store(false); r.against('chest', 1, 0.6); break;
+        case 'horreum': stock(r, b.goods); break;
         case 'scaena': if (rng() < 0.5) r.against('chest', 1.2, 0.7); break;
       }
     });
