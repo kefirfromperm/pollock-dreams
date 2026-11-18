@@ -18,9 +18,9 @@
 //   town                 { x, y, angle, hu, hv, corner, wall: { thickness, height } } the walls' rounded rectangle
 //   gates                [{ x, y, angle }] where the main streets leave, angle outwards
 //   grounds              [{ poly, kind }] convex patches of ground, to be laid in order:
-//                        street, main-street, paving, yard, garden, sand, floor, pool, well
+//                        street, main-street, paving, yard, garden, sand, floor, pool, well, mud (a pigs' wallow), trodden (the grass about it)
 //   fields               [{ poly, crop, angle }] crop: wheat, stubble, fallow, meadow, hay, pasture, vines,
-//                        olives, orchard;
+//                        olives, orchard; a pasture with pigs in it pigs, and mud { x, y, rx, ry, a } its wallow;
 //                        angle, of its rows or furrows
 //   roads                [{ points, width, kind }] kind: via (paved), track (earth)
 //   buildings            boxes and other solids, each { shape, use, mat, z0, ... }:
@@ -1611,6 +1611,34 @@ const RomanTown = (() => {
         const m = t.kind === 'shrub' ? 0.5 : 1;
         return !(grid.get(key(Math.floor(t.x / cell), Math.floor(t.y / cell))) || []).some(b => onBuilding(b, t.x, t.y, m));
       });
+    }
+
+    // pigs kept in some of the pastures, a wallow of mud in each, clear of
+    // its wall, its tree, its haystack, its well (chosen by where each lies,
+    // not by the rest of the town)
+    for (const f of out.fields) {
+      if (f.crop !== 'pasture' || !f.gate) continue;
+      const at = { x: f.poly[0][0], y: f.poly[0][1] };
+      if (spotHash(at, 5) > 0.09) continue;
+      const r = spotRng(at, 6), cx = f.poly.reduce((a, p) => a + p[0], 0) / f.poly.length, cy = f.poly.reduce((a, p) => a + p[1], 0) / f.poly.length;
+      for (let tries = 0; tries < 12; tries++) {
+        const q = f.poly[r() * f.poly.length | 0], k = range(r, 0.1, 0.45), x = lerp(cx, q[0], k), y = lerp(cy, q[1], k);
+        const rx = range(r, 2.6, 4.6), ry = rx * range(r, 0.55, 0.85), a = r() * TAU, n = 12;
+        const poly = Array.from({ length: n }, (_, i) => { const t = i / n * TAU; return [x + Math.cos(a) * rx * Math.cos(t) - Math.sin(a) * ry * Math.sin(t), y + Math.sin(a) * rx * Math.cos(t) + Math.cos(a) * ry * Math.sin(t)]; });
+        // (well inside the pasture's wall)
+        const shrink = f.poly.map(p => [lerp(cx, p[0], 0.85), lerp(cy, p[1], 0.85)]);
+        if (!poly.every(p => insideConvex(shrink, ...p))) continue;
+        if (B.some(b => (b.use === 'haystack' || b.use === 'well' || b.use === 'drystone') && Math.hypot(b.x - x, b.y - y) < rx + 6 && poly.concat([[x, y]]).some(p => onBuilding(b, p[0], p[1], 1)))) continue;
+        if (out.trees.some(t => Math.hypot(t.x - x, t.y - y) < rx + t.r * 0.6 + 0.5)) continue;
+        f.pigs = true; f.mud = { x, y, rx, ry, a };
+        // the grass about it trodden half bare; the mud itself a few blobs run together
+        const blob = (ox, oy, sx, sy, kind, bare) => G.push({ kind, bare, poly: Array.from({ length: n }, (_, i) => { const t = i / n * TAU, u = ox + sx * Math.cos(t), v = oy + sy * Math.sin(t); return [x + Math.cos(a) * u - Math.sin(a) * v, y + Math.sin(a) * u + Math.cos(a) * v]; }) });
+        blob(0, 0, rx * 1.7, ry * 1.75, 'trodden', 0.15); blob(0, 0, rx * 1.15, ry * 1.2, 'trodden', 0.55);
+        blob(0, 0, rx * 0.8, ry * 0.8, 'mud');
+        for (let k = 0; k < 3; k++) { const t = r() * TAU; blob(Math.cos(t) * rx * 0.35, Math.sin(t) * ry * 0.35, rx * range(r, 0.4, 0.62), ry * range(r, 0.4, 0.62), 'mud'); }
+        void poly;
+        break;
+      }
     }
 
     // and inside every building with rooms: its rooms, its doors, its furniture

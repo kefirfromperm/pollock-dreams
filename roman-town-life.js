@@ -82,6 +82,8 @@ const RomanTownLife = (() => {
   // colonnade with no walls, the basilica's nave
   const WALK = new Set(['steps', 'gate', 'bridge']);
   const walkable = b => WALK.has(b.use) || (b.use === 'portico' && !b.hole) || (b.use === 'basilica' && b.roof === 'gable');
+  // a fountain whole, its basin of water too: not to be walked into
+  const basin = b => b.use === 'fountain' ? { ...b, hole: null } : b;
 
   // ================= names, and what each is and does =================
   // A citizen his first name, his family's and his own; a woman her
@@ -217,7 +219,7 @@ const RomanTownLife = (() => {
     const FC = { pasture: 2.4, olives: 2.6, orchard: 2.6, vines: 4.5, wheat: 6, hay: 3.5, meadow: 3.5, stubble: 2.8, fallow: 3.2 };
     for (const f of town.fields) fillPoly(f.poly, FC[f.crop] || 3);
     for (const r of town.roads) fillLine(r.points, r.width / 2, r.kind === 'via' ? 1 : 1.05);
-    const GC = { street: 1, 'main-street': 1, paving: 1, yard: 1.3, garden: 1.7, sand: 1.2, floor: 1.1, vines: 4, pool: Infinity, well: Infinity };
+    const GC = { street: 1, 'main-street': 1, paving: 1, yard: 1.3, garden: 1.7, sand: 1.2, floor: 1.1, vines: 4, pool: Infinity, well: Infinity, mud: 2.6, trodden: 2.4 };
     for (const g of town.grounds) fillPoly(g.poly, GC[g.kind] ?? 1.3);
     if (town.river) fillLine(town.river.points, town.river.width / 2 + 0.4, Infinity);
     // (the ground as it is without what is built on it, to look at closer)
@@ -236,7 +238,7 @@ const RomanTownLife = (() => {
           // the seats, not the orchestra, nor the ways in at either end (the parodoi)
           const r = Math.hypot(a, d);
           if (a > 1.8 && r < b.r1 + 2.8 && r > b.r0 - 0.3) cost[k] = Infinity;
-        } else if (RomanTown.onBuilding(b, x, y, 0.3)) cost[k] = Infinity;
+        } else if (RomanTown.onBuilding(basin(b), x, y, 0.3)) cost[k] = Infinity;
       });
     }
     for (const b of town.buildings) if (b.use === 'bridge') { const R = reach(b); cells(b.x - R, b.y - R, b.x + R, b.y + R, (k, x, y) => { if (inBox(b, x, y)) cost[k] = 1; }); }
@@ -332,7 +334,7 @@ const RomanTownLife = (() => {
     function path(ax, ay, bx, by) {
       const t = snap(bx, by), s = t < 0 ? -1 : snap(ax, ay, 3, comp[t]);
       if (s < 0 || t < 0) return null;
-      if (s === t) return [[ax, ay], [bx, by]];
+      if (s === t) return [[ax, ay], costAt(bx, by) < Infinity ? [bx, by] : [t % nx + 0.5, ((t / nx) | 0) + 0.5]];
       stamp++; hn = 0;
       const ti = t % nx, tj = (t / nx) | 0;
       const h = k => { const dx = Math.abs(k % nx - ti), dy = Math.abs(((k / nx) | 0) - tj); return 1.45 * (Math.max(dx, dy) + 0.4142 * Math.min(dx, dy)); };
@@ -356,7 +358,9 @@ const RomanTownLife = (() => {
       for (let k = t; k >= 0; k = from[k]) cs.push(k);
       cs.reverse();
       const pts = cs.map(k => [k % nx + 0.5, ((k / nx) | 0) + 0.5]);
-      pts[0] = [ax, ay]; pts[pts.length - 1] = [bx, by];
+      // (from where one is and to where one goes, unless that is somewhere that can't be stood: then the nearest that can)
+      if (costAt(ax, ay) < Infinity) pts[0] = [ax, ay];
+      if (costAt(bx, by) < Infinity) pts[pts.length - 1] = [bx, by];
       return pull(pts, los);
     }
     const baseAt = (x, y) => { const k = cellOf(x, y); return k < 0 ? Infinity : base[k]; };
@@ -385,7 +389,7 @@ const RomanTownLife = (() => {
         const [x, y] = wx(i, j), k = j * gx + i;
         if (C.bs.some(b => inBox(b, x, y))) { inside[k] = 1; free[k] = 1; }
         // outside, the ground close up: clear of anything built by a hand's breadth
-        else free[k] = way.baseAt(x, y) < Infinity && !others.some(o => Math.abs(o.x - x) < reach(o) + 0.5 && Math.abs(o.y - y) < reach(o) + 0.5 && RomanTown.onBuilding(o, x, y, 0.15)) ? 1 : 0;
+        else free[k] = way.baseAt(x, y) < Infinity && !others.some(o => Math.abs(o.x - x) < reach(o) + 0.5 && Math.abs(o.y - y) < reach(o) + 0.5 && RomanTown.onBuilding(basin(o), x, y, 0.15)) ? 1 : 0;
       }
       // a shape's cells, by a test in the world, over its box in the world
       const mark = (x0, y0, x1, y1, test, v) => {
@@ -400,7 +404,7 @@ const RomanTownLife = (() => {
       // whatever else stands inside: a temple in its precinct, a pavilion, a well
       for (const o of others) {
         const r = reach(o) + 0.5;
-        mark(o.x - r, o.y - r, o.x + r, o.y + r, (x, y, k) => inside[k] && RomanTown.onBuilding(o, x, y, 0.15), 0);
+        mark(o.x - r, o.y - r, o.x + r, o.y + r, (x, y, k) => inside[k] && RomanTown.onBuilding(basin(o), x, y, 0.15), 0);
       }
       for (const g of town.grounds) {
         if (g.kind !== 'pool') continue;
@@ -1182,19 +1186,19 @@ const RomanTownLife = (() => {
     }
     {
       let budget = 520;
-      for (const f of pastures.slice().sort(() => rng() - 0.5)) {
-        if (budget <= 0 || chance(0.45)) continue;
+      for (const f of pastures.slice().sort((p, q) => (q.pigs ? 1 : 0) - (p.pigs ? 1 : 0) || rng() - 0.5)) {
+        if (budget <= 0 || (!f.pigs && chance(0.45))) continue;
         const F = frameOf(f);
         if (F.hu < 4 || F.hv < 4) continue;
-        const kind = wpick({ sheep: 4, goat: 1.6, cow: 2, horse: 0.8 });
-        const n = Math.min(budget, kind === 'sheep' ? 8 + (rng() * 22 | 0) : kind === 'goat' ? 5 + (rng() * 10 | 0) : kind === 'cow' ? 3 + (rng() * 7 | 0) : 2 + (rng() * 5 | 0));
-        const H = { kind, spread: kind === 'sheep' ? range(3, 6) : range(5, 10), beasts: [], mode: 'graze' };
+        const kind = f.pigs ? 'pig' : wpick({ sheep: 4, goat: 1.6, cow: 2, horse: 0.8 });
+        const n = Math.min(budget, kind === 'sheep' ? 8 + (rng() * 22 | 0) : kind === 'goat' ? 5 + (rng() * 10 | 0) : kind === 'cow' ? 3 + (rng() * 7 | 0) : kind === 'pig' ? 4 + (rng() * 8 | 0) : 2 + (rng() * 5 | 0));
+        const H = { kind, spread: kind === 'sheep' ? range(3, 6) : kind === 'pig' ? range(4, 7) : range(5, 10), beasts: [], mode: 'graze' };
         settle(H, f);
         // (the first of them to move on any time in the next hours)
         H.until = now + range(0.05, 4) * 3600;
         for (let k = 0; k < n; k++) {
           const [u, v] = H.clampU(H.mx + gauss() * H.spread, H.my + gauss() * H.spread * 0.7), [x, y] = H.pt(u, v);
-          H.beasts.push(being(kind, { herd: H, u, v, x, y, z: hAt(x, y), speed: kind === 'horse' ? 1.3 : kind === 'cow' ? 0.7 : 0.6, look: rng() }));
+          H.beasts.push(being(kind, { herd: H, u, v, x, y, z: hAt(x, y), speed: kind === 'horse' ? 1.3 : kind === 'cow' ? 0.7 : kind === 'pig' ? 0.5 : 0.6, look: rng(), muddy: kind === 'pig' ? rng() : 0 }));
         }
         budget -= n;
         herds.push(H);
@@ -1207,7 +1211,7 @@ const RomanTownLife = (() => {
         const flock = H.kind === 'sheep' || H.kind === 'goat';
         if (!spare.length || (!flock && chance(0.45))) continue;
         const m = spare.pop();
-        m.job = flock ? 'shepherd' : 'herdsman'; m.herd = H; H.shepherd = m; m.title = null; m.craft = null;
+        m.job = flock ? 'shepherd' : 'herdsman'; m.herd = H; H.shepherd = m; m.title = H.kind === 'pig' ? 'a swineherd' : null; m.craft = null;
         if (chance(flock ? 0.75 : 0.4)) H.dog = being('dog', { master: m, speed: 1.8, look: rng() });
       }
     }
@@ -1872,7 +1876,7 @@ const RomanTownLife = (() => {
         if (!there || warm) { const sp = seat(); go(ag, sp, { carry: 'staff' }); stay(ag, sp, short(until, 300, 900)); return; }
         // the grass here grazed down: on to fresh, if there is time before evening
         const sh = showOf(clock.day);
-        if (Hd.mode === 'graze' && now > Hd.until && clock.R > 0.5 && clock.R < 8.6 && !(ag.showGoer && sh && clock.R > SHOW[0] - 2.5)) {
+        if (Hd.mode === 'graze' && Hd.kind !== 'pig' && now > Hd.until && clock.R > 0.5 && clock.R < 8.6 && !(ag.showGoer && sh && clock.R > SHOW[0] - 2.5)) {
           ag.doing = 'drove';
           if (moveFlock(ag, Hd)) return;
           Hd.until = now + range(900, 2400);
@@ -1989,7 +1993,7 @@ const RomanTownLife = (() => {
         // the watch, two by two, from place to place with their torches
         const targets = [...gates.map(G => G.inner), ...fountains.map(f => [f.spots[0].x, f.spots[0].y]), ...forumPts.slice(0, 6)];
         if (!targets.length) return atHome(ag, until, 'room');
-        const [x, y] = choice(targets), sp = spot(x + range(-1, 1), y + range(-1, 1), NaN, range(0, TAU), 'stand', { cl: null });
+        const [x0, y0] = choice(targets), ox = range(-1, 1), oy = range(-1, 1), ok = way.costAt(x0 + ox, y0 + oy) < Infinity, sp = spot(ok ? x0 + ox : x0, ok ? y0 + oy : y0, NaN, range(0, TAU), 'stand', { cl: null });
         go(ag, sp, { torch: true, carry: 'torch' }); stay(ag, sp, now + range(60, 240), { torch: true });
       },
       sentry(ag, e, until) {
@@ -2622,6 +2626,29 @@ const RomanTownLife = (() => {
         ag.legs.push({ k: 'stay', sp: null, pose: chance(0.5) ? 'stand' : 'graze', until: now + range(3, 10) });
         return;
       }
+      if (ag.herd && ag.herd.kind === 'pig') {
+        // pigs: rooting about the pasture, snouts down; to the wallow, to
+        // stand in it, to roll and lie in it, the more in the heat of the day;
+        // lying down at night, close together, some in the mud
+        const Hd = ag.herd, M = Hd.f.mud, hot = R > 4 && R < 9;
+        const wallow = M && (night ? chance(0.3) : chance(hot ? 0.65 : 0.25));
+        // (caked with it after a wallow, drying and flaking off over the hours)
+        ag.muddy = clamp((ag.muddy || 0) - (now - (ag.mudT ?? now)) / 7200 + (wallow ? 0.45 : 0), 0, 1); ag.mudT = now;
+        let tx, ty;
+        for (let k = 0; k < 6 && tx === undefined; k++) {
+          let x, y;
+          if (wallow) { const t = rng() * TAU, q = Math.sqrt(rng()) * 0.8; x = M.x + Math.cos(M.a) * M.rx * q * Math.cos(t) - Math.sin(M.a) * M.ry * q * Math.sin(t); y = M.y + Math.sin(M.a) * M.rx * q * Math.cos(t) + Math.cos(M.a) * M.ry * q * Math.sin(t); }
+          else { const [u, v] = Hd.clampU(Hd.mx + gauss() * Hd.spread, Hd.my + gauss() * Hd.spread * 0.8); [x, y] = Hd.pt(u, v); }
+          if (standable(ag, x, y) && way.los([ag.x, ag.y], [x, y]) && (k > 3 || !Hd.beasts.some(b => b !== ag && Math.hypot(b.x - x, b.y - y) < 0.8))) [tx, ty] = [x, y];
+        }
+        if (rng() < 0.05) { Hd.mx = clamp(Hd.mx + gauss() * 3, -Hd.hu * 0.8, Hd.hu * 0.8); Hd.my = clamp(Hd.my + gauss() * 3, -Hd.hv * 0.8, Hd.hv * 0.8); }
+        if (tx === undefined) [tx, ty] = [ag.x, ag.y];
+        const d = Math.hypot(tx - ag.x, ty - ag.y), lie = night || (wallow && chance(hot ? 0.7 : 0.4));
+        if (warm && !ag.placed) { ag.x = tx; ag.y = ty; ag.z = groundZ(tx, ty); ag.placed = true; }
+        else if (d > 0.3) ag.legs.push({ k: 'trot', x: tx, y: ty, speed: ag.speed * (d > 10 ? 1.6 : 0.8), pose: 'walk' });
+        ag.legs.push({ k: 'stay', sp: null, pose: lie ? 'lie' : wallow && chance(0.5) ? 'stand' : 'graze', until: now + (lie ? range(300, night ? 2400 : 1500) : range(6, 40)), wallow });
+        return;
+      }
       if (ag.herd) {
         // grazing near the herd's middle, the middle drifting; lying down
         // in the heat of noon (in a tree's shade, if there is one) and at night
@@ -2768,7 +2795,7 @@ const RomanTownLife = (() => {
     function moveFlock(ag, H) {
       const from = gateOf(H.f);
       if (!from) return false;
-      const cands = pastures.filter(f => f !== H.f && !f.herd && !f.bound).map(f => [f, Math.hypot(f.poly[0][0] - H.cx, f.poly[0][1] - H.cy)]).filter(([, d]) => d > 35 && d < 420).sort((p, q) => p[1] - q[1]).slice(0, 10).sort(() => rng() - 0.5);
+      const cands = pastures.filter(f => f !== H.f && !f.herd && !f.bound && !f.pigs).map(f => [f, Math.hypot(f.poly[0][0] - H.cx, f.poly[0][1] - H.cy)]).filter(([, d]) => d > 35 && d < 420).sort((p, q) => p[1] - q[1]).slice(0, 10).sort(() => rng() - 0.5);
       for (const [f] of cands.slice(0, 4)) {
         const F = frameOf(f), to = gateOf(f);
         if (!to || F.hu < 4 || F.hv < 4) continue;
@@ -2989,7 +3016,7 @@ const RomanTownLife = (() => {
       ag.a += clamp(turn(ag.a, want), -7 * dt, 7 * dt);
       return false;
     }
-    const STRIDE = { person: 1.4, rider: 2.2, sheep: 0.8, goat: 0.8, cow: 1.5, ox: 1.5, horse: 2, donkey: 1.2, dog: 1, cat: 0.7, hen: 0.25, cart: 3 };
+    const STRIDE = { pig: 0.7, person: 1.4, rider: 2.2, sheep: 0.8, goat: 0.8, cow: 1.5, ox: 1.5, horse: 2, donkey: 1.2, dog: 1, cat: 0.7, hen: 0.25, cart: 3 };
     function update(ag, dt) {
       if (ag.follow) return;
       if (!ag.leg) {
@@ -3334,8 +3361,8 @@ const RomanTownLife = (() => {
     // heading; where two overlap they are pushed apart, the lighter more,
     // what is sitting, lying or yoked not at all; walkers meeting step
     // aside to the right; and the timid get out of the way ----
-    const SIZE = { sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
-    const HEAVY = { person: 1, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, horse: 4, donkey: 2.5, rider: 5 };
+    const SIZE = { pig: [0.3, 0.26], sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
+    const HEAVY = { person: 1, pig: 1.2, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, horse: 4, donkey: 2.5, rider: 5 };
     const SETTLED = new Set(['sit', 'lie', 'recline', 'kneel', 'squat', 'swim']);
     const sizeOf = ag => ag.kind === 'person' ? (ag.pose === 'lie' || ag.pose === 'recline' ? [0.55, 0.25] : [0, ag.age === 'child' ? 0.17 : ag.pose === 'sit' ? 0.3 : 0.23]) : SIZE[ag.kind] || [0, 0.3];
     function weight(ag) {
@@ -3438,7 +3465,7 @@ const RomanTownLife = (() => {
     // the timid out of the way: sheep and goats of people on their feet and
     // of dogs, hens of everyone but whoever feeds them, cats of dogs; the
     // big beasts only of what comes right up to them
-    const FLEE = { sheep: [2.6, 6, 2.4], goat: [2.2, 5, 2.8], hen: [1.6, 3.5, 1.8], cat: [1.8, 5, 3.4], cow: [1.2, 3, 1.4], ox: [1, 2.5, 1.2], horse: [1.3, 3, 2.6], donkey: [1.2, 3, 1.6] };
+    const FLEE = { pig: [1.5, 4, 1.8], sheep: [2.6, 6, 2.4], goat: [2.2, 5, 2.8], hen: [1.6, 3.5, 1.8], cat: [1.8, 5, 3.4], cow: [1.2, 3, 1.4], ox: [1, 2.5, 1.2], horse: [1.3, 3, 2.6], donkey: [1.2, 3, 1.6] };
     function shy() {
       // what frightens, gathered from its side (a dog, someone on foot, a rider, a cart)
       const fear = new Map();

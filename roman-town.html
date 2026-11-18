@@ -15,7 +15,7 @@
 <title>Roman Town</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river; and its people, each at their trade, eating when hungry and sleeping when tired, the whole town off to the theatre or the games on a feast day, the shepherds moving their flocks from pasture to pasture, about whatever the hour of the Roman day has them about, on and on.">
+<meta name="description" content="A small Roman town laid out at random and seen from straight above, north up, lit by the sun or the moon as they stand by your clock: its walls and gates, forum, baths and theatre, houses round their atria, the tombs along the roads out, the fields and olive groves, the hills and the river; and its people, each at their trade, eating when hungry and sleeping when tired, the whole town off to the theatre or the games on a feast day, the shepherds moving their flocks from pasture to pasture, pigs in their mud, all of it to be heard as well as seen, about whatever the hour of the Roman day has them about, on and on.">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1915; }
   canvas {
@@ -37,6 +37,12 @@
     padding: 5px 9px; border-radius: 4px; display: none; white-space: normal;
   }
   #who b { font-weight: 600; color: #fff8e6; }
+  #sound {
+    position: fixed; right: 16px; bottom: 14px;
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #f4efe3; background: rgba(20,17,15,.55);
+    padding: 6px 10px; border: 0; border-radius: 4px; cursor: pointer;
+  }
   #who i { font-style: normal; color: #e6c98e; }
 </style>
 </head>
@@ -44,11 +50,13 @@
 <canvas id="c"></canvas>
 <div id="hint"></div>
 <div id="who"></div>
+<button id="sound" type="button" aria-pressed="false">♪ sound: off</button>
 <script src="pollock.js"></script>
 <script src="roman-town.js"></script>
 <script src="roman-town-view.js"></script>
 <script src="roman-town-sky.js"></script>
 <script src="roman-town-life.js"></script>
+<script src="roman-town-sound.js"></script>
 <script>
 (() => {
   const PD = PollockDreams;
@@ -120,6 +128,16 @@
   // ---- its people and beasts, about whatever the hour has them about ----
   const life = RomanTownLife.create(town, { seed, date: clock() });
   window.life = life;
+  // ---- and what is to be heard of it: off till asked for (browsers let
+  // sound begin only from a click or a key); the more there is in view the
+  // quieter each thing in it, the whole as loud however close one looks ----
+  const sound = RomanTownSound.create(town, seed), soundBtn = document.getElementById('sound');
+  function toggleSound() {
+    const on = sound.toggle();
+    soundBtn.textContent = `♪ sound: ${on ? 'on' : 'off'}`;
+    soundBtn.setAttribute('aria-pressed', on);
+  }
+  soundBtn.addEventListener('click', toggleSound);
   function changed() { dirty = true; }
   // drawn again and again, for the wind and the flames, up to 30 times a
   // second; still while paused (P, or ?still)
@@ -134,10 +152,11 @@
       // (the people on as often as they are drawn)
       if (lifeT > 0) { life.step(lifeT, clock()); lifeT = 0; }
       view.draw(viewRect(), sky, clockT, life);
+      sound.update(life, seenRect(), sky, !paused);
       if (!started) {
         started = true;
         const t = clock(), hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
-        hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom · tap someone: who they are' : 'drag or arrows: move · wheel or + −: zoom · point at someone: who they are · 0: all · P: pause · S: save PNG');
+        hint.textContent = `town ${seed} · ${hm}, north up · ` + (touch ? 'drag: move · pinch: zoom · tap someone: who they are' : 'drag or arrows: move · wheel or + −: zoom · point at someone: who they are · 0: all · P: pause · M: sound · S: save PNG');
         showHint();
       }
     }
@@ -244,6 +263,7 @@
       case '-': case '_': zoomAt(DW / 2, DH / 2, 1 / 1.5); break;
       case '0': zoom = 1; cx = W / 2; cy = H / 2; changed(); break;
       case 'p': case 'P': paused = !paused; break;
+      case 'm': case 'M': if (!e.repeat) toggleSound(); break;
       case 's': case 'S': {
         const a = document.createElement('a');
         a.download = `roman-town-${seed}.png`;

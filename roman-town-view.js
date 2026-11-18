@@ -43,7 +43,7 @@ const RomanTownView = (() => {
   const GROUND = {
     natural: 0, street: 1, 'main-street': 2, paving: 3, yard: 4, garden: 5, sand: 6, floor: 7, pool: 8, well: 9,
     wheat: 10, stubble: 11, fallow: 12, meadow: 13, hay: 14, pasture: 15, vines: 16, olives: 17, orchard: 18,
-    via: 19, track: 20, river: 21, bank: 22,
+    via: 19, track: 20, river: 21, bank: 22, mud: 23, trodden: 24,
   };
   const SOLID = { tile: 0, stone: 1, marble: 2, timber: 3, turf: 4, steps: 5, sand: 6, paving: 7, passage: 8, wall: 9, mosaic: 10, signinum: 11, earth: 12, pool: 13, plaster: 14, column: 15, fabric: 16, cushion: 17, dark: 18, hay: 19, terracotta: 20, door: 21, bronze: 22, grain: 23, sacking: 24, logs: 25, wicker: 26, produce: 27, iron: 28, embers: 29, liquor: 30, cloth: 31, bread: 32 };
   const TREES = {
@@ -364,12 +364,29 @@ const RomanTownView = (() => {
         c = mix(rgb(40.0, 68.0, 64.0), rgb(92.0, 100.0, 80.0), 0.55 * smoothstep(0.65, 1.0, abs(vT))) * (0.92 + 0.12 * fnoise(p / 9.0, uSeed + 17));
       }
       else if (m == 22) { f = 0.75; }
+      else if (m == 23) {
+        // a pigs' wallow: dark wet mud, trodden and rooted, puddles in its
+        // hollows mirroring the sky, drier and paler at its edge
+        float h = fnoise(p / 1.1, uSeed + 61) * 0.7 + fnoise(p / 0.35, uSeed + 63) * 0.3;
+        c = mix(rgb(62.0, 48.0, 36.0), rgb(92.0, 74.0, 54.0), smoothstep(0.55, 0.85, fnoise(p / 2.5, uSeed + 65)));
+        f = 0.85 + 0.25 * fnoise(p / 0.18, uSeed + 67);
+        if (h < 0.36) { flag = 0.5; c = rgb(60.0, 56.0, 44.0); vec3 wr = windRipples(p, uTime, 0.15); n = normalize(vec3(-wr.xy, 1.0)); fine = wr.z; f = 1.0; }
+        else n = normalize(n + vec3(fnoise(p / 0.25, uSeed + 69) - 0.5, fnoise(p / 0.25, uSeed + 71) - 0.5, 0.0) * 0.6);
+      }
+      else if (m == 24) {
+        // grass trodden about a wallow: bare earth showing through in patches, splashed with mud
+        float b = fnoise(p / 0.9, uSeed + 73) * 0.6 + fnoise(p / 0.3, uSeed + 75) * 0.4, th = 0.72 - 0.4 * vAngle, e = smoothstep(th, th + 0.12, b);
+        c = mix(rgb(112.0, 126.0, 60.0), rgb(96.0, 78.0, 56.0), e);
+        f = tint * (0.78 + 0.3 * fnoise(p / 1.3, uSeed + 19)) * (0.9 + 0.2 * fnoise(p / 14.0, uSeed + 23));
+        grass = 1.0 - e;
+      }
       // and how tall it stands, so how much the wind shows on it: wheat most,
       // a meadow's long grass, the hills' rough grass; a pasture, grazed
       // short, and a garden's, hardly
       float tall = 0.55 * grass;
       if (m == 13) { grass = 1.0; tall = 1.0; }
       if (m == 15) { grass = 1.0; tall = 0.12; }
+      if (m == 24) tall = 0.1;
       if (m == 10) { grass = 1.4; tall = 1.4; }
       if (m == 5) { grass = 0.4; tall = 0.1; }
       if (grass > 0.0) {
@@ -805,6 +822,7 @@ const RomanTownView = (() => {
     horse: rgbs([[116, 76, 48], [70, 48, 36], [150, 92, 54], [178, 168, 156], [44, 36, 32], [168, 130, 88]]), donkey: rgbs([[128, 118, 108], [150, 136, 118], [104, 92, 80]]),
     dog: rgbs([[176, 136, 90], [96, 70, 48], [40, 36, 34], [214, 204, 186], [150, 112, 70]]), cat: rgbs([[170, 120, 70], [80, 74, 70], [40, 36, 34], [200, 190, 176]]),
     hen: rgbs([[150, 90, 50], [196, 150, 96], [236, 228, 212], [60, 48, 40], [170, 70, 40]]),
+    pig: rgbs([[222, 172, 160], [214, 160, 150], [70, 60, 58], [58, 50, 50], [196, 140, 120], [230, 188, 174]]),
   };
   const C = (r, g, b) => [r / 255, g / 255, b / 255];
   const WOOD = C(118, 86, 56), DARKWOOD = C(76, 56, 40), CLAY = C(180, 98, 62), WICKER = C(176, 146, 92), IRON = C(90, 90, 96), HOOF = C(46, 40, 36), HORN = C(214, 204, 176), STRAW = C(206, 178, 104);
@@ -1236,6 +1254,24 @@ const RomanTownView = (() => {
       if (!lod) { legs(0.24, 0.08, 0.36, 0.035, coat, 0.15); S(-0.45, 0, 0.55, 0.18, 0.03, 0.03, coat, 0); }
       return;
     }
+    if (kind === 'pig') {
+      // a long round body on short legs, the head low, a flat snout, ears
+      // flopped forward, a curl of a tail; caked with mud after a wallow
+      const mud = C(92, 72, 50), m = Math.min(1, f.muddy || 0), col = coat.map((v, i) => lerp(v, mud[i], 0.75 * m)), low = coat.map((v, i) => lerp(v, mud[i], Math.min(1, 0.4 + m)));
+      if (lie) {
+        E(0, 0, 0.24, 0.55, 0.3, 0.22, col); E(0.52, 0.04, 0.2, 0.2, 0.17, 0.16, col); E(0.7, 0.04, 0.18, 0.06, 0.07, 0.06, low);
+        if (!lod) for (const sg of [-1, 1]) E(0.45, sg * 0.12 + 0.04, 0.32, 0.09, 0.06, 0.03, col, sg * 0.4);
+        return;
+      }
+      const hz = graze ? 0.2 : 0.36, hf = graze ? 0.66 : 0.6;
+      E(0, 0, 0.42, 0.56, 0.27, 0.26, col); E(0, 0, 0.26, 0.5, 0.22, 0.14, low);
+      E(hf, 0, hz, 0.2, 0.16, 0.16, col); E(hf + 0.19, 0, hz - 0.03, 0.05, 0.08, 0.07, low.map(v => v * 0.9));
+      if (lod) return;
+      for (const sg of [-1, 1]) E(hf - 0.02, sg * 0.1, hz + 0.13, 0.09, 0.06, 0.03, col, sg * 0.5);
+      legs(0.3, 0.13, 0.22, 0.05, low, 0.1);
+      E(-0.58, 0, 0.5, 0.06, 0.04, 0.04, col); E(-0.62, 0.03, 0.54, 0.03, 0.03, 0.03, col);
+      return;
+    }
     if (kind === 'hen') {
       const peck = graze && Math.sin(ph * T * 2.3) > 0.3;
       E(0, 0, 0.22, 0.15, 0.1, 0.11, coat); E(-0.13, 0, 0.3, 0.07, 0.05, 0.08, coat.map(v => v * 0.8));
@@ -1340,7 +1376,9 @@ const RomanTownView = (() => {
       }
       gline(RP, R.width / 2 - 0.6, GROUND.river, R.level, ways);
     }
-    for (const g of town.grounds) gpoly(g.poly, GROUND[g.kind] ?? GROUND.yard, g.angle || 0);
+    // (the grass trodden about a wallow the same green as its pasture, how bare it is for its angle)
+    const tintOf = g => { const [x, y] = g.poly[0], f = town.fields.find(f => f.mud && Math.hypot(f.mud.x - x, f.mud.y - y) < 15); return f ? hash(Math.round(f.poly[0][0] * 7), Math.round(f.poly[0][1] * 7), seed) : 0; };
+    for (const g of town.grounds) gpoly(g.poly, GROUND[g.kind] ?? GROUND.yard, g.kind === 'trodden' ? g.bare : g.angle || 0, g.kind === 'trodden' ? tintOf(g) : 0);
     const groundVAO = gl.createVertexArray(), groundN = GV.length / 7;
     gl.bindVertexArray(groundVAO);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
