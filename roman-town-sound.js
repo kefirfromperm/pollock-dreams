@@ -21,6 +21,13 @@
 //   const sound = RomanTownSound.create(town, seed)
 //   sound.toggle()                          on or off (it must be begun by a click or a key)
 //   sound.update(life, rect, sky, playing)  what is in rect [x, y, w, h] now, a few times a second
+//
+// Or rendered offline, for a recording: what is heard noted as it is seen,
+// and played later into an OfflineAudioContext at the moments it was:
+//
+//   const heard = sound.hear(life, rect, sky, playing)   what is to be heard in rect, and where
+//   const off = RomanTownSound.create(town, seed, offlineAc)   (on from the first)
+//   off.play(heard, rect, t, dt)                          sounded at t, dt after the last
 const RomanTownSound = (() => {
   const TAU = Math.PI * 2;
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
@@ -36,7 +43,8 @@ const RomanTownSound = (() => {
     const g = ac.createGain(), p = ac.createStereoPanner();
     g.gain.value = 0; p.pan.value = clamp(pan, -1, 1);
     g.connect(p).connect(dest);
-    setTimeout(() => { try { p.disconnect(); } catch (e) { void e; } }, (t - ac.currentTime + len + 0.5) * 1000);
+    // (let go once done; rendered offline, all is let go at the end)
+    if (!ac.startRendering) setTimeout(() => { try { p.disconnect(); } catch (e) { void e; } }, (t - ac.currentTime + len + 0.5) * 1000);
     return g;
   }
   // an envelope: up in a, down over d (exponentially), from t
@@ -344,7 +352,7 @@ const RomanTownSound = (() => {
   // a tune for the pipes: a mode, wandering, each piper his own phrase
   const MODE = [62, 64, 65, 67, 69, 70, 72, 74, 76];
 
-  function create(town, seed = 1) {
+  function create(town, seed = 1, offline = null) {
     const r = mulberry32((seed ^ 0x50d) >>> 0);
     let ac = null, master = null, B = null, on = false, last = 0;
     const tunes = new Map();
@@ -357,7 +365,7 @@ const RomanTownSound = (() => {
     const fires = (town.lamps || []).filter(l => l.hearth).map(l => [l.x, l.y]), lamps = (town.lamps || []).filter(l => !l.hearth).map(l => [l.x, l.y]);
 
     function start() {
-      ac = new AudioContext({ latencyHint: 'playback' });
+      ac = offline || new AudioContext({ latencyHint: 'playback' });
       const limit = ac.createDynamicsCompressor();
       limit.threshold.value = -6; limit.knee.value = 6; limit.ratio.value = 12; limit.attack.value = 0.003; limit.release.value = 0.25;
       limit.connect(ac.destination);
@@ -374,6 +382,8 @@ const RomanTownSound = (() => {
       return on;
     }
 
+    if (offline) { start(); on = true; master.gain.value = 1; }
+
     // what is in view, a few times a second: how much of each kind, and
     // where; each kind its share of the whole; the beds turned to theirs,
     // the voices sounded as often as their makers would, as loud as their share
@@ -383,6 +393,10 @@ const RomanTownSound = (() => {
       if (now - last < 0.15) return;
       const dt = Math.min(0.5, now - last);
       last = now;
+      play(hear(life, rect, sky, playing), rect, now, dt);
+    }
+    // what is to be heard in rect: each kind, how much of it, and where
+    function hear(life, rect, sky, playing) {
       const [x0, y0, w, h] = rect, x1 = x0 + w, y1 = y0 + h, cx = x0 + w / 2;
       const inView = (x, y) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
       const day = sky.sun.el > -0.05, dusk = sky.sun.el > -0.15 && !day;
@@ -443,6 +457,12 @@ const RomanTownSound = (() => {
       // crickets in the grass by night, all over
       if (!day) add('cricket', cx, y0 + h / 2, 6);
       add('wind', cx, y0 + h / 2, 1);
+      return src;
+    }
+    // what is heard, sounded at now: the beds turned to their shares, the
+    // voices due in the dt since the last time
+    function play(src, rect, now, dt) {
+      const [x0, , w] = rect, cx = x0 + w / 2;
       // the whole, and each kind's share of it
       let P = 0;
       for (const k in src) P += src[k].n * (KIND[k].w ?? BEDW[k]);
@@ -459,11 +479,11 @@ const RomanTownSound = (() => {
       for (const k in src) {
         const K = KIND[k];
         if (K.bed) continue;
-        const s = src[k], rate = s.n * K.rate, play = Math.min(rate, K.cap || CAP), share = s.n * K.w / P;
+        const s = src[k], rate = s.n * K.rate, often = Math.min(rate, K.cap || CAP), share = s.n * K.w / P;
         // (as loud as makes its share, played as often as it is: louder the rarer)
-        const amp = Math.min(0.9 / K.pk, LEVEL * Math.sqrt(share / (play * K.E)));
+        const amp = Math.min(0.9 / K.pk, LEVEL * Math.sqrt(share / (often * K.E)));
         // (how many in this moment: as many as are due, the odd one at random)
-        const lam = play * dt, count = Math.min(K.cap ? 8 : 6, Math.floor(lam) + (r() < lam % 1 ? 1 : 0));
+        const lam = often * dt, count = Math.min(K.cap ? 8 : 6, Math.floor(lam) + (r() < lam % 1 ? 1 : 0));
         for (let c = 0; c < count; c++) {
           const [x, y] = s.at[r() * s.at.length | 0], t = now + 0.05 + r() * dt;
           let note;
@@ -472,7 +492,7 @@ const RomanTownSound = (() => {
         }
       }
     }
-    return { toggle, update, get on() { return on; } };
+    return { toggle, update, hear, play, get on() { return on; } };
   }
   // how loud a bed is of the whole, for each that makes it
   const QUIET = { wind: 0.35, water: 0.45, river: 0.6 };

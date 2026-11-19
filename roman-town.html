@@ -133,6 +133,12 @@
     changed();
   }
   function pan(dx, dy) { cx -= dx / scale(); cy -= dy / scale(); clampView(); changed(); }
+  // (and for whoever records it: where the view is, what of the world is
+  // seen, the sky and the hour; and to look elsewhere)
+  window.camera = {
+    get: () => ({ x: cx, y: cy, zoom, rect: seenRect(), sky, date: clock() }),
+    look(x, y, z = zoom) { cx = x; cy = y; zoom = z; clampView(); changed(); },
+  };
   window.addEventListener('resize', () => { clampView(); changed(); });
 
   // ---- the view: the town drawn by the graphics card, whenever anything changed ----
