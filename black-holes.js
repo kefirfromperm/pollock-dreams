@@ -54,8 +54,6 @@
 //   dust rubs: where it crowds, it is pulled to move as the gas about it
 //     does, the motion lost heat, the heat, a photon's worth at a time,
 //     shone off as a fast particle that flies free a while;
-//   relic waves, from the first moments, run through it every way, for
-//     ever, shifting space to and fro across the way they go;
 //   a gravitational wave runs out at c from where it began, and gives its
 //     energy, shell by shell, to the dust it passes, pushing it out.
 // The weak field is pushed past what it keeps exactly where it is pushed
@@ -123,7 +121,6 @@ const BlackHoles = (() => {
     EMIT_RATE = 1500, // Hawking particles from a hole a second, at most
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
-    RELIC = 8, RELIC_H = 0.05, RELIC_L = [0.15, 0.6], // relic waves: how many, their strain, their wavelengths
     PETERS = true, // close pairs losing their orbits to gravitational waves
     ALPHA_COLLAPSE = 0.7, // dust whose own well is this deep collapses
     CLEAR = 0.1, // (no nearer a hole than this: dust heaped about a hole is the hole's to take)
@@ -426,37 +423,6 @@ const BlackHoles = (() => {
     const ripples = [];
     const R_MAX = hyp(Lx, Ly) / 2;
     const events = []; // what happened this step, for whoever listens
-    // Relic waves: what is left of the waves of the universe's first moments,
-    // running through it every way, at c, for ever. Each a plane wave, as
-    // the torus has them (a whole number of wavelengths round it each way),
-    // its strain h: space shifted across the way it runs, to and fro, by
-    // h/k at most, everything in it alike, dust and holes (nothing pushed:
-    // where it goes it is carried, and brought back, as the wave passes).
-    // {kx, ky, w (ω), phi (its phase at the origin at time 0), h}
-    const relic = [];
-    for (let k = 0; k < RELIC; k++) {
-      const th = TAU * rng(), lam = RELIC_L[0] * (RELIC_L[1] / RELIC_L[0]) ** rng();
-      const kx = TAU * Math.round(Lx * Math.cos(th) / lam) / Lx, ky = TAU * Math.round(Ly * Math.sin(th) / lam) / Ly, kk = hyp(kx, ky);
-      if (!kk) { k--; continue; }
-      relic.push({ kx, ky, w: c * kk, phi: TAU * rng(), h: RELIC_H * (0.5 + rng()) });
-    }
-    const RN = relic.length, rKx = new Float64Array(RN), rKy = new Float64Array(RN), rEx = new Float64Array(RN), rEy = new Float64Array(RN), rWt = new Float64Array(RN);
-    function relicShift(dt) {
-      if (!RN) return;
-      relic.forEach((r, k) => {
-        // (the shift's rate, h/k · ω · sin: c·h, at most)
-        const kk = hyp(r.kx, r.ky), a = r.h / kk * r.w * dt;
-        rKx[k] = r.kx; rKy[k] = r.ky; rEx[k] = -r.ky / kk * a; rEy[k] = r.kx / kk * a; rWt[k] = r.phi - r.w * time;
-      });
-      const shift = (x, y) => {
-        let sx = 0, sy = 0;
-        for (let k = 0; k < RN; k++) { const s = Math.sin(rKx[k] * x + rKy[k] * y + rWt[k]); sx += rEx[k] * s; sy += rEy[k] * s; }
-        shX = sx; shY = sy;
-      };
-      let shX = 0, shY = 0;
-      for (let i = 0; i < n; i++) { shift(px[i], py[i]); px[i] = wrap(px[i] + shX, Lx); py[i] = wrap(py[i] + shY, Ly); }
-      for (const h of holes) { shift(h.x, h.y); h.x = wrap(h.x + shX, Lx); h.y = wrap(h.y + shY, Ly); }
-    }
 
     // ---- the beginning: dust, warm and even, a few holes ----
     {
@@ -923,9 +889,6 @@ const BlackHoles = (() => {
         if (w.R >= R_MAX || !beyond || w.E <= 1e-12) ripples.splice(k, 1); // (what is left, the fix puts back)
       }
 
-      // ---- the relic waves go by ----
-      relicShift(dt);
-
       // ---- the dust rubs, and shines ----
       friction(dt);
 
@@ -1317,7 +1280,7 @@ const BlackHoles = (() => {
       get n() { return n; }, px, py, ox, oy, al, be, qx, qy, Hg, ph,
       hx, hy, hn, TRAIL, get trailHead() { return trailHead; },
       heat() { let s = 0; for (let i = 0; i < n; i++) s += ht[i]; return s; },
-      holes, ripples, relic, events, stats, Sarr: S,
+      holes, ripples, events, stats, Sarr: S,
       // the grid's Φ, over c²
       potential(out) { for (let k = 0; k < NC; k++) out[k] = phi[k] / c2; return out; },
       get energy() { return energy; }, get target() { return target; },
