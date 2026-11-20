@@ -14,11 +14,12 @@
 // How loud each is goes by everything in view: each kind of sound has its
 // share of one and the same loudness, as much as what makes it is of all
 // that is to be heard there. Looked at close, the few things in view are
-// heard the louder for being all there is; from far out, the whole town at
-// once, each thing in it the quieter for there being so much. And the whole
-// the quieter the farther out one looks from, as from high above it: as
-// loud as it gets close in, a quarter of that with all the land in view.
-// The wind always, so that nothing is ever all there is.
+// heard the louder for being all there is, though a quiet corner stays
+// quiet, never swelled past a street's worth; from far out, the whole town
+// at once, each thing in it the quieter for there being so much. And the
+// whole the quieter the farther out one looks from, as from high above it:
+// as loud as it gets close in, an eighth of that with all the land in view.
+// The wind always, low, so that nothing is ever all there is.
 //
 //   const sound = RomanTownSound.create(town, seed)
 //   sound.toggle()                          on or off (it must be begun by a click or a key)
@@ -135,17 +136,25 @@ const RomanTownSound = (() => {
       formants(ac, o, g, [[500 + r() * 400, 5, 1], [1200 + r() * 800, 6, 0.5]]);
       env(g, t, amp, 0.02, len);
     },
-    // sheep and goats: a quavering bleat, from the chest (a sheep's low, a
-    // goat's a little higher and thinner)
+    // sheep and goats: a "baa", the mouth shut on it and opening wide, then
+    // closing; the voice quavering fast, breaking up twenty and more times a
+    // second, a little breath through it; falling away at the end (a sheep's
+    // lower and rounder, a goat's higher, thinner, more nasal, quavering faster)
     bleat(ac, dest, t, amp, pan, r, goat) {
-      const f = (goat ? 250 : 165) + r() * (goat ? 80 : 60), len = 0.55 + r() * 0.35, g = voice(ac, dest, t, pan, len + 0.2), o = osc(ac, 'sawtooth', f, t, len + 0.1);
-      o.frequency.linearRampToValueAtTime(f * 0.85, t + len);
-      wobble(ac, o.frequency, 6 + r() * 3, f * 0.05, t, len);
-      wobble(ac, g.gain, 8 + r() * 3, amp * 0.35, t, len);
-      const lp = filter(ac, 'lowpass', goat ? 2200 : 1600, 0.7);
-      formants(ac, o, lp, goat ? [[700 + r() * 150, 3, 1], [1700, 5, 0.3]] : [[520 + r() * 120, 3, 1], [1250, 5, 0.3]]);
-      lp.connect(g);
-      env(g, t, amp * 0.8, 0.05, len);
+      const f = (goat ? 290 : 185) + r() * (goat ? 90 : 55), len = 0.45 + r() * 0.35, g = voice(ac, dest, t, pan, len + 0.2);
+      const o = osc(ac, 'sawtooth', f, t, len + 0.1);
+      o.frequency.setValueAtTime(f * 0.9, t); o.frequency.linearRampToValueAtTime(f, t + 0.09); o.frequency.linearRampToValueAtTime(f * 0.86, t + len);
+      const q = ac.createGain(); q.gain.value = 0.6;
+      wobble(ac, q.gain, (goat ? 27 : 21) + r() * 5, 0.4, t, len + 0.1);
+      const mouth = filter(ac, 'lowpass', 450, 0.8);
+      mouth.frequency.setValueAtTime(420, t); mouth.frequency.linearRampToValueAtTime(goat ? 2600 : 1900, t + 0.1); mouth.frequency.setValueAtTime(goat ? 2600 : 1900, t + len * 0.6); mouth.frequency.linearRampToValueAtTime(650, t + len);
+      o.connect(q);
+      formants(ac, q, mouth, goat ? [[820 + r() * 120, 4, 1], [1950, 6, 0.5], [2800, 8, 0.25]] : [[640 + r() * 90, 4, 1], [1450, 6, 0.45], [2500, 8, 0.12]]);
+      const n = noise(ac, t, len + 0.1), bp = filter(ac, 'bandpass', goat ? 1900 : 1300, 3), nk = ac.createGain(); nk.gain.value = 0.025;
+      n.connect(bp).connect(nk).connect(mouth);
+      const soft = filter(ac, 'lowpass', goat ? 3200 : 2400, 0.7);
+      mouth.connect(soft).connect(g);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(amp, t + 0.05); g.gain.setValueAtTime(amp, t + len * 0.65); g.gain.linearRampToValueAtTime(0.0001, t + len);
     },
     // cattle: a long low moo, opening and closing
     moo(ac, dest, t, amp, pan, r) {
@@ -331,8 +340,8 @@ const RomanTownSound = (() => {
     pipe: { v: 'pipe', rate: 2.2, w: 1.2, E: 0.0739, pk: 1.45 },
     kid: { v: 'kid', rate: 0.08, w: 0.25, E: 0.0006, pk: 0.32 },
     word: { v: 'word', rate: 0.3, w: 0.08, E: 0.0002, pk: 0.25 },
-    bleat: { v: 'bleat', rate: 1 / 35, w: 0.18, E: 0.0013, pk: 0.36 },
-    goat: { v: 'bleat', rate: 1 / 30, w: 0.18, E: 0.00145, pk: 0.37, arg: true },
+    bleat: { v: 'bleat', rate: 1 / 110, w: 0.1, E: 0.00209, pk: 0.34 },
+    goat: { v: 'bleat', rate: 1 / 90, w: 0.1, E: 0.00248, pk: 0.34, arg: true },
     moo: { v: 'moo', rate: 1 / 80, w: 0.35, E: 0.1065, pk: 0.91 },
     neigh: { v: 'neigh', rate: 1 / 120, w: 0.35, E: 0.0027, pk: 0.3 },
     bray: { v: 'bray', rate: 1 / 240, w: 0.5, E: 0.0344, pk: 0.35 },
@@ -471,10 +480,12 @@ const RomanTownSound = (() => {
     function play(src, rect, now, dt) {
       const [x0, , w, h] = rect, cx = x0 + w / 2;
       // (the farther out, the quieter: full within a street or two, falling off past it)
-      const far = clamp(Math.pow(NEAR / Math.max(w, h), 0.6), 0.2, 1), level = LEVEL * far;
-      // the whole, and each kind's share of it
+      const far = clamp(Math.pow(NEAR / Math.max(w, h), 0.9), 0.08, 1), level = LEVEL * far;
+      // the whole, and each kind's share of it; (a quiet corner stays quiet:
+      // the few things there not swelled to fill the whole, nor the wind)
       let P = 0;
       for (const k in src) P += src[k].n * (KIND[k].w ?? BEDW[k]);
+      P = Math.max(P, QUIET_FLOOR);
       const panOf = x => clamp((x - cx) / (w / 2), -1, 1) * 0.8;
       for (const k in B) {
         const s = src[k], share = s ? s.n * BEDW[k] / P : 0, b = B[k];
@@ -504,7 +515,9 @@ const RomanTownSound = (() => {
     return { toggle, update, hear, play, get on() { return on; } };
   }
   // how loud a bed is of the whole, for each that makes it
-  const QUIET = { wind: 0.35, water: 0.45, river: 0.6 };
+  const QUIET = { wind: 0.2, water: 0.3, river: 0.45 };
+  // (the least the whole is reckoned at: a street's worth of goings-on)
+  const QUIET_FLOOR = 6;
   const BEDW = { fire: 0.25, wind: 1.2, water: 0.6, river: 0.35, voices: 0.12, crowd: 0.12, mill: 0.35, carts: 0.5, applause: 0.2 };
   return { create, V, KIND, beds };
 })();
