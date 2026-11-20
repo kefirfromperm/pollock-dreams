@@ -2676,9 +2676,12 @@ const RomanTownLife = (() => {
         for (let s = 1; s <= steps - 2; s++) { const n = Math.floor((c.r0 + s * 0.8 + 0.5) * span / 0.62); for (let k = 0; k < n; k++) out.push({ s, t: -span / 2 + (k + 0.5) * span / n }); }
       } else if (where === 'arena' && amph) {
         const b = amph, steps = Math.round((b.a - b.a0) / 0.8), r0 = b.a0 / b.a;
+        // (none in the four ways in, cut through the seats as the view draws
+        // them: whole slices of the ring, a ninety-sixth each, widening outward)
+        const gap = (t, rho) => { const a = (Math.floor(t / TAU * 96) + 0.5) / 96 * TAU; return Math.abs(rho * b.b * Math.sin(a)) < 2.2 || Math.abs(rho * b.a * Math.cos(a)) < 2.2; };
         for (let s = 1; s <= steps - 2; s++) {
           const rho = r0 + (1 - r0) * (s + 0.5) / steps, A = b.a * rho, Bb = b.b * rho, per = Math.PI * (3 * (A + Bb) - Math.sqrt((3 * A + Bb) * (A + 3 * Bb))), n = Math.floor(per / 0.62);
-          for (let k = 0; k < n; k++) out.push({ s, t: (k + 0.5) / n * TAU });
+          for (let k = 0; k < n; k++) { const t = (k + 0.5) / n * TAU; if (!gap(t, rho)) out.push({ s, t }); }
         }
       }
       return (SEATS[where] = out.sort((p, q) => p.s - q.s || rng() - 0.5));
