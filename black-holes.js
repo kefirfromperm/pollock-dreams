@@ -47,6 +47,8 @@
 //   dust collapses: where its own well is deep enough that a horizon is all
 //     but there, the dust nearly trapped is a hole, with all it came to;
 //     or, spinning faster than one hole can, two, going round one another;
+//   two particles of dust come within COLLIDE of one another: they bounce
+//     off one another, elastically, their momentum and energy as they were;
 //   dust rubs: where it crowds, it is pulled to move as the gas about it
 //     does, the motion lost heat, the heat, a photon's worth at a time,
 //     shone off as a fast particle that flies free a while;
@@ -122,6 +124,7 @@ const BlackHoles = (() => {
     DENSE_MAX = 40, // (no more often than at this many times as dense)
     E_PHOTON = 1, // what a photon carries off, of a particle's rest energy (it leaves at about 0.87c)
     PHOTON_LIFE = 0.4, // seconds a photon flies, untouched by friction, before it is dust again
+    COLLIDE = 0.002, // two particles of dust this near bounce off one another (some two css px)
   } = {}) {
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
     const c2 = c * c, c4 = c2 * c2;
@@ -422,7 +425,7 @@ const BlackHoles = (() => {
 
     let target = null, targetP = null; // the totals, as they were at first
     let energy = 0, momentum = [0, 0], time = 0;
-    const stats = { swallowed: 0, emitted: 0, merged: 0, collapsed: 0, burst: 0, fixed: 0, photons: 0 };
+    const stats = { swallowed: 0, emitted: 0, merged: 0, collapsed: 0, burst: 0, fixed: 0, photons: 0, collided: 0 };
 
     // ---- friction ----
     // Dust is gas: where it crowds, its particles collide, as often as it is
@@ -508,6 +511,103 @@ const BlackHoles = (() => {
         if (ph[i] < 0) ph[i] = -ph[i];
         be[i] = c * al[i] * Math.sqrt(qx[i] * qx[i] + qy[i] * qy[i]) / S[i];
       }
+    }
+
+    // ---- collisions ----
+    // Two particles of dust that come within COLLIDE of one another bounce
+    // off one another, elastically: pushed apart along the line between
+    // them, each keeping its way across it, by as much as keeps their
+    // momentum and their energy as they were (along the line, as two bodies
+    // meeting head on: seen from where their momenta along it cancel, each
+    // turns back as fast as it came; and, fast or slow, they part). In
+    // a step a fast one goes further than COLLIDE, so what is asked is
+    // whether, each going straight from where it was to where it is, the
+    // two came that near; if they did, each goes on from there the new way,
+    // for what is left of the step. So near, their wells are as deep: their
+    // momenta, α·q each, are turned at one α, the two's mean, so Σq is kept
+    // exactly (their energy all but: the fix puts back the hair it is off).
+    // A photon goes through the dust (it is light), and a particle bounces
+    // no more than once a step. Found by where each was halfway through the
+    // step, in bins as wide as COLLIDE and the furthest any went: two that
+    // came that near are in the same bin or next ones.
+    const dX = new Float64Array(CAP), dY = new Float64Array(CAP), binNext = new Int32Array(CAP), hit = new Uint8Array(CAP);
+    let bins = new Int32Array(0);
+    function collide(dt) {
+      if (!COLLIDE || n < 2) return;
+      let far = 0;
+      for (let i = 0; i < n; i++) {
+        const ddx = near(px[i] - ox[i], Lx), ddy = near(py[i] - oy[i], Ly);
+        dX[i] = ddx; dY[i] = ddy; hit[i] = 0;
+        if (!(ph[i] > 0)) far = Math.max(far, ddx * ddx + ddy * ddy);
+      }
+      const s = COLLIDE + Math.sqrt(far);
+      const BX = Math.max(1, Math.floor(Lx / s)), BY = Math.max(1, Math.floor(Ly / s)), bw = Lx / BX, bh = Ly / BY;
+      if (bins.length < BX * BY) bins = new Int32Array(BX * BY);
+      bins.fill(-1, 0, BX * BY);
+      const binOf = i => {
+        const x = wrap(ox[i] + 0.5 * dX[i], Lx), y = wrap(oy[i] + 0.5 * dY[i], Ly);
+        return Math.min(BY - 1, y / bh | 0) * BX + Math.min(BX - 1, x / bw | 0);
+      };
+      for (let i = 0; i < n; i++) {
+        if (ph[i] > 0) continue;
+        const b = binOf(i);
+        binNext[i] = bins[b]; bins[b] = i;
+      }
+      // (the bins next to one: on a torus only a few bins wide, each once)
+      const x0 = BX >= 3 ? -1 : 0, x1 = BX >= 2 ? 1 : 0, y0 = BY >= 3 ? -1 : 0, y1 = BY >= 2 ? 1 : 0;
+      const D2 = COLLIDE * COLLIDE;
+      for (let i = 0; i < n; i++) {
+        if (ph[i] > 0 || hit[i]) continue;
+        const b = binOf(i), bx = b % BX, by = (b / BX) | 0;
+        for (let oy_ = y0; oy_ <= y1 && !hit[i]; oy_++) for (let ox_ = x0; ox_ <= x1 && !hit[i]; ox_++) {
+          for (let j = bins[((by + oy_ + BY) % BY) * BX + (bx + ox_ + BX) % BX]; j >= 0; j = binNext[j]) {
+            if (j <= i || hit[j]) continue;
+            // when, in the step, they were COLLIDE apart, coming nearer
+            const d0x = near(ox[j] - ox[i], Lx), d0y = near(oy[j] - oy[i], Ly), rx = dX[j] - dX[i], ry = dY[j] - dY[i];
+            const hb = d0x * rx + d0y * ry;
+            if (hb >= 0) continue;
+            const a = rx * rx + ry * ry, cc = d0x * d0x + d0y * d0y - D2;
+            let tc = 0;
+            if (cc > 0) {
+              const disc = hb * hb - a * cc;
+              if (disc < 0) continue;
+              tc = (-hb - Math.sqrt(disc)) / a;
+              if (tc > 1) continue;
+            }
+            if (bounce(i, j, d0x + tc * rx, d0y + tc * ry, tc, dt)) break;
+          }
+        }
+      }
+    }
+    // i and j bounce, n (from i to j) the line between them, at tc of the step
+    function bounce(i, j, nx, ny, tc, dt) {
+      const nl = hyp(nx, ny);
+      if (!(nl > 0)) return false;
+      nx /= nl; ny /= nl;
+      // their momenta there (in c, per unit rest mass), their energies, and how they go along n
+      const a = 0.5 * (al[i] + al[j]), k = a / c;
+      const p1x = k * qx[i], p1y = k * qy[i], p2x = k * qx[j], p2y = k * qy[j];
+      const e1 = Math.sqrt(1 + p1x * p1x + p1y * p1y), e2 = Math.sqrt(1 + p2x * p2x + p2y * p2y);
+      const a1 = p1x * nx + p1y * ny, a2 = p2x * nx + p2y * ny;
+      // seen from where their momenta along n cancel (going at b along it), i's along it, s1
+      const b = (a1 + a2) / (e1 + e2), g = 1 / Math.sqrt(1 - b * b), s1 = g * (a1 - b * e1);
+      if (s1 <= 0) return false; // (not going at one another)
+      // turned back, and seen from afar again: what i is pushed along n, j as much the other way
+      const J = g * (b * g * (e1 - b * a1) - s1) - a1;
+      goOn(i, (p1x + J * nx) / k, (p1y + J * ny) / k, tc, dt);
+      goOn(j, (p2x - J * nx) / k, (p2y - J * ny) / k, tc, dt);
+      hit[i] = hit[j] = 1;
+      stats.collided++;
+      return true;
+    }
+    // i, bounced at tc of the step, its momentum now ux, uy: on from there
+    function goOn(i, ux, uy, tc, dt) {
+      const a = al[i], u2 = ux * ux + uy * uy;
+      qx[i] = ux; qy[i] = uy;
+      S[i] = Math.sqrt(c4 + c2 * a * a * u2);
+      be[i] = c * a * Math.sqrt(u2) / S[i];
+      const v = a * a * a * c2 / S[i] * (1 - tc) * dt;
+      px[i] = wrap(ox[i] + tc * dX[i] + v * ux, Lx); py[i] = wrap(oy[i] + tc * dY[i] + v * uy, Ly);
     }
 
     // One step of dt (its own seconds).
@@ -694,6 +794,9 @@ const BlackHoles = (() => {
         sumScale += alpha * m * c2 * alpha * alpha * u2 / S[i];
       }
       holes.forEach((h, k) => { h.jx = jx[k]; h.jy = jy[k]; }); // the dust's pull on the holes, as momentum, over the step
+
+      // ---- the dust collides ----
+      collide(dt);
 
       // ---- the holes move ----
       moveHoles(dt);
