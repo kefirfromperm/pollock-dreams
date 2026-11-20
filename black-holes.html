@@ -506,7 +506,7 @@
       return { NX: best.NX, NY: best.NY };
     };
     // (to try it otherwise: any of the universe's settings in the address,
-    // ?MASS=0.5&HOLE_MASS=0.05,0.1&EMIT_RATE=1800, a list with commas)
+    // ?G=0.3&HOLES=5&EMIT_RATE=1800, a list with commas)
     const tried = {};
     for (const [k, v] of new URLSearchParams(location.search)) {
       if (!/^[A-Z][A-Z_]*$/.test(k)) continue;

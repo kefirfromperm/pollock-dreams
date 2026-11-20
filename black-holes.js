@@ -104,17 +104,20 @@ const BlackHoles = (() => {
   }
 
   // A universe Lx × Ly (Ly = 1 is the unit of length), of rest mass MASS at
-  // first, G = 1. Time is in its own seconds.
+  // first. Time is in its own seconds. Gravity is G as strong as it might
+  // be: every mass taken as G times itself, and G = 1 (a hole's horizon,
+  // GM/c², its well, −GM/r, and its pull, all as much smaller).
   function universe(rng, {
     Lx = 1, Ly = 1, N = 16000, NY = 128, NX = 0, // (NX: as square cells as powers of two allow, unless given)
     c = 3,
-    MASS = 0.5, // its rest mass at first (G = 1: as light, as weak its pull)
-    HOLES = 3, HOLE_MASS = [0.05, 0.1], // the holes there at first
+    G = 0.35, // how strong gravity is
+    MASS = 1, // its rest mass at first
+    HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
     HOLE_WARM = 0.4, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
-    K = 0.6, // Hawking power: dE/dt = −K/M²
+    K = 1.2, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
-    M_END = 0.02, // a hole this light bursts
+    M_END = 0.04, // a hole this light bursts
     EMIT_RATE = 1500, // Hawking particles from a hole a second, at most
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
@@ -131,6 +134,8 @@ const BlackHoles = (() => {
     STICK = 1, // or stick, sharing their momenta alike, as often as |p₁ + p₂|²/(|p₁| + |p₂|)² of this
     TRAIL = 96, TRAIL_DT = 0.05 / 60, // where each particle was: this many places back, one every this long (for its track)
   } = {}) {
+    // (G = 1 from here on, every mass G times itself)
+    MASS *= G; HOLE_MASS = HOLE_MASS.map(M => M * G); M_END *= G; K *= G;
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
     const c2 = c * c, c4 = c2 * c2;
     const ALPHA_MIN = 0.02;
