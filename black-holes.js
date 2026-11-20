@@ -230,6 +230,23 @@ const BlackHoles = (() => {
     GF[0] = GF[1];
     const gridK = r => { const f = Math.min(r, RG) / dG, i = Math.min(NG - 2, f | 0), t = f - i; return GK[i] * (1 - t) + GK[i + 1] * t; };
     const gridF = r => { const f = Math.min(r, RG) / dG, i = Math.min(NG - 2, f | 0), t = f - i; return GF[i] * (1 - t) + GF[i + 1] * t; };
+    // A hole and a particle pull one another through the grid, too, and
+    // there not alike: each by the other's weight, and each moved by it as
+    // its own speed has it (a fast one twice). Near a hole that is far
+    // apart: a particle deep in its well, or fast, gains more from the hole
+    // than the hole, by its weight, from it, and when it falls in, the hole
+    // gets all at once momentum it never paid for. So within LR of a hole
+    // the two pull as a pair, alike and opposite: the hole takes back what
+    // the particle gained of the hole's grid pull, instead of the grid's
+    // answer to its weight (by the kernel's own pull, tapered out by LR,
+    // where its table ends).
+    const LR = 0.9 * RG, LR0 = 0.6 * RG;
+    const lrPull = r => {
+      if (r >= LR) return 0;
+      if (r <= LR0) return gridF(r);
+      const z = (LR - r) / (LR - LR0);
+      return gridF(r) * z * z * (3 - 2 * z);
+    };
     // a pair's whole pull over r, the grid's and the short range, per unit mass of each
     const pairPull = r => { let f = gridF(r); if (r < RCUT) { short(r); f += shPull; } return f; };
     const OFF = [[0, 0], [1, 0], [0, 1], [1, 1]]; // the four cells of weights(), relative to the first
@@ -366,6 +383,8 @@ const BlackHoles = (() => {
     // hole, kicked about by its own quanta, would; what more momentum
     // there is, the dust gets, see the fix.)
     const HOLE_GAMMA = 1.25;
+    // (as fast as that, α²c of what falls at it is outrun out to about 4.4 r_h)
+    const CHASE = 5;
     function refit(h, Stot, Px, Py) {
       h.S = Stot;
       const a2 = h.al * h.al, P2 = Px * Px + Py * Py;
@@ -420,6 +439,7 @@ const BlackHoles = (() => {
     // any way, untouched by friction for PHOTON_LIFE, then is dust again.
     const cN = new Float64Array(NC), cQx = new Float64Array(NC), cQy = new Float64Array(NC), cF = new Float64Array(NC);
     const cH = new Float64Array(NC), cShone = new Int32Array(NC), tK = new Int32Array(CAP);
+    const cRx = new Float64Array(NC), cRy = new Float64Array(NC), cStay = new Int32Array(NC); // a shining cell's recoil, and who in it takes it
     function friction(dt) {
       if (!FRICTION) { for (let i = 0; i < n; i++) if (ph[i] > 0) ph[i] = Math.max(0, ph[i] - dt); return; }
       cN.fill(0); cQx.fill(0); cQy.fill(0);
@@ -438,7 +458,7 @@ const BlackHoles = (() => {
         cF[k] = 1 - Math.exp(-FRICTION * Math.min(cN[k] / mean, DENSE_MAX) * dt);
       }
       const eph = E_PHOTON * m * c2;
-      cH.fill(0); cShone.fill(0);
+      cH.fill(0); cShone.fill(0); cRx.fill(0); cRy.fill(0); cStay.fill(0);
       for (let i = 0; i < n; i++) {
         if (ph[i] > 0) continue;
         weights(px[i], py[i]);
@@ -460,18 +480,31 @@ const BlackHoles = (() => {
         const kc = tK[i];
         if (cH[kc] - cShone[kc] * eph >= eph) {
           cShone[kc]++;
-          const th = TAU * rng();
+          const th = TAU * rng(), qx0 = qx[i], qy0 = qy[i];
           kick(i, eph, Math.cos(th), Math.sin(th));
+          cRx[kc] -= m * (qx[i] - qx0); cRy[kc] -= m * (qy[i] - qy0);
           ph[i] = -PHOTON_LIFE; // (marked: a photon just now; see below)
           events.push({ type: 'photon', x: px[i], y: py[i] });
           stats.photons++;
         }
       }
+      // The photon's momentum, deep in a well a great deal (its energy there,
+      // e/α, the more), is pushed back on the gas that shone it, its cell's
+      // others alike, their heat paying for what that moves them: else it
+      // came from nowhere, and was all the dust's to make up, every
+      // particle pushed at once; and all a hole's at once, if it fell in.
+      for (let i = 0; i < n; i++) if (!ph[i] && cShone[tK[i]]) cStay[tK[i]]++;
       // what is left of each such cell's heat, its particles share as they had it
       for (let i = 0; i < n; i++) {
         if (ph[i] > 0) continue;
         const kc = tK[i];
         if (cShone[kc]) ht[i] *= (cH[kc] - cShone[kc] * eph) / cH[kc];
+        if (!ph[i] && cStay[kc]) {
+          const S0 = S[i], a = al[i];
+          qx[i] += cRx[kc] / (m * cStay[kc]); qy[i] += cRy[kc] / (m * cStay[kc]);
+          S[i] = Math.sqrt(c4 + c2 * a * a * (qx[i] * qx[i] + qy[i] * qy[i]));
+          ht[i] -= a * m * (S[i] - S0);
+        }
         if (ph[i] < 0) ph[i] = -ph[i];
         be[i] = c * al[i] * Math.sqrt(qx[i] * qx[i] + qy[i] * qy[i]) / S[i];
       }
@@ -526,6 +559,7 @@ const BlackHoles = (() => {
       const hx = holes.map(h => h.x), hy = holes.map(h => h.y), hw = holes.map(h => h.Hg / c2), hr = holes.map(h => h.rh);
       const hJ = holes.map(h => h.J), hChi = holes.map(h => Math.max(-1, Math.min(1, chiOf(h)))), hSh = holes.map(shadowOf);
       const hp = new Float64Array(H); // the dust's short range at each hole
+      const hlx = new Float64Array(H), hly = new Float64Array(H); // the grid's pull on each hole of the dust near it (to come off: see lrPull)
       for (let i = 0; i < n; i++) {
         const w = m * Hg[i] / c2;
         let Pl;
@@ -545,6 +579,8 @@ const BlackHoles = (() => {
           const L = -ddx * qy[i] + ddy * qx[i]; // its angular momentum about the hole, per unit mass
           if (r < takenAt(hSh[k], hChi[k], qi > 0 && r > 0 ? L / (r * qi) : 0)) into = k;
           if (hJ[k]) { drag(hJ[k], hr[k], r); E += m * omg * L; }
+          const lp = lrPull(r);
+          if (lp) { hlx[k] += w * lp * ddx; hly[k] += w * lp * ddy; }
           if (r < RCUT) {
             short(Math.max(r, 1e-6));
             P0 += hw[k] * shPhi;
@@ -562,6 +598,7 @@ const BlackHoles = (() => {
       for (let k = 0; k < H; k++) {
         const h = holes[k];
         h.hp = hp[k];
+        h.lx += hlx[k]; h.ly += hly[k];
         h.al = lapse(h.longP + hp[k]);
         h.S = h.M * Math.sqrt(c4 + c2 * h.al * h.al * (h.qx * h.qx + h.qy * h.qy));
         E += h.al * h.S; Px += h.M * h.qx; Py += h.M * h.qy;
@@ -572,6 +609,15 @@ const BlackHoles = (() => {
       // ---- the dust moves ----
       // (last first, so that one swallowed, the one put in its place has moved already)
       const hfx = new Float64Array(H), hfy = new Float64Array(H), jx = new Float64Array(H), jy = new Float64Array(H);
+      const lgx = new Float64Array(H), lgy = new Float64Array(H); // each hole's grid pull on this one (as at the step's start, as the grid's is)
+      // each hole's velocity, and how near it a body can be left behind
+      // (where α²c, the fastest anything falls, is less than its speed)
+      const hvx = new Float64Array(H), hvy = new Float64Array(H), hChase = new Float64Array(H);
+      holes.forEach((h, k) => {
+        const a2 = h.al * h.al, f = a2 * h.al * c2 / Math.sqrt(c4 + c2 * a2 * (h.qx * h.qx + h.qy * h.qy));
+        hvx[k] = f * h.qx; hvy[k] = f * h.qy;
+        hChase[k] = (CHASE * h.rh) ** 2;
+      });
       let sumScale = 0; // for the fix: d(Σ αS)/dλ as the momenta scale by 1 + λ
       for (let i = n - 1; i >= 0; i--) {
         ox[i] = px[i]; oy[i] = py[i];
@@ -581,6 +627,10 @@ const BlackHoles = (() => {
         const sub = H ? Math.min(128, Math.max(1, Math.ceil(dt * c / (0.15 * tGap[i])))) : 1;
         const h = dt / sub;
         let x = px[i], y = py[i], ux = qx[i], uy = qy[i], swallowed = -1, alpha = al[i], u2 = 0;
+        for (let k = 0; k < H; k++) {
+          const ddx = near(hx[k] - x, Lx), ddy = near(hy[k] - y, Ly), lp = hw[k] * lrPull(hyp(ddx, ddy));
+          lgx[k] = lp * ddx; lgy[k] = lp * ddy;
+        }
         for (let s = 0; s < sub; s++) {
           // the pull and Φ here: the grid's (as at the step's start) and the holes' short range
           let fx = -Gx, fy = -Gy, P = Pl, vx = 0, vy = 0;
@@ -596,6 +646,15 @@ const BlackHoles = (() => {
                 jx[k] += m * gxk * h; jy[k] += m * gyk * h;
                 vx += omg * ddy; vy -= omg * ddx; // (ω·(−r_y, r_x), r from the hole)
               }
+            }
+            if (r2 < hChase[k]) {
+              // falling at the hole as fast as anything can there (α²c, near
+              // all of it straight at it), and hardly gaining on it: the hole
+              // runs from it at more than half that. It would hang there
+              // behind it, the pull piling momentum on it without end, all of
+              // it the hole's at once when at last it fell in. It is the hole's.
+              const r = Math.sqrt(r2), a2 = alpha * alpha, fall = a2 * alpha * c2 * (ux * ddx + uy * ddy) / (r * Math.sqrt(c4 + c2 * a2 * (ux * ux + uy * uy)));
+              if (fall > 0.9 * a2 * c && 2 * (hvx[k] * ddx + hvy[k] * ddy) / r > fall) { swallowed = k; break; }
             }
             if (r2 < RCUT2 || hSh[k] * 1.3 > RCUT) {
               const r = Math.sqrt(r2), qq = hyp(ux, uy), L = -ddx * uy + ddy * ux;
@@ -615,8 +674,11 @@ const BlackHoles = (() => {
           u2 = ux * ux + uy * uy;
           const Sl = Math.sqrt(c4 + c2 * a2 * u2), k1 = (Sl + c2 * a2 * u2 / Sl) / c2;
           ux += k1 * fx * h; uy += k1 * fy * h;
-          // and as much the other way to each hole that pulled it
-          for (let k = 0; k < H; k++) if (hfx[k] || hfy[k]) { jx[k] -= m * k1 * hfx[k] * h; jy[k] -= m * k1 * hfy[k] * h; }
+          // and as much the other way to each hole that pulled it (near, and through the grid)
+          for (let k = 0; k < H; k++) {
+            const ax = hfx[k] + lgx[k], ay = hfy[k] + lgy[k];
+            if (ax || ay) { jx[k] -= m * k1 * ax * h; jy[k] -= m * k1 * ay * h; }
+          }
           u2 = ux * ux + uy * uy;
           const k2 = a2 * alpha * c2 / Math.sqrt(c4 + c2 * a2 * u2);
           x += (k2 * ux + vx) * h; y += (k2 * uy + vy) * h;
@@ -677,7 +739,7 @@ const BlackHoles = (() => {
             const ddx = near(px[i] - w.x, Lx), ddy = near(py[i] - w.y, Ly), d2 = ddx * ddx + ddy * ddy;
             if (d2 < R02 || d2 >= R12) continue;
             const d = Math.sqrt(d2) || 1;
-            kick(i, e, ddx / d, ddy / d);
+            kick(i, e, ddx / d, ddy / d, true); // (in or out, the way it goes: a wave stirs the dust, it doesn't turn it all back at once)
             w.E -= e;
           }
         }
@@ -719,8 +781,8 @@ const BlackHoles = (() => {
       const rx = near(px[i] - h.x, Lx), ry = near(py[i] - h.y, Ly), L = rx * qy[i] - ry * qx[i];
       drag(h.J, h.rh, r);
       const before = al[i] * m * S[i] + ht[i] + h.al * h.S - h.Hg / c2 * w * pp + m * omg * L; // (and its being dragged round, gone into it, and its heat)
-      // (its momentum as it is there: near the hole its own grows past what the hole felt pull it back)
-      refit(h, before / a1, h.M * h.qx + al[i] * m * qx[i], h.M * h.qy + al[i] * m * qy[i]);
+      // (all its momentum: the hole, pulled back as much as it pulled it, has paid for every bit of it)
+      refit(h, before / a1, h.M * h.qx + m * qx[i], h.M * h.qy + m * qy[i]);
       h.al = a1;
       h.Hg += m * Hg[i]; // (its weight, from now on the hole's: the grid sees no jump)
       h.J += al[i] * m * L; // its angular momentum about the hole (as its momentum, as it is there), the hole's spin now
@@ -831,12 +893,16 @@ const BlackHoles = (() => {
       stats.burst++;
     }
 
-    // a particle given energy e (as seen from afar), pushed along (ex, ey)
-    function kick(i, e, ex, ey) {
+    // a particle given energy e (as seen from afar), pushed along (ex, ey);
+    // or, least, along whichever of (ex, ey) and its opposite it already
+    // goes (pushed along (ex, ey) going the other way, it is turned back,
+    // all of its momentum that way reversed, for however little energy)
+    function kick(i, e, ex, ey, least = false) {
       const a2 = al[i] * al[i];
       const S1 = S[i] + e / (m * al[i]), u2 = qx[i] * qx[i] + qy[i] * qy[i];
       const u2n = (S1 * S1 - c4) / (c2 * a2), along = qx[i] * ex + qy[i] * ey;
-      const lam = -along + Math.sqrt(Math.max(0, along * along - u2 + u2n));
+      const root = Math.sqrt(Math.max(0, along * along - u2 + u2n));
+      const lam = least && along < 0 ? -along - root : -along + root;
       qx[i] += lam * ex; qy[i] += lam * ey;
       S[i] = Math.sqrt(c4 + c2 * a2 * (qx[i] * qx[i] + qy[i] * qy[i]));
     }
