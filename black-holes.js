@@ -108,6 +108,7 @@ const BlackHoles = (() => {
     c = 3,
     MASS = 1, // its rest mass at first
     HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
+    HOLE_WARM = 0.2, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
     K = 0.6, // Hawking power: dE/dt = −K/M²
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
@@ -421,15 +422,21 @@ const BlackHoles = (() => {
       for (let k = 0; k < N; k++) addParticle(rng() * Lx, rng() * Ly, gauss() * s, gauss() * s);
       for (let k = 0; k < HOLES; k++) {
         const M = HOLE_MASS[0] + rng() * (HOLE_MASS[1] - HOLE_MASS[0]);
-        const h0 = makeHole(rng() * Lx, rng() * Ly, M * c2, 0, 0, 1);
+        // a push, any way: its momentum per unit rest mass, as the dust's is
+        const sh = HOLE_WARM * c / Math.SQRT2;
+        let ux = gauss() * sh, uy = gauss() * sh;
+        const u = Math.hypot(ux, uy), uMax = c / Math.sqrt(3); // (γv at half c)
+        if (u > uMax) { ux *= uMax / u; uy *= uMax / u; }
+        const h0 = makeHole(rng() * Lx, rng() * Ly, M * Math.sqrt(c4 + c2 * (ux * ux + uy * uy)), M * ux, M * uy, 1);
         h0.J = (rng() * 2 - 1) * 0.6 * jMax(h0.M);
       }
       // the holes are made of dust: as much rest mass taken from it
       const taken = holes.reduce((s, h) => s + h.M, 0);
       for (let k = Math.round(taken / m); k > 0 && n; k--) removeParticle((rng() * n) | 0);
-      // no momentum at all
+      // no momentum at all: the dust, as a whole, going against the holes' pushes
       let sx = 0, sy = 0;
       for (let i = 0; i < n; i++) { sx += qx[i]; sy += qy[i]; }
+      for (const h of holes) { sx += h.M * h.qx / m; sy += h.M * h.qy / m; }
       for (let i = 0; i < n; i++) {
         qx[i] -= sx / n; qy[i] -= sy / n;
         S[i] = Hg[i] = Math.sqrt(c4 + c2 * (qx[i] ** 2 + qy[i] ** 2));
