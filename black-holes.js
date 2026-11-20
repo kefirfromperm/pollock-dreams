@@ -125,6 +125,7 @@ const BlackHoles = (() => {
     E_PHOTON = 1, // what a photon carries off, of a particle's rest energy (it leaves at about 0.87c)
     PHOTON_LIFE = 0.4, // seconds a photon flies, untouched by friction, before it is dust again
     COLLIDE = 0.002, // two particles of dust this near bounce off one another (some two css px)
+    TRAIL = 96, TRAIL_DT = 0.05 / 60, // where each particle was: this many places back, one every this long (for its track)
   } = {}) {
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
     const c2 = c * c, c4 = c2 * c2;
@@ -308,12 +309,23 @@ const BlackHoles = (() => {
     // (for the step: the grid's pull and Φ at each, the way to the nearest horizon, the hole it is in)
     const tGx = new Float64Array(CAP), tGy = new Float64Array(CAP), tPl = new Float64Array(CAP), tGap = new Float64Array(CAP);
     const tInto = new Int16Array(CAP);
+    // where each has been, the last TRAIL places, one every TRAIL_DT: a ring,
+    // its newest at trailHead, the same slot for all (hn, how many it has yet)
+    const hx = new Float32Array(CAP * TRAIL), hy = new Float32Array(CAP * TRAIL), hn = new Uint8Array(CAP);
+    let trailHead = 0, trailAt = 0;
+    function remember() {
+      trailHead = (trailHead + 1) % TRAIL;
+      for (let i = 0, j = trailHead; i < n; i++, j += TRAIL) {
+        hx[j] = px[i]; hy[j] = py[i];
+        if (hn[i] < TRAIL) hn[i]++;
+      }
+    }
     let n = 0;
     function addParticle(x, y, ux, uy, alpha = 1, life = 0) {
       if (n >= CAP) return false;
       ph[n] = life; ht[n] = 0;
       px[n] = ox[n] = wrap(x, Lx); py[n] = oy[n] = wrap(y, Ly);
-      qx[n] = ux; qy[n] = uy; al[n] = alpha; born[n] = 1;
+      qx[n] = ux; qy[n] = uy; al[n] = alpha; born[n] = 1; hn[n] = 0;
       const u2 = ux * ux + uy * uy;
       S[n] = Math.sqrt(c4 + c2 * alpha * alpha * u2);
       be[n] = c * alpha * Math.sqrt(u2) / S[n];
@@ -325,6 +337,7 @@ const BlackHoles = (() => {
       n--;
       px[i] = px[n]; py[i] = py[n]; qx[i] = qx[n]; qy[i] = qy[n]; ox[i] = ox[n]; oy[i] = oy[n];
       al[i] = al[n]; be[i] = be[n]; S[i] = S[n]; Hg[i] = Hg[n]; born[i] = born[n]; ph[i] = ph[n]; ht[i] = ht[n];
+      hn[i] = hn[n]; hx.copyWithin(i * TRAIL, n * TRAIL, (n + 1) * TRAIL); hy.copyWithin(i * TRAIL, n * TRAIL, (n + 1) * TRAIL);
     }
 
     // ---- the holes ----
@@ -854,6 +867,9 @@ const BlackHoles = (() => {
 
       // ---- the totals put back ----
       fix(target - energy, targetP[0] - Px, targetP[1] - Py, sumScale);
+
+      // ---- where each is, kept for its track ----
+      if (time - trailAt >= 0.9 * TRAIL_DT) { trailAt = time; remember(); } // (0.9: a frame's step, a hair short, still counts)
     }
 
     // What the model doesn't keep goes to the dust, every step: every
@@ -1227,6 +1243,7 @@ const BlackHoles = (() => {
     return {
       step, Lx, RCUT, SWALLOW, shadowOf, chiOf, shortTable: Float32Array.from(TP), Ly, c, NX, NY, A,
       get n() { return n; }, px, py, ox, oy, al, be, qx, qy, Hg, ph,
+      hx, hy, hn, TRAIL, get trailHead() { return trailHead; },
       heat() { let s = 0; for (let i = 0; i < n; i++) s += ht[i]; return s; },
       holes, ripples, events, stats, Sarr: S,
       // the grid's Φ, over c²

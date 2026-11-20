@@ -88,9 +88,10 @@
   // Its own time runs TIME times as fast as ours: light crosses the screen's
   // height in some seven seconds, dust in a quarter of a minute or so.
   const TIME = 0.05, MAX_STEP = 0.0012; // (its seconds: a frame's time is cut into steps no longer)
-  // Each particle a short streak, back along the way it goes: STREAK css px
-  // long when at rest, the full STREAK + STREAK_FAST at the speed of light.
-  const STREAK = 3, STREAK_FAST = 2;
+  // Each particle a track back along the way it came, as long as it is
+  // fast: STREAK css px at rest, STREAK + STREAK_FAST at the speed of light;
+  // its turns followed no finer than TURN css px.
+  const STREAK = 3, STREAK_FAST = 72, TURN = 2;
   // Colour: every particle glows as a hot body does, its light, at rest a
   // dull red, shifted towards the blue the faster it goes, as light from a
   // source coming nearer is, and towards the red, and dark, the deeper the
@@ -184,11 +185,12 @@
     const fade = program(QUAD_VS, `in vec2 uv; uniform sampler2D T; uniform float k; out vec4 o;
       void main() { vec4 c = texture(T, uv) * k; o = max(c - vec4(${half ? '0.0' : '1.0 / 255.0'}), 0.0); }`);
 
-    const lines = program(`in vec4 v; uniform vec2 L; out vec3 col;
+    // (f: how bright, 1 at the particle, dying down to 0 at the streak's tail)
+    const lines = program(`in vec4 v; in float f; uniform vec2 L; out vec3 col;
       ${BODY}
       void main() {
         float beta = min(v.z, 0.995), alpha = v.w;
-        col = body(${T_REST.toFixed(1)} * alpha * pow((1.0 + beta) / (1.0 - beta), ${(KAPPA / 2).toFixed(3)}));
+        col = f * body(${T_REST.toFixed(1)} * alpha * pow((1.0 + beta) / (1.0 - beta), ${(KAPPA / 2).toFixed(3)}));
         gl_Position = vec4(v.x / L.x * 2.0 - 1.0, 1.0 - v.y / L.y * 2.0, 0, 1);
       }`, `in vec3 col; uniform float gain; out vec4 o; void main() { o = vec4(col * gain, 1.0); }`);
     const lineBuf = gl.createBuffer();
@@ -270,31 +272,54 @@
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       cur = 1 - cur;
 
-      // the dust, each a streak back along its last move
+      // the dust, each a track back along the way it came, as long as it is
+      // fast, dying down behind it: back through where it has been (its
+      // turns no finer than TURN css px), and past what is remembered,
+      // straight on the way it last came
       const n = u.n, pxU = u.Ly / CH; // (a css px, in its units)
-      if (lineData.length < n * 8) lineData = new Float32Array(Math.ceil(n * 1.3) * 8);
-      let k = 0;
+      const K = u.TRAIL, head = u.trailHead, hx = u.hx, hy = u.hy, Lx = u.Lx, Ly = u.Ly, turn = TURN * pxU;
+      const near = (d, L) => d - L * Math.round(d / L); // (across the torus's seam)
+      let k = 0, b = 0, a = 0;
+      const seg = (x0, y0, s0, x1, y1, s1, len) => {
+        if (k + 10 > lineData.length) { const g = new Float32Array(Math.max(lineData.length * 2, n * 40)); g.set(lineData.subarray(0, k)); lineData = g; }
+        lineData[k++] = x0; lineData[k++] = y0; lineData[k++] = b; lineData[k++] = a; lineData[k++] = 1 - s0 / len;
+        lineData[k++] = x1; lineData[k++] = y1; lineData[k++] = b; lineData[k++] = a; lineData[k++] = 1 - s1 / len;
+      };
       for (let i = 0; i < n; i++) {
-        const x1 = u.px[i], y1 = u.py[i];
-        let dx = x1 - u.ox[i], dy = y1 - u.oy[i];
-        dx -= u.Lx * Math.round(dx / u.Lx); dy -= u.Ly * Math.round(dy / u.Ly); // (across the torus's seam)
-        const d = Math.hypot(dx, dy);
-        if (!(d > 0)) continue;
-        const b = u.be[i], a = u.al[i], L = (STREAK + STREAK_FAST * b) * pxU / d;
-        lineData[k++] = x1 - dx * L; lineData[k++] = y1 - dy * L; lineData[k++] = b; lineData[k++] = a;
-        lineData[k++] = x1; lineData[k++] = y1; lineData[k++] = b; lineData[k++] = a;
+        b = u.be[i]; a = u.al[i];
+        const len = (STREAK + STREAK_FAST * b) * pxU, cnt = u.hn[i], base = i * K;
+        let x = u.px[i], y = u.py[i], s = 0, tx = 0, ty = 0; // where the track has got to, how long it is, the way back
+        for (let j = 0; j < cnt && s < len; j++) {
+          const at = base + (head - j + K) % K;
+          const dx = near(hx[at] - x, Lx), dy = near(hy[at] - y, Ly), d = Math.hypot(dx, dy);
+          if (!(d > 0)) continue;
+          tx = dx / d; ty = dy / d;
+          if (s + d >= len) { seg(x, y, s, x + tx * (len - s), y + ty * (len - s), len, len); s = len; break; }
+          if (d < turn && j < cnt - 1) continue;
+          seg(x, y, s, x + dx, y + dy, s + d, len);
+          x += dx; y += dy; s += d;
+        }
+        if (s >= len) continue;
+        if (!tx && !ty) {
+          const dx = near(u.ox[i] - u.px[i], Lx), dy = near(u.oy[i] - u.py[i], Ly), d = Math.hypot(dx, dy);
+          if (!(d > 0)) continue;
+          tx = dx / d; ty = dy / d;
+        }
+        seg(x, y, s, x + tx * (len - s), y + ty * (len - s), len, len);
       }
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.useProgram(lines.p);
       gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
       gl.bufferData(gl.ARRAY_BUFFER, lineData.subarray(0, k), gl.STREAM_DRAW);
-      const av = gl.getAttribLocation(lines.p, 'v');
-      gl.enableVertexAttribArray(av);
-      gl.vertexAttribPointer(av, 4, gl.FLOAT, false, 0, 0);
+      const av = gl.getAttribLocation(lines.p, 'v'), af = gl.getAttribLocation(lines.p, 'f');
+      gl.enableVertexAttribArray(av); gl.enableVertexAttribArray(af);
+      gl.vertexAttribPointer(av, 4, gl.FLOAT, false, 20, 0);
+      gl.vertexAttribPointer(af, 1, gl.FLOAT, false, 20, 16);
       gl.uniform2f(lines.loc.L, u.Lx, u.Ly);
       gl.uniform1f(lines.loc.gain, 0.7);
-      gl.drawArrays(gl.LINES, 0, k / 4);
+      gl.drawArrays(gl.LINES, 0, k / 5);
+      gl.disableVertexAttribArray(af);
       gl.disable(gl.BLEND);
 
       // the picture
@@ -483,6 +508,7 @@
     const u = uni = BlackHoles.universe(PD.mulberry32(seed), {
       Lx, Ly, ...grid(Lx, Ly), 
       N: touch ? 9000 : 15000,
+      TRAIL_DT: TIME / 60, // (a place kept a frame, at 60 a second)
     });
     window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
     const painter = glPainter(gl, u);
