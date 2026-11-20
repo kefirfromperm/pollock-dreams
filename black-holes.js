@@ -49,6 +49,8 @@
 //     or, spinning faster than one hole can, two, going round one another;
 //   two particles of dust come within COLLIDE of one another: they bounce
 //     off one another, elastically, their momentum and energy as they were;
+//     or stick, the likelier the more alike they went, going on alike, with
+//     half their momenta each, what motion they lost their heat;
 //   dust rubs: where it crowds, it is pulled to move as the gas about it
 //     does, the motion lost heat, the heat, a photon's worth at a time,
 //     shone off as a fast particle that flies free a while;
@@ -117,7 +119,7 @@ const BlackHoles = (() => {
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
     PETERS = true, // close pairs losing their orbits to gravitational waves
-    ALPHA_COLLAPSE = 0.5, // dust whose own well is this deep collapses
+    ALPHA_COLLAPSE = 0.7, // dust whose own well is this deep collapses
     CLEAR = 0.1, // (no nearer a hole than this: dust heaped about a hole is the hole's to take)
     SPLIT = 1, // a clump spinning this many times as fast as one hole can splits in two
     A_PAIR = 0.1, // and the two go round one another no further apart than this
@@ -126,6 +128,7 @@ const BlackHoles = (() => {
     E_PHOTON = 1, // what a photon carries off, of a particle's rest energy (it leaves at about 0.87c)
     PHOTON_LIFE = 0.4, // seconds a photon flies, untouched by friction, before it is dust again
     COLLIDE = 0.002, // two particles of dust this near bounce off one another (some two css px)
+    STICK = 1, // or stick, sharing their momenta alike, as often as |p₁ + p₂|²/(|p₁| + |p₂|)² of this
     TRAIL = 96, TRAIL_DT = 0.05 / 60, // where each particle was: this many places back, one every this long (for its track)
   } = {}) {
     const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(TAU * rng());
@@ -445,7 +448,7 @@ const BlackHoles = (() => {
 
     let target = null, targetP = null; // the totals, as they were at first
     let energy = 0, momentum = [0, 0], time = 0;
-    const stats = { swallowed: 0, emitted: 0, merged: 0, collapsed: 0, burst: 0, fixed: 0, photons: 0, collided: 0 };
+    const stats = { swallowed: 0, emitted: 0, merged: 0, collapsed: 0, burst: 0, fixed: 0, photons: 0, collided: 0, stuck: 0 };
 
     // ---- friction ----
     // Dust is gas: where it crowds, its particles collide, as often as it is
@@ -612,12 +615,24 @@ const BlackHoles = (() => {
       // seen from where their momenta along n cancel (going at b along it), i's along it, s1
       const b = (a1 + a2) / (e1 + e2), g = 1 / Math.sqrt(1 - b * b), s1 = g * (a1 - b * e1);
       if (s1 <= 0) return false; // (not going at one another)
+      hit[i] = hit[j] = 1;
+      stats.collided++;
+      // Or they stick, a moment, and go on alike, each with half their
+      // momenta (all of it kept): the more alike they went, the likelier
+      // (the same way as fast, always; head on as fast, never). The motion
+      // they lose is heat, each its own, and shines off as any heat does.
+      const sx = p1x + p2x, sy = p1y + p2y, sum = hyp(p1x, p1y) + hyp(p2x, p2y);
+      if (STICK && rng() < STICK * (sx * sx + sy * sy) / (sum * sum)) {
+        const Si = S[i], Sj = S[j], ux = 0.5 * (qx[i] + qx[j]), uy = 0.5 * (qy[i] + qy[j]);
+        goOn(i, ux, uy, tc, dt); goOn(j, ux, uy, tc, dt);
+        ht[i] += al[i] * m * (Si - S[i]); ht[j] += al[j] * m * (Sj - S[j]);
+        stats.stuck++;
+        return true;
+      }
       // turned back, and seen from afar again: what i is pushed along n, j as much the other way
       const J = g * (b * g * (e1 - b * a1) - s1) - a1;
       goOn(i, (p1x + J * nx) / k, (p1y + J * ny) / k, tc, dt);
       goOn(j, (p2x - J * nx) / k, (p2y - J * ny) / k, tc, dt);
-      hit[i] = hit[j] = 1;
-      stats.collided++;
       return true;
     }
     // i, bounced at tc of the step, its momentum now ux, uy: on from there
@@ -1126,7 +1141,7 @@ const BlackHoles = (() => {
     // A horizon forms where the lapse goes to 0: where the dust's own well
     // is deep enough, α < ALPHA_COLLAPSE (and no hole is near), all the dust
     // nearly trapped there, α < ALPHA_TRAPPED, is a hole.
-    const ALPHA_TRAPPED = 0.7, GATHER = 0.2;
+    const ALPHA_TRAPPED = Math.min(0.95, ALPHA_COLLAPSE + 0.15), GATHER = 0.2;
     let deepest = 1;
     function collapse() {
       let lo = Infinity, kmin = -1;
