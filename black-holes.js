@@ -1066,13 +1066,21 @@ const BlackHoles = (() => {
           const ddx = near(hb.x - ha.x, Lx), ddy = near(hb.y - ha.y, Ly), r = hyp(ddx, ddy);
           if (r < SWALLOW * (ha.rh + hb.rh)) { merge(ha, hb, ddx, ddy, r); a = -1; break; }
           if (r > 30 * (ha.rh + hb.rh) || !PETERS) continue;
-          // Peters: P = 32/5 · G⁴(m₁m₂)²(m₁ + m₂)/(c⁵r⁵), out of the pair's relative motion
+          // Peters: a pair going round one another at ω sends off
+          // P = 32/5 · Gμ²r⁴ω⁶/c⁵ (on a circle, 32/5 · G⁴(m₁m₂)²(m₁ + m₂)/(c⁵r⁵)),
+          // out of their going round, so they spiral in: never out of their
+          // falling together (two at rest, or falling straight, send off next
+          // to nothing; held back, they would hang side by side and never meet)
           const m1 = ha.M, m2 = hb.M, mu = m1 * m2 / (m1 + m2);
-          const P = 6.4 * (m1 * m2) ** 2 * (m1 + m2) / (c4 * c * r ** 5);
-          const vx = hb.qx - ha.qx, vy = hb.qy - ha.qy, v2 = vx * vx + vy * vy;
+          const nx = ddx / r, ny = ddy / r;
+          let vx = hb.qx - ha.qx, vy = hb.qy - ha.qy;
+          const vr = vx * nx + vy * ny;
+          vx -= vr * nx; vy -= vr * ny; // (the going round, alone)
+          const v2 = vx * vx + vy * vy;
+          const P = 6.4 * mu * mu * v2 * v2 * v2 / (c4 * c * r * r);
           const kin = 0.5 * mu * v2, dE = Math.min(P * h, 0.2 * kin);
           if (v2 < 1e-12 || dE <= 0) continue;
-          const f = Math.sqrt(1 - dE / kin) - 1; // the relative velocity shrinks by this
+          const f = Math.sqrt(1 - dE / kin) - 1; // the going round shrinks by this
           ha.qx -= f * vx * m2 / (m1 + m2); ha.qy -= f * vy * m2 / (m1 + m2);
           hb.qx += f * vx * m1 / (m1 + m2); hb.qy += f * vy * m1 / (m1 + m2);
           wave(wrap(ha.x + ddx * m2 / (m1 + m2), Lx), wrap(ha.y + ddy * m2 / (m1 + m2), Ly), dE * (ha.al + hb.al) / 2, ha.id * 1e6 + hb.id, Math.atan2(ddy, ddx));
