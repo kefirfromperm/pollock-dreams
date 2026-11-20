@@ -838,6 +838,7 @@ const RomanTownView = (() => {
   const COATS = {
     sheep: rgbs([[232, 226, 210], [224, 218, 200], [214, 206, 186], [226, 220, 206], [70, 62, 56]]), goat: rgbs([[150, 120, 92], [62, 54, 48], [226, 220, 208], [118, 90, 64], [180, 150, 112]]),
     cow: rgbs([[132, 88, 58], [98, 66, 46], [44, 40, 38], [198, 160, 112], [150, 110, 76]]), ox: rgbs([[208, 202, 190], [190, 184, 172], [176, 166, 150], [222, 214, 200]]),
+    bull: rgbs([[30, 26, 24], [44, 34, 28], [58, 38, 28]]),
     horse: rgbs([[116, 76, 48], [70, 48, 36], [150, 92, 54], [178, 168, 156], [44, 36, 32], [168, 130, 88]]), donkey: rgbs([[128, 118, 108], [150, 136, 118], [104, 92, 80]]),
     dog: rgbs([[176, 136, 90], [96, 70, 48], [40, 36, 34], [214, 204, 186], [150, 112, 70]]), cat: rgbs([[170, 120, 70], [80, 74, 70], [40, 36, 34], [200, 190, 176]]),
     hen: rgbs([[150, 90, 50], [196, 150, 96], [236, 228, 212], [60, 48, 40], [170, 70, 40]]),
@@ -1346,7 +1347,7 @@ const RomanTownView = (() => {
       }
       return;
     }
-    if (kind === 'cow' || kind === 'ox' || kind === 'horse' || kind === 'donkey') {
+    if (kind === 'cow' || kind === 'ox' || kind === 'bull' || kind === 'horse' || kind === 'donkey') {
       const horse = kind === 'horse' || kind === 'donkey', s = kind === 'donkey' ? 0.72 : 1;
       const S = (fw, a, z, rx, ry, rz, c, t) => E(fw * s, a * s, z * s, rx * s, ry * s, rz * s, c, t);
       const bz = lie ? 0.48 : horse ? 1.18 : 1.0;
@@ -1357,6 +1358,8 @@ const RomanTownView = (() => {
       S(graze ? 1.2 : 1.2, 0, hz, horse ? 0.3 : 0.27, horse ? 0.12 : 0.15, horse ? 0.12 : 0.16, horse ? coat.map(v => v * 0.92) : coat);
       if (horse) S(0.78, 0, nz + 0.14, 0.32, 0.05, 0.1, dark);
       if (kind === 'ox' || (kind === 'cow' && hash(id, 23, 1) < 0.7)) for (const sg of [-1, 1]) S(1.12, sg * 0.2, hz + 0.12, 0.05, 0.16, 0.04, HORN, sg * 0.5);
+      // (a bull: the heavy neck and shoulders, and his horns longer, swept forward)
+      if (kind === 'bull') { S(0.55, 0, bz + 0.22, 0.45, 0.36, 0.3, coat); for (const sg of [-1, 1]) { S(1.14, sg * 0.24, hz + 0.12, 0.06, 0.2, 0.05, HORN, sg * 0.5); S(1.26, sg * 0.36, hz + 0.2, 0.12, 0.04, 0.04, HORN, -sg * 0.6); } }
       if (kind === 'donkey') for (const sg of [-1, 1]) S(1.05, sg * 0.08, hz + 0.25, 0.04, 0.03, 0.15, coat, 0);
       legs(horse ? 0.62 : 0.66, horse ? 0.18 : 0.24, horse ? 0.95 : 0.78, horse ? 0.07 : 0.09, horse ? coat.map(v => v * 0.75) : coat.map(v => v * 0.85), 0.28);
       S(-1.0, 0, horse ? 1.0 : 0.72, horse ? 0.12 : 0.05, horse ? 0.08 : 0.04, horse ? 0.32 : 0.3, horse ? dark : coat);

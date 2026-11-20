@@ -435,6 +435,7 @@ const RomanTownSound = (() => {
           case 'sheep': add('bleat', f.x, f.y, resting); break;
           case 'goat': add('goat', f.x, f.y, resting); break;
           case 'cow': case 'ox': add('moo', f.x, f.y, resting); break;
+          case 'bull': add('moo', f.x, f.y, f.pose === 'run' ? 3 : resting); break;
           case 'horse': case 'rider': add('neigh', f.x, f.y, resting); break;
           case 'donkey': add('bray', f.x, f.y, resting); break;
           case 'dog': add('bark', f.x, f.y, f.pose === 'run' ? 3 : resting); break;
@@ -447,7 +448,7 @@ const RomanTownSound = (() => {
           case 'cart': if (f.pose === 'walk') { add('carts', f.x, f.y); add('creak', f.x, f.y); } break;
         }
         // (and the hooves of whatever big goes by, the feet of the small)
-        if ((f.kind === 'horse' || f.kind === 'rider' || f.kind === 'donkey' || f.kind === 'cow' || f.kind === 'ox' || f.kind === 'elephant') && (f.pose === 'walk' || f.pose === 'run')) add('hoof', f.x, f.y, f.pose === 'run' ? 2 : 1);
+        if ((f.kind === 'horse' || f.kind === 'rider' || f.kind === 'donkey' || f.kind === 'cow' || f.kind === 'ox' || f.kind === 'bull' || f.kind === 'elephant') && (f.pose === 'walk' || f.pose === 'run')) add('hoof', f.x, f.y, f.pose === 'run' ? 2 : 1);
         if ((f.kind === 'sheep' || f.kind === 'goat' || f.kind === 'pig') && (f.pose === 'walk' || f.pose === 'run')) add('step', f.x, f.y, 0.6);
       }
       for (const [x, y, n] of fountains) if (inView(x, y)) add('water', x, y, n);

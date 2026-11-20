@@ -32,7 +32,8 @@
 // it; home before dark, the watch going round with torches, sleep; on a
 // feast day the whole town on the theatre's steps for the play or the
 // amphitheatre's for the games, gladiators two by two on the sand (where
-// they train on the other days), the crowd
+// they train on the other days) and a pair at a time against the bulls and
+// the lions, the bear, the hunters after the beasts, the crowd
 // applauding, on its feet; and day and night sentries on the
 // walls and a lookout on every other tower. Each goes where it is going as one
 // would walk: out through the doors of its house, along the streets, the
@@ -1274,12 +1275,13 @@ const RomanTownLife = (() => {
       }
     }
     // the arena's beasts, from the far ends of the empire: a lion and a
-    // lioness, a bear, an elephant, two ostriches; each in its cage by the
-    // amphitheatre, let out onto the sand on a games day for the hunt
+    // lioness, a bear, an elephant, two ostriches; and two black bulls from
+    // the pastures; each in its cage by the amphitheatre, let out onto the
+    // sand on a games day for the hunt and for the gladiators
     const zoo = [], cages = [];
     if (amph) {
       const b = amph, ca = Math.cos(b.angle), sa = Math.sin(b.angle), at = (rho, t) => { const x = rho * b.a * Math.cos(t), y = rho * b.b * Math.sin(t); return [b.x + x * ca - y * sa, b.y + x * sa + y * ca]; };
-      const kinds = [['lion', true], ['lion', false], ['bear'], ['elephant'], ['ostrich'], ['ostrich']];
+      const kinds = [['lion', true], ['lion', false], ['bear'], ['elephant'], ['ostrich'], ['ostrich'], ['bull', true], ['bull', true]];
       // (a row of them along the wall outside, beside a way in, where there is ground for them)
       for (const t0 of [0.22, Math.PI + 0.22, Math.PI / 2 + 0.25, -Math.PI / 2 + 0.25]) {
         for (let k = 0, t = t0; k < 40 && cages.length < kinds.length; k++, t += 0.045) {
@@ -1290,7 +1292,7 @@ const RomanTownLife = (() => {
         }
         if (cages.length >= kinds.length) break;
       }
-      cages.forEach((c, k) => { const [kind, male] = kinds[k]; zoo.push(being(kind, { cage: c, male, exotic: true, x: c.x, y: c.y, z: c.z, speed: kind === 'ostrich' ? 1.6 : kind === 'elephant' ? 0.8 : kind === 'bear' ? 0.9 : 1.2, look: rng() })); });
+      cages.forEach((c, k) => { const [kind, male] = kinds[k]; zoo.push(being(kind, { cage: c, male, exotic: true, x: c.x, y: c.y, z: c.z, speed: kind === 'ostrich' ? 1.6 : kind === 'elephant' ? 0.8 : kind === 'bear' ? 0.9 : kind === 'bull' ? 1.1 : 1.2, look: rng() })); });
     }
     // the farms' beasts: a yoke of oxen, a donkey, a dog or two, hens
     for (const h of homes) if (h.kind === 'villa') {
@@ -2421,7 +2423,22 @@ const RomanTownLife = (() => {
         if (!where) return ACT.baths(ag, e, until);
         duel(ag, where, short(until, 900, 2400), true);
       },
-      fight(ag, e, until) { if (!amph) return ACT.show(ag, e, until); duel(ag, 'sand', until, false); },
+      fight(ag, e, until) {
+        if (!amph) return ACT.show(ag, e, until);
+        // a pair at a time, in turn, out into the middle against a bull, a
+        // lion or the bear, sword and net; the rest at their bouts round the edge
+        const G = all.filter(a => a.job === 'gladiator'), k = G.indexOf(ag) >> 1, n = Math.ceil(G.length / 2) + 1, turnT = 420, slot = Math.floor(now / turnT);
+        const fierce = zoo.filter(b => b.kind === 'bull' || b.kind === 'lion' || b.kind === 'bear');
+        const end = Math.min(until, (slot + 1) * turnT);
+        if (fierce.length && slot % n === k + 1) {
+          const prey = fierce[(slot / n | 0) % fierce.length];
+          if (!onSand(ag)) { const [x, y] = sandAt(0.35); go(ag, spot(x, y, NaN, 0, 'stand', { anim: 'fight', cl: null }), { carry: null }); return; }
+          ag.legs.push({ k: 'chase', who: prey, until: now + range(4, 10), near: prey.kind === 'bull' ? 3.5 : 2.4 });
+          ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: Math.min(end, now + range(4, 10)), face: prey, hunt: true });
+          return;
+        }
+        duel(ag, 'sand', Math.max(now + 30, end), false);
+      },
       doorkeep(ag, e, until) {
         // on his stool a step inside the door, watching who comes
         const h = H(ag), [ix, iy] = h.front.inn, [ox, oy] = h.front.out, a = Math.atan2(iy - oy, ix - ox);
@@ -3049,7 +3066,14 @@ const RomanTownLife = (() => {
         // on the sand: the lion prowling and turning on the hunters, the bear
         // up on its hind legs at them, the elephant ambling, the ostriches running
         if (!onSand(ag)) { const [x, y] = sandAt(0.3); ag.legs.push({ k: 'go', sp: spot(x, y, NaN, 0, 'stand', { cl: null }) }); return; }
-        const near = all.find(a => a.job === 'venator' && a.vis && Math.hypot(a.x - ag.x, a.y - ag.y) < 9);
+        const near = all.find(a => (a.job === 'venator' || a.job === 'gladiator' && !(a.leg && a.leg.duel)) && a.vis && onSand(a) && Math.hypot(a.x - ag.x, a.y - ag.y) < (k === 'bull' ? 14 : 9));
+        // the bull: head down, pawing the sand, and then at him, full tilt
+        if (k === 'bull' && near && chance(0.45)) {
+          ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + range(3, 8), face: near });
+          ag.legs.push({ k: 'chase', who: near, until: now + range(2, 4), near: 0.8, speed: 5.5 });
+          ag.legs.push({ k: 'trot', ...(([x, y]) => ({ x, y }))(sandAt(0.4)), speed: 1.8, pose: 'walk' });
+          return;
+        }
         if (k === 'lion' && near && chance(0.4)) { ag.legs.push({ k: 'chase', who: near, until: now + range(3, 6), near: 2.2 }); ag.legs.push({ k: 'stay', sp: null, pose: 'stand', until: now + range(4, 10), face: near }); return; }
         // (in the middle of the sand, where all the seats can see them)
         const [x, y] = sandAt(0.42), run = k === 'ostrich' ? chance(0.6) : k === 'lion' && chance(0.3);
@@ -3368,7 +3392,7 @@ const RomanTownLife = (() => {
       ag.a += clamp(turn(ag.a, want), -7 * dt, 7 * dt);
       return false;
     }
-    const STRIDE = { lion: 1.6, bear: 1.2, elephant: 2.4, ostrich: 1.8, pig: 0.7, person: 1.4, rider: 2.2, sheep: 0.8, goat: 0.8, cow: 1.5, ox: 1.5, horse: 2, donkey: 1.2, dog: 1, cat: 0.7, hen: 0.25, cart: 3 };
+    const STRIDE = { lion: 1.6, bear: 1.2, elephant: 2.4, ostrich: 1.8, pig: 0.7, person: 1.4, rider: 2.2, sheep: 0.8, goat: 0.8, cow: 1.5, ox: 1.5, bull: 1.5, horse: 2, donkey: 1.2, dog: 1, cat: 0.7, hen: 0.25, cart: 3 };
     function update(ag, dt) {
       if (ag.follow) return;
       if (!ag.leg) {
@@ -3441,9 +3465,9 @@ const RomanTownLife = (() => {
           const m = L.who, d = Math.hypot(m.x - ag.x, m.y - ag.y), near = L.near || 1.6;
           if (!m.vis || m.cl) { ag.leg = null; break; }
           if (d > near + 0.6) {
-            const v = Math.min(d - near, (d > 8 ? 3.5 : Math.max(1.2, m.speed * 1.1)) * dt), nx = ag.x + (m.x - ag.x) / d * v, ny = ag.y + (m.y - ag.y) / d * v;
+            const v = Math.min(d - near, (L.speed || (d > 8 ? 3.5 : Math.max(1.2, m.speed * 1.1))) * dt), nx = ag.x + (m.x - ag.x) / d * v, ny = ag.y + (m.y - ag.y) / d * v;
             if (!standable(ag, nx, ny)) { ag.leg = null; break; }
-            ag.x = nx; ag.y = ny; ag.ph += v / stride; ag.pose = d > 8 ? 'run' : 'walk';
+            ag.x = nx; ag.y = ny; ag.ph += v / stride; ag.pose = d > 8 || L.speed > 2 ? 'run' : 'walk';
           } else ag.pose = 'stand';
           ag.a += clamp(turn(ag.a, Math.atan2(m.y - ag.y, m.x - ag.x)), -6 * dt, 6 * dt);
           ag.z = groundZ(ag.x, ag.y);
@@ -3489,7 +3513,7 @@ const RomanTownLife = (() => {
           if (L.lap) { const Q = L.lap; Q.s += dt * Q.v; const f = Q.s % 2, g = f < 1 ? f : 2 - f; ag.x = lerp(Q.A[0], Q.B[0], g); ag.y = lerp(Q.A[1], Q.B[1], g); ag.a = Math.atan2(Q.B[1] - Q.A[1], Q.B[0] - Q.A[0]) + (f < 1 ? 0 : Math.PI); ag.pose = 'swim'; ag.ph += dt * 0.8; }
           // wading about a warm pool, slowly
           if (L.wade) { const W = L.wade; W.t += dt * 0.08; const x = W.x + Math.cos(W.t) * W.r, y = W.y + Math.sin(W.t * 1.3) * W.r * 0.7; if (standable(ag, x, y) || ag.cl) { ag.x = x; ag.y = y; } ag.ph += dt * 0.3; }
-          if (L.hunt) { ag.anim = 'fight'; ag.armed = 'spear'; }
+          if (L.hunt) { ag.anim = 'fight'; if (ag.job === 'venator') ag.armed = 'spear'; }
           // the flock come in to the gate; the flock all in at the new one
           if (L.gather && (gathered(L.gather) || now - L.gather.t0 > 180)) L.until = now;
           if (L.settle && L.settle.beasts.every(b => b.ds >= L.settle.sIn + 0.8)) L.until = Math.min(L.until, now + 3);
@@ -3724,8 +3748,8 @@ const RomanTownLife = (() => {
     // heading; where two overlap they are pushed apart, the lighter more,
     // what is sitting, lying or yoked not at all; walkers meeting step
     // aside to the right; and the timid get out of the way ----
-    const SIZE = { lion: [0.5, 0.3], bear: [0.45, 0.4], elephant: [1.2, 0.9], ostrich: [0.15, 0.3], pig: [0.3, 0.26], sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
-    const HEAVY = { person: 1, lion: 3, bear: 4, elephant: 30, ostrich: 1.5, pig: 1.2, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, horse: 4, donkey: 2.5, rider: 5 };
+    const SIZE = { lion: [0.5, 0.3], bear: [0.45, 0.4], elephant: [1.2, 0.9], ostrich: [0.15, 0.3], pig: [0.3, 0.26], sheep: [0.28, 0.3], goat: [0.28, 0.24], cow: [0.62, 0.42], ox: [0.62, 0.42], bull: [0.66, 0.46], horse: [0.6, 0.36], donkey: [0.45, 0.28], dog: [0.2, 0.16], cat: [0.1, 0.1], hen: [0, 0.12], rider: [0.6, 0.4], cart: [1.3, 0.75] };
+    const HEAVY = { person: 1, lion: 3, bear: 4, elephant: 30, ostrich: 1.5, pig: 1.2, sheep: 0.8, goat: 0.7, dog: 0.5, cat: 0.3, hen: 0.2, cow: 4, ox: 4, bull: 5, horse: 4, donkey: 2.5, rider: 5 };
     const SETTLED = new Set(['sit', 'lie', 'recline', 'kneel', 'squat', 'swim']);
     const sizeOf = ag => ag.kind === 'person' ? (ag.pose === 'lie' || ag.pose === 'recline' ? [0.55, 0.25] : [0, ag.age === 'child' ? 0.17 : ag.pose === 'sit' ? 0.3 : 0.23]) : SIZE[ag.kind] || [0, 0.3];
     function weight(ag) {
@@ -3940,7 +3964,7 @@ const RomanTownLife = (() => {
       if (p.kind !== 'person') {
         // a beast: whose, and what it is about
         const H = p.herd, M = p.master || (H && H.shepherd) || (p.farm && p.farm.master);
-        const what = p.exotic ? ({ lion: p.male ? 'a lion, from Africa' : 'a lioness, from Africa', bear: 'a bear, from the mountains', elephant: 'an elephant, from Africa', ostrich: 'an ostrich, from Africa' })[p.kind] : p.kind === 'dog' && p.stray ? 'a stray dog' : p.kind === 'cat' ? 'a cat' : `a ${p.kind}`;
+        const what = p.exotic ? ({ lion: p.male ? 'a lion, from Africa' : 'a lioness, from Africa', bear: 'a bear, from the mountains', elephant: 'an elephant, from Africa', ostrich: 'an ostrich, from Africa', bull: 'a bull, for the games' })[p.kind] : p.kind === 'dog' && p.stray ? 'a stray dog' : p.kind === 'cat' ? 'a cat' : `a ${p.kind}`;
         const whose = M ? `${M.name}’s` : '';
         const doing = p.exotic ? (onSand(p) ? 'in the arena, for the hunt' : p.pose === 'walk' ? 'pacing its cage' : p.pose === 'lie' ? 'lying in its cage' : 'in its cage by the amphitheatre') : p.drove || (H && H.mode !== 'graze') ? 'being moved to fresh grass' : p.pose === 'lie' ? 'lying down' : p.pose === 'graze' ? (H && p.leg && p.leg.drinking ? 'drinking at the trough' : H && grass[H.f.idx] < 0.25 ? 'nosing for the last of the grass' : 'grazing') : p.pose === 'walk' || p.pose === 'run' ? 'on the move' : '';
         return { name: whose ? `${whose} ${p.kind}${H ? ', of the ' + (H.kind === 'sheep' || H.kind === 'goat' ? 'flock' : 'herd') : ''}` : what, title: '', doing, needs: '' };
@@ -3963,8 +3987,8 @@ const RomanTownLife = (() => {
       else if (L && L.k === 'hide') doing = act === 'inn' ? 'asleep upstairs at an inn' : act === 'travel' ? 'away on the road' : 'indoors';
       else if (L && L.watch) doing = p.anim === 'clap' ? 'applauding' : p.anim === 'cheer' ? 'on his feet, cheering' : L.watch === 'arena' ? 'watching the games' : 'watching the play';
       else if (L && L.food !== undefined) doing = act === 'cena' || p.pose === 'recline' ? 'at dinner' : 'eating';
-      else if (L && L.hunt) doing = `facing ${({ lion: 'a lion', bear: 'the bear', elephant: 'the elephant', ostrich: 'an ostrich' })[L.face && L.face.kind] || 'a beast'}, spear levelled`;
-      else if (L && L.k === 'chase' && p.job === 'venator') doing = 'closing in on a beast';
+      else if (L && L.hunt) doing = `facing ${({ lion: 'a lion', bear: 'the bear', elephant: 'the elephant', ostrich: 'an ostrich', bull: 'a bull' })[L.face && L.face.kind] || 'a beast'}, ${p.job === 'gladiator' ? (p.armed === 'net' ? 'net and trident ready' : 'sword drawn') : 'spear levelled'}`;
+      else if (L && L.k === 'chase' && (p.job === 'venator' || p.job === 'gladiator')) doing = 'closing in on a beast';
       else if (p.job === 'woodcutter' && (p.carry === 'wood' || p.carry === 'timber') && L && L.k === 'go') doing = p.carry === 'timber' ? 'carrying a timber to a carpenter' : 'carrying in a load of firewood';
       else if (L && L.lap) doing = 'swimming lengths in the open pool';
       else if (L && L.wade) doing = 'in the warm pool';
