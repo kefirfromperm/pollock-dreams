@@ -108,7 +108,7 @@ const BlackHoles = (() => {
     c = 3,
     MASS = 1, // its rest mass at first
     HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
-    HOLE_WARM = 0.2, // their first speeds, of c, a push any way (never past half c)
+    HOLE_WARM = 0.4, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
     K = 0.6, // Hawking power: dE/dt = −K/M²
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
