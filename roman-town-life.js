@@ -3086,11 +3086,14 @@ const RomanTownLife = (() => {
     };
     // ================= the flocks moved on =================
     // When a pasture is grazed down the shepherd moves his flock to fresh
-    // grass: over to its gate, the dog sent round behind to bring them in to
-    // him; out through it, and away along the tracks at their pace, the
-    // flock after him in a loose column, the dog behind and at the sides
-    // keeping them up and together (and he stopping to wait when they
-    // straggle); in at the other's gate, and they spread out over it.
+    // grass: over to its gate, holding it open, the dog sent round behind to
+    // bring them in to it; out through it, the flock first, and away along
+    // the tracks at their pace in a loose column, he walking behind them
+    // with his staff, driving them on, the dog out along their sides keeping
+    // them to the way and together, round behind any that hang back (and
+    // the leaders stopping to graze when the rest straggle or he falls
+    // behind); in at the other's gate, he after the last of them, and they
+    // spread out over it.
     // A herdsman his cattle or his horses the same, a dog with him or not.
     // a pasture's gate: the gap, a point a couple of metres inside it, one outside
     function gateOf(f) {
@@ -3139,7 +3142,10 @@ const RomanTownLife = (() => {
       const [gx, gy] = H.gather;
       H.beasts.sort((p, q) => Math.hypot(p.x - gx, p.y - gy) - Math.hypot(q.x - gx, q.y - gy)).forEach((b, k) => { b.rank = k; b.ds = 0; b.drove = true; b.legs.length = 0; b.leg = null; });
       if (H.dog) { H.dog.legs.length = 0; H.dog.leg = { k: 'drove' }; }
-      const sp = spot(from.inn[0], from.inn[1], NaN, Math.atan2(from.ny, from.nx), 'stand', { anim: 'shoo', cl: null });
+      // (he by the gate, to one side, holding it open for them)
+      let [hx, hy] = from.inn;
+      for (const sd of [1, -1]) { const x = from.inn[0] - from.ny * 1.8 * sd, y = from.inn[1] + from.nx * 1.8 * sd; if (way.costAt(x, y) < Infinity && way.los(from.inn, [x, y])) { hx = x; hy = y; break; } }
+      const sp = spot(hx, hy, NaN, Math.atan2(gy - hy, gx - hx), 'stand', { anim: 'shoo', cl: null });
       go(ag, sp, { carry: 'staff' });
       stay(ag, sp, now + 200, { gather: H });
       call(ag, () => startDrove(ag, H));
@@ -3148,11 +3154,12 @@ const RomanTownLife = (() => {
       H.mode = 'drove';
       for (const b of H.beasts) { b.legs.length = 0; b.leg = { k: 'drove' }; }
       const R = H.route, pace = H.kind === 'horse' ? 1.05 : H.kind === 'cow' ? 0.8 : 0.75;
-      H.sLead = R.cum[1];
-      const endSp = spot(...R.pts[R.pts.length - 1], NaN, 0, 'stand', { cl: null });
-      ag.legs.push({ k: 'go', sp: endSp, pre: R.pts.slice(1), pace, drove: H, carry: 'staff' });
-      call(ag, () => { H.arrived = true; });
-      stay(ag, spot(endSp.x, endSp.y, NaN, Math.atan2(R.pts[R.pts.length - 2][1] - endSp.y, R.pts[R.pts.length - 2][0] - endSp.x), 'stand', { anim: 'shoo', cl: null }), now + 150, { settle: H });
+      // (the head of the column at the start of the way, he at the gate)
+      H.sHead = 0; H.sBack = R.cum[1]; H.pace = pace; H.arrived = false;
+      // he after them, as far as the new one's gate, and there till they are all in
+      const n = R.pts.length, [ex, ey] = R.pts[n - 2], endSp = spot(ex, ey, NaN, 0, 'stand', { cl: null });
+      ag.legs.push({ k: 'go', sp: endSp, pre: R.pts.slice(1, -1), pace, drove: H, carry: 'staff' });
+      stay(ag, spot(ex, ey, NaN, Math.atan2(R.pts[n - 1][1] - ey, R.pts[n - 1][0] - ex), 'stand', { anim: 'shoo', cl: null }), now + 150, { settle: H });
       call(ag, () => endDrove(H));
     }
     // all in: the flock at home in its new pasture
@@ -3173,15 +3180,27 @@ const RomanTownLife = (() => {
     const gathered = H => { const [gx, gy] = H.gather, r = 3 + Math.sqrt(H.beasts.length) * (H.kind === 'cow' || H.kind === 'horse' ? 1.6 : 0.8); return H.beasts.filter(b => Math.hypot(b.x - gx, b.y - gy) < r).length >= H.beasts.length * 0.85; };
     // how far along the way the last of them has got
     const lastS = H => H.beasts.reduce((m, b) => Math.min(m, b.ds ?? 0), Infinity);
+    // the head of the column on along the way, at their pace, as long as he
+    // is close behind them driving them on and they are not strung out
+    function pushOn(H, dt) {
+      if (H.tHead === now) return;
+      H.tHead = now;
+      const R = H.route, big = H.kind === 'cow' || H.kind === 'horse', per = big ? 2 : 3;
+      const tail = lastS(H), most = 2.6 + ((H.beasts.length - 1) / per | 0) * (big ? 2.5 : 0.95);
+      const driven = tail - H.sBack < (big ? 10 : 7), together = H.sHead - tail < most + (big ? 10 : 6);
+      if (driven && together) H.sHead = Math.min(R.L, H.sHead + H.pace * dt);
+      if (H.sHead >= R.L) H.arrived = true;
+    }
     // a beast of the drove: to its place in the column, a little way behind
-    // the one leading, a little to one side, and on along the way with it
+    // the head of it, a little to one side, and on along the way with it
     function droveStep(ag, dt) {
       const H = ag.herd, R = H.route;
       if (!R) { ag.leg = null; return; }
+      pushOn(H, dt);
       const big = H.kind === 'cow' || H.kind === 'horse', per = big ? 2 : 3, row = (ag.rank / per) | 0, col = ag.rank % per - (per - 1) / 2;
       let back = 2.6 + row * (big ? 2.5 : 0.95) + (ag.id % 5) * 0.08;
       if (H.arrived) { const room = R.L - H.sIn - 1.5, most = 2.6 + ((H.beasts.length - 1) / per | 0) * (big ? 2.5 : 0.95); back *= Math.min(1, room / most); }
-      const want = clamp(H.sLead - back, 0, R.L);
+      const want = clamp(H.sHead - back, 0, R.L);
       // (on along the way only as it gets there)
       const [px, py] = atS(R, ag.ds), close = Math.hypot(px - ag.x, py - ag.y) < (big ? 2.2 : 1.4);
       if (close && ag.ds < want) ag.ds = Math.min(want, ag.ds + (big ? 1.5 : 1.6) * dt);
@@ -3196,7 +3215,9 @@ const RomanTownLife = (() => {
       ag.ph += v / (STRIDE[ag.kind] || 1);
     }
     // the dog: round behind the flock to bring it in to the gate; on the
-    // way, behind it and from side to side, after any that hang back
+    // way out along its sides, up towards the head and back, now one side
+    // and now the other, keeping them to the way, and round behind any that
+    // hang back
     function dogStep(ag, dt) {
       const M = ag.master, H = M && M.herd;
       if (!H || H.mode === 'graze') { ag.leg = null; return; }
@@ -3212,8 +3233,14 @@ const RomanTownLife = (() => {
         let worst = null, wd = 5;
         for (const b of H.beasts) { const [px, py] = atS(H.route, b.ds); const d = Math.hypot(px - b.x, py - b.y); if (d > wd) { wd = d; worst = b; } }
         if (worst) { const [px, py] = atS(H.route, worst.ds); tx = worst.x + (worst.x - px) / wd * 2; ty = worst.y + (worst.y - py) / wd * 2; }
-        else { const [qx, qy, qa] = atS(H.route, Math.max(0, lastS(H) - 3)), lat = Math.sin(now * 0.6 + ag.id) * 3; tx = qx - Math.sin(qa) * lat; ty = qy + Math.cos(qa) * lat; }
-        if (!(way.costAt(tx, ty) < Infinity)) { const [qx, qy] = atS(H.route, Math.max(0, lastS(H) - 2)); tx = qx; ty = qy; }
+        else {
+          const big = H.kind === 'cow' || H.kind === 'horse', tail = lastS(H), head = Math.max(tail, H.sHead - 2.6);
+          const side = Math.floor((now + ag.id * 7) / 25) % 2 ? 1 : -1, w = (big ? 2.2 : 1.6) + 1 + 0.6 * Math.sin(now * 0.9 + ag.id);
+          const [qx, qy, qa] = atS(H.route, lerp(tail, head, 0.5 + 0.45 * Math.sin(now * 0.22 + ag.id)));
+          for (const sd of [side, -side]) { const x = qx - Math.sin(qa) * w * sd, y = qy + Math.cos(qa) * w * sd; if (way.costAt(x, y) < Infinity) { tx = x; ty = y; break; } }
+          if (tx === undefined) { tx = qx; ty = qy; }
+        }
+        if (!(way.costAt(tx, ty) < Infinity)) { const [qx, qy] = atS(H.route, Math.max(0, lastS(H) - 1)); tx = qx; ty = qy; }
       }
       const d = Math.hypot(tx - ag.x, ty - ag.y), v = Math.min(d, (d > 3 ? 4.2 : 1.8) * dt), nx = ag.x + (tx - ag.x) / (d || 1) * v, ny = ag.y + (ty - ag.y) / (d || 1) * v;
       if (d > 0.3 && (way.costAt(nx, ny) < Infinity)) { ag.x = nx; ag.y = ny; ag.a += clamp(turn(ag.a, Math.atan2(ty - ag.y, tx - ag.x)), -7 * dt, 7 * dt); }
@@ -3364,19 +3391,23 @@ const RomanTownLife = (() => {
             if (L.pause && now < L.pause) { ag.pose = 'stand'; ag.anim = 'watch'; ag.torch = !!L.torch; ag.a += clamp(turn(ag.a, Math.atan2(ag.y - town.town.y, ag.x - town.town.x)), -2 * dt, 2 * dt); break; }
             if (L.stops.has(L.i) && L.stopped !== L.i) { L.stopped = L.i; L.pause = now + range(20, 70); break; }
           }
-          if (L.drove) {
-            const H = L.drove;
-            H.sLead = (H.route ? H.route.cum[1] : 0) + (L.pts ? along(L.pts.slice(0, L.i + 1)).L + L.d : 0);
-            // (they straggle: he stops, turns, and calls them on)
-            if (H.sLead - lastS(H) > (H.kind === 'cow' || H.kind === 'horse' ? 30 : 20) || L.wait && now < L.wait) {
-              if (!L.wait || now > L.wait) L.wait = now + range(4, 9);
+          let pace = L.pace;
+          if (L.drove && L.drove.route) {
+            // behind the last of them, a few paces back, driving them on: he
+            // waits, staff out, while they go out past him through the gate,
+            // and when they stop; a little quicker when he has dropped back
+            const H = L.drove, big = H.kind === 'cow' || H.kind === 'horse';
+            H.sBack = H.route.cum[1] + (L.pts ? along(L.pts.slice(0, L.i + 1)).L + L.d : 0);
+            const gap = lastS(H) - H.sBack, keep = big ? 3.5 : 2.5;
+            if (gap < keep && lastS(H) < H.sIn + 0.5) {
               ag.pose = 'stand'; ag.anim = 'shoo';
-              const [bx, by] = atS(H.route, lastS(H));
+              const [bx, by] = atS(H.route, Math.min(H.route.L, lastS(H) + 1));
               ag.a += clamp(turn(ag.a, Math.atan2(by - ag.y, bx - ag.x)), -3 * dt, 3 * dt);
               break;
             }
+            if (gap > keep + 4) pace *= 1.5;
           }
-          const sp = L.k === 'climb' ? 0.6 : L.pace || ag.speed * (ag.slow || 1) * (ag.kind === 'person' ? 1 - 0.25 * clamp((ag.fatigue || 0) - 0.7, 0, 0.6) : 1);
+          const sp = L.k === 'climb' ? 0.6 : pace || ag.speed * (ag.slow || 1) * (ag.kind === 'person' ? 1 - 0.25 * clamp((ag.fatigue || 0) - 0.7, 0, 0.6) : 1);
           ag.pose = L.k === 'climb' ? 'walk' : (ag.speed > 2 ? 'run' : 'walk'); ag.anim = null; ag.seat = 0;
           ag.torch = (L.torch || (night && ag.torchy && !ag.cl)) && ag.kind === 'person';
           if (ag.torch && !ag.carry) ag.carry = 'torch';
@@ -3942,7 +3973,7 @@ const RomanTownLife = (() => {
       else if (L && L.rest) doing = p.pose === 'lie' ? 'having a nap' : 'resting';
       else if (p.anim && DOING[p.anim] && p.anim !== 'talk') doing = DOING[p.anim];
       else doing = words[0] || (p.anim === 'talk' ? 'talking' : '');
-      if (act === 'drove' && L && L.k === 'go') doing = 'leading the flock to fresh grass';
+      if (act === 'drove' && L && L.k === 'go') doing = 'driving the flock to fresh grass';
       const needs = [];
       if (p.hunger !== undefined && !doing.startsWith('asleep')) {
         if (p.hunger > 0.85) needs.push('very hungry'); else if (p.hunger > 0.6) needs.push('hungry');
