@@ -15,8 +15,10 @@
 // share of one and the same loudness, as much as what makes it is of all
 // that is to be heard there. Looked at close, the few things in view are
 // heard the louder for being all there is; from far out, the whole town at
-// once, each thing in it the quieter for there being so much; the whole as
-// loud either way. The wind always, so that nothing is ever all there is.
+// once, each thing in it the quieter for there being so much. And the whole
+// the quieter the farther out one looks from, as from high above it: as
+// loud as it gets close in, a quarter of that with all the land in view.
+// The wind always, so that nothing is ever all there is.
 //
 //   const sound = RomanTownSound.create(town, seed)
 //   sound.toggle()                          on or off (it must be begun by a click or a key)
@@ -34,7 +36,8 @@ const RomanTownSound = (() => {
   function mulberry32(a) {
     return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   }
-  const LEVEL = 0.14; // the loudness the whole always has (about −20 dB)
+  const LEVEL = 0.14; // the loudness the whole has close in (about −20 dB)
+  const NEAR = 80;    // how much of the land (m across) can be in view and still be heard at that
 
   // ================= the voices: each a sound made once, at t =================
   // Each is given where to sound (dest), when (t), how loud at its loudest
@@ -132,13 +135,16 @@ const RomanTownSound = (() => {
       formants(ac, o, g, [[500 + r() * 400, 5, 1], [1200 + r() * 800, 6, 0.5]]);
       env(g, t, amp, 0.02, len);
     },
-    // sheep and goats: a quavering bleat
+    // sheep and goats: a quavering bleat, from the chest (a sheep's low, a
+    // goat's a little higher and thinner)
     bleat(ac, dest, t, amp, pan, r, goat) {
-      const f = (goat ? 560 : 420) + r() * 120, len = 0.55 + r() * 0.35, g = voice(ac, dest, t, pan, len + 0.2), o = osc(ac, 'sawtooth', f, t, len + 0.1);
+      const f = (goat ? 250 : 165) + r() * (goat ? 80 : 60), len = 0.55 + r() * 0.35, g = voice(ac, dest, t, pan, len + 0.2), o = osc(ac, 'sawtooth', f, t, len + 0.1);
       o.frequency.linearRampToValueAtTime(f * 0.85, t + len);
-      wobble(ac, o.frequency, 7 + r() * 3, f * 0.05, t, len);
-      wobble(ac, g.gain, 9 + r() * 4, amp * 0.35, t, len);
-      formants(ac, o, g, [[800 + r() * 200, 4, 1], [2300, 6, 0.4]]);
+      wobble(ac, o.frequency, 6 + r() * 3, f * 0.05, t, len);
+      wobble(ac, g.gain, 8 + r() * 3, amp * 0.35, t, len);
+      const lp = filter(ac, 'lowpass', goat ? 2200 : 1600, 0.7);
+      formants(ac, o, lp, goat ? [[700 + r() * 150, 3, 1], [1700, 5, 0.3]] : [[520 + r() * 120, 3, 1], [1250, 5, 0.3]]);
+      lp.connect(g);
       env(g, t, amp * 0.8, 0.05, len);
     },
     // cattle: a long low moo, opening and closing
@@ -190,11 +196,11 @@ const RomanTownSound = (() => {
         env(g, s, amp, 0.004, 0.06);
       }
     },
-    // pigs: a grunt, low, rumbling; now and then a squeal
+    // pigs: a grunt, deep, rumbling in the throat; once in a long while a squeal
     oink(ac, dest, t, amp, pan, r) {
-      const squeal = r() < 0.08, f = squeal ? 700 + r() * 300 : 95 + r() * 50, len = squeal ? 0.4 : 0.22 + r() * 0.2, g = voice(ac, dest, t, pan, len + 0.1), o = osc(ac, 'sawtooth', f, t, len + 0.1), lp = filter(ac, 'lowpass', squeal ? 3000 : 700, 2);
-      if (squeal) o.frequency.linearRampToValueAtTime(f * 1.5, t + len); else wobble(ac, g.gain, 22 + r() * 8, amp * 0.5, t, len);
-      const nz = noise(ac, t, len), nl = filter(ac, 'lowpass', 500); o.connect(lp).connect(g); nz.connect(nl).connect(g);
+      const squeal = r() < 0.03, f = squeal ? 380 + r() * 140 : 58 + r() * 30, len = squeal ? 0.4 : 0.22 + r() * 0.2, g = voice(ac, dest, t, pan, len + 0.1), o = osc(ac, 'sawtooth', f, t, len + 0.1), lp = filter(ac, 'lowpass', squeal ? 1600 : 360, 1.2);
+      if (squeal) o.frequency.linearRampToValueAtTime(f * 1.3, t + len); else { o.frequency.linearRampToValueAtTime(f * 0.85, t + len); wobble(ac, g.gain, 16 + r() * 6, amp * 0.5, t, len); }
+      const nz = noise(ac, t, len), nl = filter(ac, 'lowpass', 220); o.connect(lp).connect(g); nz.connect(nl).connect(g);
       env(g, t, amp, 0.02, len);
     },
     // a bird in a tree: a run of chirps
@@ -325,15 +331,15 @@ const RomanTownSound = (() => {
     pipe: { v: 'pipe', rate: 2.2, w: 1.2, E: 0.0739, pk: 1.45 },
     kid: { v: 'kid', rate: 0.08, w: 0.25, E: 0.0006, pk: 0.32 },
     word: { v: 'word', rate: 0.3, w: 0.08, E: 0.0002, pk: 0.25 },
-    bleat: { v: 'bleat', rate: 1 / 35, w: 0.18, E: 0.0015, pk: 0.26 },
-    goat: { v: 'bleat', rate: 1 / 30, w: 0.18, E: 0.0012, pk: 0.23, arg: true },
+    bleat: { v: 'bleat', rate: 1 / 35, w: 0.18, E: 0.0013, pk: 0.36 },
+    goat: { v: 'bleat', rate: 1 / 30, w: 0.18, E: 0.00145, pk: 0.37, arg: true },
     moo: { v: 'moo', rate: 1 / 80, w: 0.35, E: 0.1065, pk: 0.91 },
     neigh: { v: 'neigh', rate: 1 / 120, w: 0.35, E: 0.0027, pk: 0.3 },
     bray: { v: 'bray', rate: 1 / 240, w: 0.5, E: 0.0344, pk: 0.35 },
     bark: { v: 'bark', rate: 1 / 25, w: 0.5, E: 0.0011, pk: 0.6 },
     meow: { v: 'meow', rate: 1 / 120, w: 0.2, E: 0.0017, pk: 0.24 },
     cluck: { v: 'cluck', rate: 1 / 7, w: 0.07, E: 0.001, pk: 0.53 },
-    oink: { v: 'oink', rate: 1 / 9, w: 0.18, E: 0.0101, pk: 1.19 },
+    oink: { v: 'oink', rate: 1 / 9, w: 0.18, E: 0.0092, pk: 0.94 },
     chirp: { v: 'chirp', rate: 1 / 14, w: 0.12, E: 0.007, pk: 0.72 },
     cricket: { v: 'cricket', rate: 1.2, w: 0.05, E: 0.0026, pk: 0.7 },
     frog: { v: 'frog', rate: 1 / 3, w: 0.12, E: 0.0015, pk: 0.58 },
@@ -462,7 +468,9 @@ const RomanTownSound = (() => {
     // what is heard, sounded at now: the beds turned to their shares, the
     // voices due in the dt since the last time
     function play(src, rect, now, dt) {
-      const [x0, , w] = rect, cx = x0 + w / 2;
+      const [x0, , w, h] = rect, cx = x0 + w / 2;
+      // (the farther out, the quieter: full within a street or two, falling off past it)
+      const far = clamp(Math.pow(NEAR / Math.max(w, h), 0.6), 0.2, 1), level = LEVEL * far;
       // the whole, and each kind's share of it
       let P = 0;
       for (const k in src) P += src[k].n * (KIND[k].w ?? BEDW[k]);
@@ -474,14 +482,14 @@ const RomanTownSound = (() => {
         const gust = k === 'wind' ? 0.75 + 0.25 * Math.sin(now * 0.31 + Math.sin(now * 0.13) * 2) : k === 'fire' ? 0.7 + 0.6 * r() : 1;
         // (the wind and the water counted in the whole, so that nothing is
         // ever all there is, but themselves kept low: behind it all)
-        b.g.gain.setTargetAtTime(LEVEL * b.k * Math.sqrt(share) * gust * (QUIET[k] || 1), now, 0.25);
+        b.g.gain.setTargetAtTime(level * b.k * Math.sqrt(share) * gust * (QUIET[k] || 1), now, 0.25);
       }
       for (const k in src) {
         const K = KIND[k];
         if (K.bed) continue;
         const s = src[k], rate = s.n * K.rate, often = Math.min(rate, K.cap || CAP), share = s.n * K.w / P;
         // (as loud as makes its share, played as often as it is: louder the rarer)
-        const amp = Math.min(0.9 / K.pk, LEVEL * Math.sqrt(share / (often * K.E)));
+        const amp = Math.min(0.9 / K.pk, LEVEL * Math.sqrt(share / (often * K.E))) * far;
         // (how many in this moment: as many as are due, the odd one at random)
         const lam = often * dt, count = Math.min(K.cap ? 8 : 6, Math.floor(lam) + (r() < lam % 1 ? 1 : 0));
         for (let c = 0; c < count; c++) {

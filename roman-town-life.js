@@ -27,10 +27,12 @@
 // sunrise as the Romans counted them, twelve to the day and twelve to the
 // night whatever their length: up before dawn, water from the fountain, the
 // fields, the shop, the forum, school under a portico; a meal at noon and a
-// rest; the baths in the afternoon, dinner on couches; the tavern after
+// rest; the baths in the afternoon, or the neighbours' talk about a
+// fountain; dinner on couches; the tavern after
 // it; home before dark, the watch going round with torches, sleep; on a
 // feast day the whole town on the theatre's steps for the play or the
-// amphitheatre's for the games, gladiators two by two on the sand, the crowd
+// amphitheatre's for the games, gladiators two by two on the sand (where
+// they train on the other days), the crowd
 // applauding, on its feet; and day and night sentries on the
 // walls and a lookout on every other tower. Each goes where it is going as one
 // would walk: out through the doors of its house, along the streets, the
@@ -124,7 +126,7 @@ const RomanTownLife = (() => {
     night: ['at home for the evening', 'home'], home: ['at home', 'home'], meal: ['eating', 'to eat'], eat: ['eating', 'home to eat'], sleep: ['asleep', 'home to bed'],
     siesta: ['resting in the heat of the day', 'to lie down a while'], rest: ['resting', 'to rest'], shop: ['at work in the shop', 'to work'], craft: ['at work at the door', 'to work'],
     field: ['working in the fields', 'out to the fields'], pasture: ['watching the flock', 'out to the flock'], drove: ['moving the flock to fresh grass', 'with the flock to fresh grass'],
-    baths: ['at the baths', 'to the baths'], forum: ['in the forum', 'to the forum'], stroll: ['out and about', 'for a walk'], temple: ['at the temple', 'to the temple'],
+    baths: ['at the baths', 'to the baths'], fountain: ['at the fountain', 'to the fountain'], forum: ['in the forum', 'to the forum'], stroll: ['out and about', 'for a walk'], temple: ['at the temple', 'to the temple'],
     market: ['shopping', 'to the shops'], show: ['at the show', 'to the show'], perform: ['on the stage', 'to the theatre'], fight: ['fighting in the arena', 'to the arena'],
     tavern: ['at the tavern', 'to the tavern'], barber: ['at the barber’s', 'to the barber’s'], water: ['fetching water', 'for water'], chores: ['about the house', 'home'],
     cook: ['cooking', 'to the kitchen'], spin: ['spinning wool', 'home to spin'], porter: ['carrying a load', 'for a load'], carrywater: ['carrying water', 'with a jar of water'],
@@ -837,6 +839,23 @@ const RomanTownLife = (() => {
       const o = 0.55, [x, y] = toWorld(b, b.w / 2 + u * (b.w / 2 + o), b.d / 2 + v * (b.d / 2 + o));
       return way.costAt(x, y) < Infinity ? { x, y, a: Math.atan2(b.y - y, b.x - x) } : null;
     }).filter(Boolean) })).filter(f => f.spots.length);
+    // and round each, a ring of open street a step or two out from the
+    // basin to stand and talk in (the grand one's, its whole little square)
+    fountains.forEach((f, i) => {
+      const b = f.b, pts = [];
+      f.key = 'fountain' + i;
+      f.grand = !!nymph && insideConvex(nymph.poly, b.x, b.y);
+      if (f.grand) { f.ring = nymphPts; f.key = 'nymph'; return; }
+      for (let k = 0; k < 40 && pts.length < 10; k++) {
+        const m = range(1.3, 2.4), s = range(-m, b.w + m), t = range(-m, b.d + m);
+        if (s > -1.1 && s < b.w + 1.1 && t > -1.1 && t < b.d + 1.1) continue;
+        const [x, y] = toWorld(b, s, t);
+        let ok = way.comp[way.cellOf(x, y)] === mainComp;
+        for (let dy = -0.7; dy <= 0.7 && ok; dy += 0.7) for (let dx = -0.7; dx <= 0.7; dx += 0.7) if (!(way.costAt(x + dx, y + dy) <= 1.25)) { ok = false; break; }
+        if (ok) pts.push([x, y]);
+      }
+      f.ring = pts;
+    });
     // the altars: the priest beyond, the worshippers before, all facing the temple
     const altars = byUse('altar').map(al => {
       let t = null, td = Infinity;
@@ -1509,14 +1528,17 @@ const RomanTownLife = (() => {
       const wake = ag.wakeR, day = clock.day, m = clock.month, winter = m === 11 || m === 0 || m === 1;
       ag.showGoer = !!showOf(day) && chance(goes(ag));
       at(-6, 'night');
+      // the end of a working day: the baths, most often; or a while at a
+      // fountain with the neighbours
+      const unwind = (o = {}) => wpick({ baths: 3, fountain: 2, ...o });
       // a working day: an errand mid-morning now and then, the noon's rest,
       // back to it, the baths, home; for a man, the tavern after dinner now and then
       const workday = (work, o = {}) => {
         if (ag.patron && chance(0.6)) at(wake, 'salutatio'); else at(wake, 'meal');
         at(o.from ?? 0.6, work);
-        if (chance(0.5)) { at(range(2.2, 3.4), wpick({ forum: 2, temple: 1, market: ag.sex === 'f' ? 2 : 0.5, barber: ag.sex === 'm' ? 2 : 0, stroll: 1 })); at(4.2, work); }
+        if (chance(0.5)) { at(range(2.2, 3.4), wpick({ forum: 2, temple: 1, market: ag.sex === 'f' ? 2 : 0.5, barber: ag.sex === 'm' ? 2 : 0, stroll: 1, fountain: 1 })); at(4.2, work); }
         at(5.7, chance(o.out ?? 0.3) ? 'eatout' : 'meal'); at(6.5, 'siesta');
-        at(7.4, work); if (chance(0.75)) at(o.baths ?? 8.8, 'baths');
+        at(7.4, work); if (chance(0.7)) at(o.baths ?? 8.8, unwind());
         at(10, 'home'); at(10.3, 'meal');
         if (ag.sex === 'm' && chance(0.3)) at(range(11, 11.6), 'tavern');
         at(12.4, 'night');
@@ -1524,7 +1546,7 @@ const RomanTownLife = (() => {
       switch (ag.job) {
         case 'farmer': {
           at(wake, 'meal');
-          if (isMarket(day) && !ag.bond && chance(0.4)) { at(wake + 0.4, 'sell'); at(5.5, 'home'); at(6, 'meal'); at(6.5, 'siesta'); at(8, 'baths'); at(9.8, 'home'); }
+          if (isMarket(day) && !ag.bond && chance(0.4)) { at(wake + 0.4, 'sell'); at(5.5, 'home'); at(6, 'meal'); at(6.5, 'siesta'); at(8, unwind()); at(9.8, 'home'); }
           else { at(wake + 0.3, 'field'); at(winter ? 9 : 10.6, 'home'); }
           at(11, 'meal'); at(12.2, 'night');
           break;
@@ -1547,22 +1569,22 @@ const RomanTownLife = (() => {
         case 'porter': workday('porter', { out: 0.5 }); break;
         case 'water': workday('carrywater', { from: 0.2, out: 0.5 }); break;
         case 'mason': workday('masonry', { out: 0.6 }); break;
-        case 'woodcutter': at(wake, 'meal'); at(wake + 0.3, 'woodcut'); at(8.4, 'baths'); at(10, 'home'); at(10.3, 'meal'); at(12.2, 'night'); break;
-        case 'doctor': at(wake, 'meal'); at(0.8, 'visit'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'visit'); at(9, 'baths'); at(10.2, 'home'); at(10.5, 'meal'); at(12.4, 'night'); break;
-        case 'scribe': case 'banker': at(wake, 'meal'); at(1, 'desk'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'desk'); at(9.4, 'baths'); at(10.4, 'home'); at(10.6, 'meal'); at(12.4, 'night'); break;
+        case 'woodcutter': at(wake, 'meal'); at(wake + 0.3, 'woodcut'); at(8.4, unwind()); at(10, 'home'); at(10.3, 'meal'); at(12.2, 'night'); break;
+        case 'doctor': at(wake, 'meal'); at(0.8, 'visit'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'visit'); at(9, unwind()); at(10.2, 'home'); at(10.5, 'meal'); at(12.4, 'night'); break;
+        case 'scribe': case 'banker': at(wake, 'meal'); at(1, 'desk'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'desk'); at(9.4, unwind()); at(10.4, 'home'); at(10.6, 'meal'); at(12.4, 'night'); break;
         // the lictors before their magistrate at his platform, the fasces on their shoulders
-        case 'lictor': at(wake, 'meal'); at(1.2, 'lictor'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.6, chance(0.6) ? 'baths' : 'forum'); at(10, 'home'); at(10.3, 'meal'); at(12.4, 'night'); break;
+        case 'lictor': at(wake, 'meal'); at(1.2, 'lictor'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.6, unwind({ forum: 3 })); at(10, 'home'); at(10.3, 'meal'); at(12.4, 'night'); break;
         // the piper: at the morning's sacrifices, practising at his door, at a rich man's dinner
         case 'musician': at(wake - 0.1, 'meal'); at(wake + 0.15, 'pipe', { where: 'altar' }); at(2.2, 'home'); at(3, 'pipe', { where: 'door' }); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'forum'); at(9.4, 'pipe', { where: 'cena' }); at(12.6, 'night'); break;
-        case 'actor': at(wake, 'meal'); at(1, 'rehearse'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'baths'); at(9.5, 'home'); at(10, 'meal'); if (chance(0.5)) at(11, 'tavern'); at(12.6, 'night'); break;
-        case 'venator': at(wake, 'meal'); at(1, 'menagerie'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'menagerie'); at(9.6, 'baths'); at(10.6, 'home'); at(10.8, 'meal'); at(12.4, 'night'); break;
-        case 'gladiator': at(wake, 'meal'); at(0.5, 'train'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'train'); at(9.2, 'baths'); at(10.4, 'home'); at(10.6, 'meal'); at(12.2, 'night'); break;
+        case 'actor': at(wake, 'meal'); at(1, 'rehearse'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, unwind()); at(9.5, 'home'); at(10, 'meal'); if (chance(0.5)) at(11, 'tavern'); at(12.6, 'night'); break;
+        case 'venator': at(wake, 'meal'); at(1, 'menagerie'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'menagerie'); at(9.6, unwind()); at(10.6, 'home'); at(10.8, 'meal'); at(12.4, 'night'); break;
+        case 'gladiator': at(wake, 'meal'); at(0.5, 'train'); at(5.6, 'meal'); at(6.4, 'siesta'); at(7.6, 'train'); at(9.2, unwind({ home: 2 })); at(10.4, 'home'); at(10.6, 'meal'); at(12.2, 'night'); break;
         case 'patron': {
           at(wake, 'receive'); at(1.4, ag.magistrate ? 'tribunal' : 'forum'); at(5.8, 'meal'); at(6.4, 'siesta');
           at(7.6, 'baths'); at(9.6, 'cena', { guest: chance(0.3) ? choice(patrons.filter(p => p !== ag)) : null }); at(12.6, 'home'); at(13.2, 'night');
           break;
         }
-        case 'domina': at(wake, 'home'); at(0.8, chance(0.5) ? 'spin' : 'home'); at(1.6, wpick({ temple: 1, baths: 1.2, market: 1, home: 1 })); at(4, 'spin'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.6, 'home'); at(9.6, 'cena'); at(12.6, 'home'); at(13.2, 'night'); break;
+        case 'domina': at(wake, 'home'); at(0.8, chance(0.5) ? 'spin' : 'home'); at(1.6, wpick({ temple: 1, baths: 1, market: 1, home: 1, fountain: 0.6 })); at(4, 'spin'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.6, 'home'); at(9.6, 'cena'); at(12.6, 'home'); at(13.2, 'night'); break;
         case 'slave':
           switch (ag.role) {
             // the doorkeeper on his stool inside the door, all day
@@ -1578,9 +1600,9 @@ const RomanTownLife = (() => {
           at(wake - 0.2, 'cook'); at(wake + 0.4, 'water');
           if (ag.home.coop || ag.home.kind === 'villa') { at(0.9, 'feed'); at(1.3, 'chores'); } else at(1.2, 'chores');
           if (ag.shopwife) at(1.4, 'shop');
-          at(2.4, wpick({ market: 2, temple: 0.7, river: town.river && banks.length ? 0.8 : 0, home: 1.2, forum: 0.4, spin: 1.5 }), { how: 'wash' });
+          at(2.4, wpick({ market: 2, temple: 0.7, river: town.river && banks.length ? 0.8 : 0, home: 1.2, forum: 0.4, spin: 1.5, fountain: 1.2 }), { how: 'wash' });
           at(4.4, chance(0.6) ? 'spin' : 'chores'); at(5.2, 'cook'); at(6, 'meal'); at(6.6, 'siesta');
-          at(7.5, chance(0.35) ? 'baths' : ag.shopwife ? 'shop' : 'spin');
+          at(7.5, wpick({ baths: 0.3, fountain: 0.25, [ag.shopwife ? 'shop' : 'spin']: 0.45 }));
           at(8.8, 'cook'); at(9.6, 'meal'); if (ag.home.coop || ag.home.kind === 'villa') at(10.4, 'feed'); else if (chance(0.5)) at(10.5, 'water'); at(11.2, 'spin'); at(12.4, 'night');
           break;
         }
@@ -1591,9 +1613,9 @@ const RomanTownLife = (() => {
           at(10.4, 'home'); at(10.8, 'meal'); at(11.6, 'night');
           break;
         }
-        case 'old': at(wake + 0.2, 'meal'); at(1, ag.sex === 'm' && chance(0.3) ? 'barber' : 'door'); at(1.6, 'door'); at(3.5, chance(0.4) ? 'temple' : chance(0.4) ? 'forum' : 'door'); at(5.6, 'meal'); at(6.2, 'siesta'); at(8, 'door'); at(10.2, 'home'); at(10.6, 'meal'); at(11.2, 'night'); break;
+        case 'old': at(wake + 0.2, 'meal'); at(1, ag.sex === 'm' && chance(0.3) ? 'barber' : 'door'); at(1.6, 'door'); at(3.5, wpick({ temple: 0.4, forum: 0.25, fountain: 0.15, door: 0.2 })); at(5.6, 'meal'); at(6.2, 'siesta'); at(8, chance(0.3) ? 'fountain' : 'door'); at(10.2, 'home'); at(10.6, 'meal'); at(11.2, 'night'); break;
         case 'priest': at(wake, 'meal'); at(wake + 0.2, 'sacrifice'); at(2.2, 'precinct'); at(5.6, 'meal'); at(6.4, 'siesta'); at(8, 'precinct'); at(10.5, 'home'); at(11, 'meal'); at(12.2, 'night'); break;
-        case 'teacher': at(wake, 'meal'); at(0.3, 'teach'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.8, 'baths'); at(10.2, 'home'); at(10.5, 'meal'); at(12.2, 'night'); break;
+        case 'teacher': at(wake, 'meal'); at(0.3, 'teach'); at(5.8, 'meal'); at(6.4, 'siesta'); at(7.8, unwind()); at(10.2, 'home'); at(10.5, 'meal'); at(12.2, 'night'); break;
         case 'attendant': at(wake, 'meal'); at(0.2, 'attend'); at(11, 'home'); at(11.3, 'meal'); at(12.2, 'night'); break;
         case 'guard': at(wake, 'meal'); at(0, 'guard'); at(12, 'home'); at(12.3, 'meal'); at(12.8, 'night'); break;
         case 'sentry': case 'lookout':
@@ -1797,7 +1819,7 @@ const RomanTownLife = (() => {
         go(ag, sp, { carry: 'jar' }); stay(ag, sp, now + range(40, 120));
         call(ag, () => { ag.carry = 'jar-full'; });
         // a word with the neighbours at the fountain, now and then
-        if (chance(0.35)) { const a = rng() * TAU, x = s.x + Math.cos(a) * 1.4, y = s.y + Math.sin(a) * 1.4; if (way.costAt(x, y) < Infinity) { const t = spot(x, y, NaN, a + Math.PI, 'stand', { anim: 'talk', cl: null }); stay(ag, t, now + range(90, 400)); } }
+        if (chance(0.55)) { const a = rng() * TAU, x = s.x + Math.cos(a) * 1.4, y = s.y + Math.sin(a) * 1.4; if (way.costAt(x, y) < Infinity) { const t = spot(x, y, NaN, a + Math.PI, 'stand', { anim: 'talk', cl: null }); stay(ag, t, now + range(120, 600)); } }
         const back = homeSpot(ag, 'hearth') || homeSpot(ag, 'store') || homeIn(h);
         go(ag, back); stay(ag, back, now + 20);
         call(ag, () => { ag.carry = null; });
@@ -1831,6 +1853,22 @@ const RomanTownLife = (() => {
         if (!sp) return atHome(ag, until, 'seat');
         ag.group = sp.group;
         go(ag, sp); stay(ag, sp, short(until, 300, 1500)); call(ag, () => leaveGroup(ag));
+      },
+      fountain(ag, e, until) {
+        // at a fountain of an afternoon: the town's grand one now and then,
+        // or one in the streets near home; a drink from the spout, and the
+        // talk with whoever else is there
+        leaveGroup(ag);
+        const [hx, hy] = ag.home ? H(ag).front.out : [ag.x, ag.y];
+        const street = fountains.filter(f => !f.grand && f.ring.length).sort((p, q) => Math.hypot(p.b.x - hx, p.b.y - hy) - Math.hypot(q.b.x - hx, q.b.y - hy)).slice(0, 3);
+        const grand = fountains.find(f => f.grand && f.ring.length);
+        const f = grand && (chance(0.45) || !street.length) ? grand : street.length ? choice(street) : null;
+        if (!f) return ACT.stroll(ag, e, until);
+        if (chance(0.6)) { const q = choice(f.spots), sp = spot(q.x, q.y, NaN, q.a, 'bend', { anim: 'drink', cl: null }); go(ag, sp); stay(ag, sp, now + range(15, 35), { drink: true }); }
+        const sp = talkSpot(f.key, f.ring, f.grand ? 5 : 4);
+        if (!sp) return;
+        ag.group = sp.group;
+        go(ag, sp); stay(ag, sp, short(until, 900, 2400)); call(ag, () => leaveGroup(ag));
       },
       stroll(ag, e, until) {
         const sp = nymph && chance(0.5) ? talkSpot('nymph', nymphPts, 4) : talkSpot('forum', forumPts);
@@ -2377,8 +2415,9 @@ const RomanTownLife = (() => {
       },
       rehearse(ag, e, until) { if (!stage || !cavea) return ACT.forum(ag, e, until); ACT.perform(ag, e, short(until, 300, 900)); },
       train(ag, e, until) {
-        // two by two in the baths' exercise court, with wooden swords and wicker shields; or alone at the post
-        const where = bath && bath.court.length ? 'court' : amph ? 'sand' : null;
+        // two by two on the amphitheatre's sand, with wooden swords and wicker
+        // shields; with no amphitheatre, in the baths' exercise court
+        const where = amph ? 'sand' : bath && bath.court.length ? 'court' : null;
         if (!where) return ACT.baths(ag, e, until);
         duel(ag, where, short(until, 900, 2400), true);
       },
@@ -2528,7 +2567,8 @@ const RomanTownLife = (() => {
     // goes down ----
     const duels = new Map(), cheers = { theatre: { until: 0, next: 0 }, arena: { until: 0, next: 0 } };
     function duel(ag, where, until, practice) {
-      const o = ag.pair, key = Math.min(ag.id, o ? o.id : ag.id) + where;
+      // (a practice bout and a games-day one each its own, on the same sand)
+      const o = ag.pair, key = Math.min(ag.id, o ? o.id : ag.id) + where + (practice ? '-practice' : '');
       let D = duels.get(key);
       if (!D) {
         let c = null;
