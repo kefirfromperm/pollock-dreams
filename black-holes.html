@@ -155,7 +155,7 @@
     }
     const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
     const half = !!gl.getExtension('EXT_color_buffer_float') || !!gl.getExtension('EXT_color_buffer_half_float');
-    const MAXH = 24, MAXW = 12;
+    const MAXH = 24, MAXW = 12, MAXR = 16;
 
     // the trails: lines drawn into a buffer that fades
     const trail = [0, 1].map(() => {
@@ -204,6 +204,8 @@
       uniform vec2 rings[${MAXH}]; // its ringing, just merged: how far out of round, which way
       uniform vec4 waves[${MAXW}]; // x, y, how far it has run, how strong
       uniform float axes[${MAXW}]; // which way it stretches
+      uniform int nr;
+      uniform vec4 relic[${MAXR}]; // the relic waves: kx, ky, the phase now at the origin, how strong
       uniform float px; // a device px, in its units
       float erfc_(float x) {
         float t = 1.0 / (1.0 + 0.3275911 * x);
@@ -237,6 +239,11 @@
           vec2 d = near(x - waves[k].xy);
           float r = length(d), s = (r - waves[k].z) / 0.012, env = s / 2.2;
           ripple += waves[k].w * exp(-env * env) * cos(s * 2.6 - 2.0 * (atan(d.y, d.x) - axes[k]));
+        }
+        // and the relic waves, every way, faint, for ever
+        for (int k = 0; k < ${MAXR}; k++) {
+          if (k >= nr) break;
+          ripple += relic[k].w * cos(dot(relic[k].xy, x) + relic[k].z);
         }
         float alpha = 1.0 + phi;
         // curvature, as the redshift of the ground's light: grey where space
@@ -354,6 +361,9 @@
       ws.forEach((w, j) => wv.set([w.x, w.y, w.R, Math.min(0.5, 1.8 * Math.sqrt(w.E / (u.c * u.c) / Math.max(w.R, 0.02)))], j * 4));
       gl.uniform1i(show.loc.nw, ws.length); gl.uniform4fv(show.loc.waves, wv);
       gl.uniform1fv(show.loc.axes, Float32Array.from({ length: MAXW }, (_, j) => ws[j] ? ws[j].axis || 0 : 0));
+      const rs = u.relic.slice(0, MAXR), rlv = new Float32Array(MAXR * 4);
+      rs.forEach((r, j) => rlv.set([r.kx, r.ky, (r.phi - r.w * u.time) % TAU, 0.6 * r.h], j * 4));
+      gl.uniform1i(show.loc.nr, rs.length); gl.uniform4fv(show.loc.relic, rlv);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     // a merger: the hole it made rings
