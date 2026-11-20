@@ -54,6 +54,8 @@
 //   dust rubs: where it crowds, it is pulled to move as the gas about it
 //     does, the motion lost heat, the heat, a photon's worth at a time,
 //     shone off as a fast particle that flies free a while;
+//   space itself is curved, from the first, for ever: wells and rises of
+//     its own, that everything falls into and climbs out of alike;
 //   a gravitational wave runs out at c from where it began, and gives its
 //     energy, shell by shell, to the dust it passes, pushing it out.
 // The weak field is pushed past what it keeps exactly where it is pushed
@@ -118,9 +120,10 @@ const BlackHoles = (() => {
     K = 1.2, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
     M_END = 0.04, // a hole this light bursts
-    EMIT_RATE = 1500, // Hawking particles from a hole a second, at most
+    EMIT_RATE = 700, // Hawking particles from a hole a second, at most
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
+    CURVE = 0.04, CURVE_L = [0.2, 0.8], // space's own curvature, there from the first, for ever: how deep (Φ/c², its rms), how wide
     PETERS = true, // close pairs losing their orbits to gravitational waves
     ALPHA_COLLAPSE = 0.7, // dust whose own well is this deep collapses
     CLEAR = 0.1, // (no nearer a hole than this: dust heaped about a hole is the hole's to take)
@@ -451,6 +454,43 @@ const BlackHoles = (() => {
       }
     }
 
+    // ---- space's own curvature ----
+    // Space was never flat: from the first it has wells and rises of its
+    // own, Φ₀, the same for ever, whatever falls in or climbs out: random,
+    // as wide as CURVE_L, as deep as CURVE (its mean 0, a whole number of
+    // waves round the torus each way). Every body is pulled down into its
+    // wells, and its clock is slower there, as in any; its energy there
+    // its own (not, as two bodies' binding is, shared between them).
+    const phi0 = new Float64Array(NC), gx0 = new Float64Array(NC), gy0 = new Float64Array(NC);
+    if (CURVE > 0) {
+      const modes = [];
+      const IX = Math.ceil(Lx / CURVE_L[0]), IY = Math.ceil(Ly / CURVE_L[0]);
+      for (let j = 0; j <= IY; j++) for (let i = -IX; i <= IX; i++) {
+        if (j === 0 && i <= 0) continue; // (each wave once: −k is k)
+        const kx = TAU * i / Lx, ky = TAU * j / Ly, lam = TAU / hyp(kx, ky);
+        if (lam < CURVE_L[0] || lam > CURVE_L[1]) continue;
+        modes.push([kx, ky, gauss(), TAU * rng()]);
+      }
+      for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
+        const x = (i + 0.5) * dx, y = (j + 0.5) * dy;
+        let v = 0;
+        for (const [kx, ky, a, ph] of modes) v += a * Math.cos(kx * x + ky * y + ph);
+        phi0[j * NX + i] = v;
+      }
+      let ss = 0;
+      for (let k = 0; k < NC; k++) ss += phi0[k] * phi0[k];
+      const scale = ss > 0 ? CURVE * c2 / Math.sqrt(ss / NC) : 0;
+      for (let k = 0; k < NC; k++) phi0[k] *= scale;
+      for (let j = 0; j < NY; j++) {
+        const jn = (j + 1) % NY, jp = (j + NY - 1) % NY;
+        for (let i = 0; i < NX; i++) {
+          const inn = (i + 1) % NX, ip = (i + NX - 1) % NX, k = j * NX + i;
+          gx0[k] = (phi0[j * NX + inn] - phi0[j * NX + ip]) / (2 * dx);
+          gy0[k] = (phi0[jn * NX + i] - phi0[jp * NX + i]) / (2 * dy);
+        }
+      }
+    }
+
     let target = null, targetP = null; // the totals, as they were at first
     let energy = 0, momentum = [0, 0], time = 0;
     const stats = { swallowed: 0, emitted: 0, merged: 0, collapsed: 0, burst: 0, fixed: 0, photons: 0, collided: 0, stuck: 0 };
@@ -667,6 +707,7 @@ const BlackHoles = (() => {
         for (let q = 0; q < 4; q++) rho[cicK[q]] += cic[q] * h.Hg / c2;
       }
       solve();
+      if (CURVE > 0) for (let k = 0; k < NC; k++) { phi[k] += phi0[k]; gx[k] += gx0[k]; gy[k] += gy0[k]; }
 
       // ---- the energy and momentum now; α at every body ----
       let E = 0, W = 0, Px = 0, Py = 0;
@@ -677,7 +718,7 @@ const BlackHoles = (() => {
         h.selfP = w * selfP;
         h.lx = -sample(gx) + w * selfX; h.ly = -sample(gy) + w * selfY;
         h.longP = sample(phi) - h.selfP;
-        W += 0.5 * w * h.longP;
+        W += 0.5 * w * (h.longP - sample(phi0)); // (space's own well no binding: all its own)
         h.phiShort = 0;
       }
       // Holes and holes: each pair by one potential V, counted once, and
@@ -711,7 +752,7 @@ const BlackHoles = (() => {
           Pl = sample(phi) - w * KP[4]; tGx[i] = sample(gx); tGy[i] = sample(gy);
         }
         tPl[i] = Pl;
-        W += 0.5 * w * Pl;
+        W += 0.5 * w * (Pl - sample(phi0));
         let P0 = Pl, gap = Infinity, into = -1;
         const qi = hyp(qx[i], qy[i]);
         for (let k = 0; k < H; k++) {
