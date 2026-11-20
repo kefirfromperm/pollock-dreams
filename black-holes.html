@@ -79,7 +79,7 @@
   const musicButton = document.getElementById('sound');
   const wavesButton = document.getElementById('waves');
 
-  const seed = (Math.random() * 1e9) | 0;
+  const seed = (+new URLSearchParams(location.search).get('seed')) || (Math.random() * 1e9) | 0; // (?seed=…: the same universe again)
   const touch = matchMedia('(pointer: coarse)').matches;
   // the canvas (CW × CH css px) and the screen (VW × VH)
   let CW, CH, VW, VH;
@@ -505,10 +505,20 @@
       }
       return { NX: best.NX, NY: best.NY };
     };
+    // (to try it otherwise: any of the universe's settings in the address,
+    // ?MASS=0.5&HOLE_MASS=0.05,0.1&EMIT_RATE=1800, a list with commas)
+    const tried = {};
+    for (const [k, v] of new URLSearchParams(location.search)) {
+      if (!/^[A-Z][A-Z_]*$/.test(k)) continue;
+      const xs = v.split(',').map(Number);
+      if (xs.every(Number.isFinite)) tried[k] = xs.length > 1 ? xs : xs[0];
+      else if (v === 'true' || v === 'false') tried[k] = v === 'true';
+    }
     const u = uni = BlackHoles.universe(PD.mulberry32(seed), {
-      Lx, Ly, ...grid(Lx, Ly), 
+      Lx, Ly, ...grid(Lx, Ly),
       N: touch ? 9000 : 15000,
       TRAIL_DT: TIME / 60, // (a place kept a frame, at 60 a second)
+      ...tried,
     });
     window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
     const painter = glPainter(gl, u);

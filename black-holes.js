@@ -101,19 +101,19 @@ const BlackHoles = (() => {
     };
   }
 
-  // A universe Lx × Ly (Ly = 1 is the unit of length), of rest mass 1 at
+  // A universe Lx × Ly (Ly = 1 is the unit of length), of rest mass MASS at
   // first, G = 1. Time is in its own seconds.
   function universe(rng, {
     Lx = 1, Ly = 1, N = 16000, NY = 128, NX = 0, // (NX: as square cells as powers of two allow, unless given)
     c = 3,
-    MASS = 1, // its rest mass at first
-    HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
+    MASS = 0.5, // its rest mass at first (G = 1: as light, as weak its pull)
+    HOLES = 3, HOLE_MASS = [0.05, 0.1], // the holes there at first
     HOLE_WARM = 0.4, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
     K = 0.6, // Hawking power: dE/dt = −K/M²
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
     M_END = 0.02, // a hole this light bursts
-    EMIT_RATE = 900, // Hawking particles from a hole a second, at most
+    EMIT_RATE = 1500, // Hawking particles from a hole a second, at most
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
     PETERS = true, // close pairs losing their orbits to gravitational waves
