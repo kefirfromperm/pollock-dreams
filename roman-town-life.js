@@ -864,6 +864,13 @@ const RomanTownLife = (() => {
       const out = t ? Math.atan2(al.y - t.y, al.x - t.x) : al.angle, ux = Math.cos(out), uy = Math.sin(out);
       return { b: al, out, priest: { x: al.x + ux * 1.4, y: al.y + uy * 1.4, a: out + Math.PI }, ux, uy };
     });
+    // the water one may get into: the open pools, and the warm pools in the
+    // baths' halls; whoever's way in or out goes through it swims it
+    const waters = [];
+    for (const g of town.grounds) if (g.kind === 'pool') waters.push(g.poly);
+    for (const h of byUse('baths')) if (h.interior) for (const f of h.interior.floors) if (f[4] === 'pool') waters.push([toWorld(h, f[0], f[1]), toWorld(h, f[2], f[1]), toWorld(h, f[2], f[3]), toWorld(h, f[0], f[3])]);
+    const waterBox = waters.map(q => [Math.min(...q.map(p => p[0])), Math.min(...q.map(p => p[1])), Math.max(...q.map(p => p[0])), Math.max(...q.map(p => p[1]))]);
+    const wet = (x, y) => { for (let k = 0; k < waters.length; k++) { const B = waterBox[k]; if (x > B[0] && x < B[2] && y > B[1] && y < B[3] && insideConvex(waters[k], x, y)) return true; } return false; };
     // the baths: the exercise court, its pool, the halls' benches and warm pools
     const bath = (() => {
       const pal = byUse('palaestra')[0];
@@ -871,7 +878,8 @@ const RomanTownLife = (() => {
       const C = clusterOf(pal), [s1, t1, s2, t2] = pal.hole, court = [];
       for (let k = 0; k < 60; k++) {
         const s = range(s1 + 1, s2 - 1), t = range(t1 + 1, t2 - 1), [x, y] = toWorld(pal, s, t);
-        if (town.grounds.some(g => g.kind === 'pool' && insideConvex(g.poly, x, y)) || town.grounds.some(g => g.kind === 'pool' && insideConvex(g.poly, x + 1, y) )) continue;
+        // (a couple of metres clear of the pool all round)
+        if (wet(x, y) || Array.from({ length: 8 }, (_, k) => k * TAU / 8).some(a => wet(x + Math.cos(a) * 2, y + Math.sin(a) * 2))) continue;
         court.push([x, y]);
       }
       const pool = town.grounds.find(g => g.kind === 'pool' && insideConvex([toWorld(pal, s1, t1), toWorld(pal, s2, t1), toWorld(pal, s2, t2), toWorld(pal, s1, t2)], ...g.poly[0]));
@@ -2067,8 +2075,12 @@ const RomanTownLife = (() => {
         if (ag.bathed === e) return ACT.stroll(ag, e, until);
         ag.bathed = e;
         const r = rng(), [x, y] = choice(bath.court.length ? bath.court : [[bath.pal.x, bath.pal.y]]);
-        const ex = spot(x, y, fz(bath.pal), range(0, TAU), 'stand', { cl: bath.C, anim: r < 0.4 ? 'exercise' : r < 0.7 ? 'ball' : 'talk' });
-        go(ag, ex); stay(ag, ex, now + range(600, 1500), r < 0.4 ? { run: { x, y, r: range(2.2, 3.5) } } : {});
+        // (running round, on a ring that keeps clear of the pool)
+        let rr = r < 0.4 ? range(2.2, 3.5) : 0;
+        while (rr > 1.5 && Array.from({ length: 16 }, (_, k) => k * TAU / 16).some(t => wet(x + Math.cos(t) * rr, y + Math.sin(t) * rr))) rr -= 0.4;
+        if (rr <= 1.5) rr = 0;
+        const ex = spot(x, y, fz(bath.pal), range(0, TAU), 'stand', { cl: bath.C, anim: rr ? 'exercise' : r < 0.7 ? 'ball' : 'talk' });
+        go(ag, ex); stay(ag, ex, now + range(600, 1500), rr ? { run: { x, y, r: rr } } : {});
         const bench = take(bath.benches, ag, now + 1800);
         if (bench) { go(ag, bench); stay(ag, bench, now + range(300, 700)); }
         if (bath.pools.length) { const p = choice(bath.pools); go(ag, p); stay(ag, p, now + range(400, 900), { wade: { x: p.x, y: p.y, r: 0.8, t: rng() * TAU } }); }
@@ -2081,7 +2093,7 @@ const RomanTownLife = (() => {
       },
       attend(ag, e, until) {
         if (!bath) return ACT.craft(ag, e, until);
-        const sp = (bath.pools.length && chance(0.6)) ? (() => { const p = choice(bath.pools); return spot(p.x + 1.4, p.y, p.z, range(0, TAU), 'stand', { cl: p.cl }); })() : spot(...choice(bath.court), fz(bath.pal), range(0, TAU), 'bend', { anim: 'sweep', cl: bath.C });
+        const sp = (bath.pools.length && chance(0.6)) ? (() => { const p = choice(bath.pools); let [x, y] = [p.x + 1.4, p.y]; for (let k = 0; k < 12 && wet(x, y); k++) { const a = rng() * TAU, d = range(1.5, 4); x = p.x + Math.cos(a) * d; y = p.y + Math.sin(a) * d; } return wet(x, y) ? spot(...choice(bath.court), fz(bath.pal), range(0, TAU), 'bend', { anim: 'sweep', cl: bath.C }) : spot(x, y, p.z, range(0, TAU), 'stand', { cl: p.cl }); })() : spot(...choice(bath.court), fz(bath.pal), range(0, TAU), 'bend', { anim: 'sweep', cl: bath.C });
         go(ag, sp); stay(ag, sp, short(until, 600, 1800));
       },
       temple(ag, e, until) {
@@ -3434,13 +3446,16 @@ const RomanTownLife = (() => {
             }
             if (gap > keep + 4) pace *= 1.5;
           }
-          const sp = L.k === 'climb' ? 0.6 : pace || ag.speed * (ag.slow || 1) * (ag.kind === 'person' ? 1 - 0.25 * clamp((ag.fatigue || 0) - 0.7, 0, 0.6) : 1);
+          const swim = ag.kind === 'person' && L.k === 'go' && wet(ag.x, ag.y);
+          const sp = L.k === 'climb' ? 0.6 : swim ? 0.55 : pace || ag.speed * (ag.slow || 1) * (ag.kind === 'person' ? 1 - 0.25 * clamp((ag.fatigue || 0) - 0.7, 0, 0.6) : 1);
           ag.pose = L.k === 'climb' ? 'walk' : (ag.speed > 2 ? 'run' : 'walk'); ag.anim = null; ag.seat = 0;
           ag.torch = (L.torch || (night && ag.torchy && !ag.cl)) && ag.kind === 'person';
           if (ag.torch && !ag.carry) ag.carry = 'torch';
           if (!ag.torch && ag.carry === 'torch') ag.carry = null;
           const done = walkAlong(ag, L, dt, sp);
           ag.ph += sp * dt / stride;
+          // (in the water: swimming, not walking, the stroke slower)
+          if (swim && wet(ag.x, ag.y)) { ag.pose = 'swim'; ag.torch = false; if (ag.carry === 'torch') ag.carry = null; ag.ph -= sp * dt / stride * 0.6; }
           if (done) {
             if (L.loop && now < L.loop) { L.i = 0; L.d = 0; break; }
             if (L.k === 'go') ag.cl = L.sp.cl || null;
