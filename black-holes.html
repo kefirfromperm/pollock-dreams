@@ -335,7 +335,9 @@
       gl.uniform1f(show.loc.c2, u.c * u.c); gl.uniform1f(show.loc.A, u.A);
       gl.uniform1f(show.loc.px, u.Ly / H);
       const hs = u.holes.slice(0, MAXH), hv = new Float32Array(MAXH * 4);
-      hs.forEach((h, j) => hv.set([h.x, h.y, h.Hg / (u.c * u.c), u.shadowOf(h)], j * 4));
+      // (its shadow as light sees it: all that passes within √27·GM/c² of it
+      // is taken, so it shows √27/2 as wide as where it takes slow matter)
+      hs.forEach((h, j) => hv.set([h.x, h.y, h.Hg / (u.c * u.c), SEEN * u.shadowOf(h)], j * 4));
       gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv);
       // a hole just merged rings: its outline drawn out along the way the
       // two met, then across, and back, dying away (turned by its spin)
@@ -361,6 +363,7 @@
     function merged(e) { ringing.set(e.hole, { t: performance.now() / 1000, a: 0.45, axis: e.axis }); }
     return { draw, merged };
   }
+  const SEEN = Math.sqrt(27) / 2; // (a shadow as light sees it, of where slow matter is taken)
   const TAU = Math.PI * 2, RING_PERIOD = 0.7, RING_TAU = 0.9, RING_LIFE = 4; // (our seconds)
 
   // the colours, slow to fast, as a strip over the hint

@@ -46,7 +46,8 @@
 //     slower;
 //   dust collapses: where its own well is deep enough that a horizon is all
 //     but there, the dust nearly trapped is a hole, with all it came to;
-//     or, spinning faster than one hole can, two, going round one another;
+//     or, spinning fast (past SPLIT of what one hole can), two, going
+//     round one another so close that they spiral in and merge;
 //   two particles of dust come within COLLIDE of one another: they bounce
 //     off one another, elastically, their momentum and energy as they were;
 //     or stick, the likelier the more alike they went, going on alike, with
@@ -112,23 +113,25 @@ const BlackHoles = (() => {
   function universe(rng, {
     Lx = 1, Ly = 1, N = 16000, NY = 128, NX = 0, // (NX: as square cells as powers of two allow, unless given)
     c = 3,
-    G = 0.35, // how strong gravity is
+    G = 0.65, // how strong gravity is
     MASS = 1, // its rest mass at first
-    HOLES = 3, HOLE_MASS = [0.1, 0.2], // the holes there at first
+    HOLES = 3, HOLE_MASS = [0.05, 0.1], // the holes there at first
     HOLE_WARM = 0.4, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
     K = 1.2, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
-    M_END = 0.04, // a hole this light bursts
-    EMIT_RATE = 700, // Hawking particles from a hole a second, at most
+    M_END = 0.005, // a hole this light bursts
+    EMIT_RATE = 0.1 * N, // Hawking particles from a hole a second, at most (as many more as the dust is cut finer, so it loses its mass as fast)
+    ROOM = 0.35, // (and as many more as its horizon is wider than this, of a grid cell, squared)
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
-    CURVE = 0.04, CURVE_L = [0.2, 0.8], // space's own curvature, there from the first, for ever: how deep (Φ/c², its rms), how wide
+    CURVE = 0.17, CURVE_L = [0.12, 0.4], // space's own curvature, there from the first, for ever: how deep (Φ/c², its deepest well), how wide
+    CURVE_T = 90, CURVE_DT = 0.02, // and how slowly it changes: each of its waves round in about this long (its own seconds; half an hour of ours), found anew this often
     PETERS = true, // close pairs losing their orbits to gravitational waves
-    ALPHA_COLLAPSE = 0.7, // dust whose own well is this deep collapses
+    ALPHA_COLLAPSE = 0.83, // dust whose own well is this deep collapses
     CLEAR = 0.1, // (no nearer a hole than this: dust heaped about a hole is the hole's to take)
-    SPLIT = 1, // a clump spinning this many times as fast as one hole can splits in two
-    A_PAIR = 0.1, // and the two go round one another no further apart than this
+    SPLIT = 0.1, // a clump spinning this many times as fast as one hole can splits in two
+    A_PAIR = 2.7, // and the two go round one another no further apart than this many times as far as they'd be one (2.5 at least)
     FRICTION = 3, // how often dust collides, a second, where it is as dense as on the whole (the denser, the more often)
     DENSE_MAX = 40, // (no more often than at this many times as dense)
     E_PHOTON = 1, // what a photon carries off, of a particle's rest energy (it leaves at about 0.87c)
@@ -456,30 +459,45 @@ const BlackHoles = (() => {
 
     // ---- space's own curvature ----
     // Space was never flat: from the first it has wells and rises of its
-    // own, Φ₀, the same for ever, whatever falls in or climbs out: random,
-    // as wide as CURVE_L, as deep as CURVE (its mean 0, a whole number of
-    // waves round the torus each way). Every body is pulled down into its
-    // wells, and its clock is slower there, as in any; its energy there
-    // its own (not, as two bodies' binding is, shared between them).
+    // own, Φ₀, whatever falls in or climbs out: random, as wide as CURVE_L,
+    // its deepest well as deep as CURVE, whatever the universe (its mean 0,
+    // a whole number of waves round the torus each way), and changing, very
+    // slowly: each of its waves drifting on its way, round in CURVE_T or
+    // so, the wells and rises shifting, filling, deepening, over many
+    // minutes. Every body is pulled down into its wells, and its clock is
+    // slower there, as in any; its energy there its own (not, as two
+    // bodies' binding is, shared between them; what its drifting gives or
+    // takes is put back, as what the weak field loses is).
     const phi0 = new Float64Array(NC), gx0 = new Float64Array(NC), gy0 = new Float64Array(NC);
+    const modes = []; // {a, ph, w, ky, cx, sx}: a wave's strength, phase, its drift, and cos, sin of kx·x along a row
     if (CURVE > 0) {
-      const modes = [];
       const IX = Math.ceil(Lx / CURVE_L[0]), IY = Math.ceil(Ly / CURVE_L[0]);
       for (let j = 0; j <= IY; j++) for (let i = -IX; i <= IX; i++) {
         if (j === 0 && i <= 0) continue; // (each wave once: −k is k)
         const kx = TAU * i / Lx, ky = TAU * j / Ly, lam = TAU / hyp(kx, ky);
         if (lam < CURVE_L[0] || lam > CURVE_L[1]) continue;
-        modes.push([kx, ky, gauss(), TAU * rng()]);
+        const cx = new Float64Array(NX), sx = new Float64Array(NX);
+        for (let q = 0; q < NX; q++) { cx[q] = Math.cos(kx * (q + 0.5) * dx); sx[q] = Math.sin(kx * (q + 0.5) * dx); }
+        modes.push({ a: gauss(), ph: TAU * rng(), w: (rng() < 0.5 ? -1 : 1) * TAU / CURVE_T * (0.5 + rng()), ky, cx, sx });
       }
-      for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
-        const x = (i + 0.5) * dx, y = (j + 0.5) * dy;
-        let v = 0;
-        for (const [kx, ky, a, ph] of modes) v += a * Math.cos(kx * x + ky * y + ph);
-        phi0[j * NX + i] = v;
+    }
+    // Φ₀ (and its pull) as it is at t: cos(kx·x + ky·y + φ), a row's cos
+    // and sin of kx·x kept, a column's of ky·y + φ found anew
+    const cy = new Float64Array(NY), sy = new Float64Array(NY);
+    function curve(t) {
+      phi0.fill(0);
+      for (const md of modes) {
+        const ph = md.ph + md.w * t;
+        for (let j = 0; j < NY; j++) { const v = md.ky * (j + 0.5) * dy + ph; cy[j] = md.a * Math.cos(v); sy[j] = md.a * Math.sin(v); }
+        const cx = md.cx, sx = md.sx;
+        for (let j = 0; j < NY; j++) {
+          const o = j * NX, c = cy[j], s = sy[j];
+          for (let i = 0; i < NX; i++) phi0[o + i] += cx[i] * c - sx[i] * s;
+        }
       }
-      let ss = 0;
-      for (let k = 0; k < NC; k++) ss += phi0[k] * phi0[k];
-      const scale = ss > 0 ? CURVE * c2 / Math.sqrt(ss / NC) : 0;
+      let lo = 0;
+      for (let k = 0; k < NC; k++) lo = Math.min(lo, phi0[k]);
+      const scale = lo < 0 ? CURVE * c2 / -lo : 0;
       for (let k = 0; k < NC; k++) phi0[k] *= scale;
       for (let j = 0; j < NY; j++) {
         const jn = (j + 1) % NY, jp = (j + NY - 1) % NY;
@@ -490,6 +508,8 @@ const BlackHoles = (() => {
         }
       }
     }
+    if (CURVE > 0) curve(0);
+    let curvedAt = 0;
 
     let target = null, targetP = null; // the totals, as they were at first
     let energy = 0, momentum = [0, 0], time = 0;
@@ -707,7 +727,10 @@ const BlackHoles = (() => {
         for (let q = 0; q < 4; q++) rho[cicK[q]] += cic[q] * h.Hg / c2;
       }
       solve();
-      if (CURVE > 0) for (let k = 0; k < NC; k++) { phi[k] += phi0[k]; gx[k] += gx0[k]; gy[k] += gy0[k]; }
+      if (CURVE > 0) {
+        if (CURVE_T > 0 && time - curvedAt >= CURVE_DT) { curvedAt = time; curve(time); } // (so slow, it is found anew only now and then)
+        for (let k = 0; k < NC; k++) { phi[k] += phi0[k]; gx[k] += gx0[k]; gy[k] += gy0[k]; }
+      }
 
       // ---- the energy and momentum now; α at every body ----
       let E = 0, W = 0, Px = 0, Py = 0;
@@ -887,11 +910,16 @@ const BlackHoles = (() => {
       for (let k = holes.length - 1; k >= 0; k--) {
         const h = holes[k];
         if (h.M < M_END || h.dying) { burst(h); holes.splice(k, 1); continue; }
-        // (a moving hole's clock runs slow: we see it radiate the slower, by its γ)
-        h.budget += K / (h.M * h.M) * dt * h.M * c2 / Math.max(h.M * c2, h.S);
+        // (a moving hole's clock runs slow, and one deep in a well's: we see
+        // it radiate the slower, by its γ, and by α)
+        const clock = h.al * h.M * c2 / Math.max(h.M * c2, h.S);
+        h.budget += K / (h.M * h.M) * dt * clock;
         // (no more than EMIT_RATE·dt at a time: a hole near its end would put
         // hundreds at once on one spot, and they'd be bound to one another)
-        h.allow = Math.min(4, (h.allow || 0) + EMIT_RATE * Math.max(1, h.rh / A) * dt); // (a wide horizon has room for more)
+        // (a wide horizon has room for more, as its area has, so a big hole
+        // can't outgrow its radiating for long: there is a biggest it gets)
+        const rate = EMIT_RATE * Math.max(1, (h.rh / (ROOM * A)) ** 2) * dt * clock;
+        h.allow = Math.min(Math.max(4, 2 * rate), (h.allow || 0) + rate);
         // (in pairs, back to back: radiating evenly every way, as a hole does,
         // it isn't pushed about by its own quanta, as one at a time it would be)
         while (h.allow >= 2 && h.budget >= 2 * h.quantum && h.M >= M_END && !h.dying) {
@@ -1191,12 +1219,22 @@ const BlackHoles = (() => {
     let deepest = 1;
     function collapse() {
       let lo = Infinity, kmin = -1;
-      for (let k = 0; k < NC; k++) if (phi[k] < lo) {
+      // (the dust's well, and space's: not the holes', which reach out past
+      // where their dust is theirs, and would close a horizon over a speck;
+      // taking theirs out only makes a well shallower, so only where it is
+      // deep enough with them)
+      const edge = (ALPHA_COLLAPSE - 1) * c2;
+      for (let k = 0; k < NC; k++) if (phi[k] < Math.min(lo, edge)) {
         const cx = (k % NX + 0.5) * dx, cy = ((k / NX | 0) + 0.5) * dy;
-        if (holes.some(h => hyp(near(h.x - cx, Lx), near(h.y - cy, Ly)) < Math.max(4 * h.rh + RCUT, CLEAR))) continue;
-        lo = phi[k]; kmin = k;
+        let v = phi[k];
+        for (const h of holes) {
+          const r = hyp(near(h.x - cx, Lx), near(h.y - cy, Ly));
+          if (r < Math.max(4 * h.rh + RCUT, CLEAR)) { v = Infinity; break; }
+          v -= h.Hg / c2 * gridK(r);
+        }
+        if (v < lo) { lo = v; kmin = k; }
       }
-      deepest = 1 + lo / c2;
+      deepest = 1 + Math.min(lo, edge + c2 * 1e-3) / c2; // (or, nowhere that deep, about as deep as that)
       if (kmin < 0 || deepest > ALPHA_COLLAPSE) return;
       const cx = (kmin % NX + 0.5) * dx, cy = ((kmin / NX | 0) + 0.5) * dy;
       const take = [];
@@ -1236,12 +1274,14 @@ const BlackHoles = (() => {
       const rel = i => [near(px[i] - cx, Lx) - gx0, near(py[i] - cy, Ly) - gy0];
       let Jc = 0;
       for (const i of take) { const [rx, ry] = rel(i); Jc += m * (rx * qy[i] - ry * qx[i]); }
-      // Spinning faster than any one hole can (Kerr's bound), it can't
-      // collapse as one: it splits in two along its length, as a cloud
-      // spinning too fast does (so stars are born in pairs), and the two go
-      // round one another with what spin neither can hold: as far apart as
-      // that takes, on a circle (no wider than A_PAIR: what more there is
-      // goes, as from a merger, in the first of their waves).
+      // Spinning fast, past SPLIT of what any one hole can (Kerr's bound),
+      // it doesn't collapse as one: it splits in two along its length, as a
+      // cloud spinning too fast does (so stars are born in pairs), and the
+      // two go round one another with what spin neither can hold: as far
+      // apart as that takes, on a circle (no wider than A_PAIR times as far apart as
+      // they would be one, so near that they spiral in and merge before
+      // either evaporates: what more spin there is goes, as from a merger,
+      // in the first of their waves).
       const made = [];
       if (Math.abs(Jc) > SPLIT * jMax(Ht / c2)) {
         let sxx = 0, syy = 0, sxy = 0;
@@ -1263,8 +1303,8 @@ const BlackHoles = (() => {
             made.push({ H, Wg, J: Math.max(-jm, Math.min(jm, J)) });
           }
           const [p, q] = made, m1 = p.H / c2, m2 = q.H / c2, Mt = m1 + m2, mu = m1 * m2 / Mt;
-          const L = Jc - p.J - q.J, sep = Math.min(A_PAIR, (L / mu) ** 2 / Mt);
-          if (sep > 2.5 * SWALLOW * (m1 + m2) / c2 && Math.min(m1, m2) > 2 * M_END) { // (and each would last a while)
+          const one = SWALLOW * Mt / c2, L = Jc - p.J - q.J, sep = Math.min(A_PAIR * one, (L / mu) ** 2 / Mt); // (one: as near as they come before they merge)
+          if (sep > 2.5 * one && Math.min(m1, m2) > 2 * M_END) { // (and each would last a while)
             // on the line it lay along, about its middle, going round as it spun
             p.X = gx0 - ux * sep * m2 / Mt; p.Y = gy0 - uy * sep * m2 / Mt;
             q.X = gx0 + ux * sep * m1 / Mt; q.Y = gy0 + uy * sep * m1 / Mt;
@@ -1290,12 +1330,14 @@ const BlackHoles = (() => {
       const total = Math.max(0.5 * Ht, Ht - bind - V - V12);
       if (made.length === 2) {
         // Going round on a circle, as fast as that is where they are: α³
-        // slows a body there as we see it, the pull on it as much, so the
-        // speed (its canonical momentum per unit mass) is √(GM/(α³r)); and
-        // the momentum that is, for the energy each has (its rest mass
+        // slows a body there as we see it, the pull on it as much, and each
+        // pulls the other by its weight, W/c², α of its mass, so the speed
+        // (its canonical momentum per unit mass) is √(αGW/(c²α³r)), no
+        // faster (faster, they'd swing out, and evaporate before they met);
+        // and the momentum that is, for the energy each has (its rest mass
         // follows from both, see refit).
-        const [p, q] = made, Mt = p.m + q.m, a3 = ((p.ac + q.ac) / 2) ** 3;
-        const qc = p.sign * Math.sqrt((p.Wg + q.Wg) / c2 / (a3 * p.sep)), cmx = Pxt / (Ht / c2), cmy = Pyt / (Ht / c2);
+        const [p, q] = made, Mt = p.m + q.m, a1 = (p.ac + q.ac) / 2, a3 = a1 ** 3;
+        const qc = p.sign * Math.sqrt(a1 * (p.Wg + q.Wg) / c2 / (a3 * p.sep)), cmx = Pxt / (Ht / c2), cmy = Pyt / (Ht / c2);
         for (const [g, f] of [[p, -q.m / Mt], [q, p.m / Mt]]) {
           const vx = cmx - f * p.uy * qc, vy = cmy + f * p.ux * qc, Sg = total * g.H / Ht / g.ac;
           const k = Sg / Math.sqrt(c4 + c2 * g.ac * g.ac * (vx * vx + vy * vy));
