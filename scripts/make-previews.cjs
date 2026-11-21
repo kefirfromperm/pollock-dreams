@@ -25,6 +25,9 @@ const PAINTINGS = [
   { page: 'black-holes.html', seed: 5, out: 'previews/black-holes.jpg', webgl: true, seconds: 60 },
   // the same at any moment: a few seconds of trembling
   { page: 'soap-bubble.html', seed: 5, out: 'previews/soap-bubble.jpg', webgl: true, seconds: 5 },
+  // the town of its Open Graph image, in the morning sun (its seed and hour the page's own)
+  { page: 'roman-town.html', seed: 5, out: 'previews/roman-town.jpg', webgl: true, seconds: 1,
+    query: 'seed=5&time=2026-06-21T10:00' },
 ].filter(p => !args.only || p.page === args.only);
 const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin/google-chrome']
   .find(p => fs.existsSync(p));
@@ -34,7 +37,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
   const browser = webgl => browsers[webgl] ??= chromium.launch({ executablePath: browserPath,
     args: webgl ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--disable-gpu'] });
   fs.mkdirSync(path.join(root, 'previews'), { recursive: true });
-  for (const { page: name, seed, out, webgl = false, seconds: s = seconds } of PAINTINGS) {
+  for (const { page: name, seed, out, webgl = false, seconds: s = seconds, query = '' } of PAINTINGS) {
     const page = await (await browser(webgl)).newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
     // the project's files on a made-up origin, nothing else (no analytics)
     await page.route(/^https?:/, r => {
@@ -68,7 +71,7 @@ const browserPath = ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/usr/bin
         return (window.snapshot?.() ?? document.getElementById('c')).toDataURL('image/jpeg', 0.85).slice(23);
       };
     }, { seed, width, height });
-    await page.goto(`http://preview.local/${name}`);
+    await page.goto(`http://preview.local/${name}${query ? '?' + query : ''}`);
     const jpeg = await page.evaluate(ms => window.__run(ms, 1000 / 30), s * 1000);
     fs.writeFileSync(path.join(root, out), Buffer.from(jpeg, 'base64'));
     await page.close();
