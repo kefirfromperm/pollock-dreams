@@ -47,7 +47,8 @@
 //     those behind the slower, and its clock runs slow, so it radiates the
 //     slower;
 //   dust collapses: where its own well is deep enough that a horizon is all
-//     but there, the dust nearly trapped is a hole, with all it came to;
+//     but there, the dust nearly trapped is a hole, with all it came to
+//     (but a hundredth, gone off in a gravitational wave, as it fell in);
 //     or, spinning fast (past SPLIT of what one hole can), two, going
 //     round one another so close that they spiral in and merge;
 //   two particles of dust come within COLLIDE of one another: they bounce
@@ -132,6 +133,7 @@ const BlackHoles = (() => {
     ROOM = 0.35, // (and as many more as its horizon is wider than this, of a grid cell, squared)
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
+    GW_COLLAPSE = 0.01, // and of a collapse (a clump falls in on itself less evenly than two holes meet: less)
     CURVE = 0.02, CURVE_L = [0.12, 0.4], // space's own curvature, there from the first, for ever: how deep (Φ/c², its deepest well), how wide
     CURVE_T = 90, CURVE_DT = 0.02, // and how slowly it changes: each of its waves round in about this long (its own seconds; half an hour of ours), found anew this often
     PETERS = true, // close pairs losing their orbits to gravitational waves
@@ -1242,7 +1244,7 @@ const BlackHoles = (() => {
       h.lx = (ha.lx * ha.S + hb.lx * hb.S) / (ha.S + hb.S); h.ly = (ha.ly * ha.S + hb.ly * hb.S) / (ha.S + hb.S);
       h.jx = (ha.jx || 0) + (hb.jx || 0); h.jy = (ha.jy || 0) + (hb.jy || 0);
       wave(h.x, h.y, gw, -h.id, Math.atan2(ddy, ddx));
-      events.push({ type: 'merge', x: h.x, y: h.y, hole: h.id, e: gw, M: h.M, axis: Math.atan2(ddy, ddx), apart: r });
+      events.push({ type: 'merge', x: h.x, y: h.y, hole: h.id, e: gw, M: h.M, ma: ha.M, mb: hb.M, axis: Math.atan2(ddy, ddx), apart: r });
       stats.merged++;
     }
 
@@ -1312,6 +1314,10 @@ const BlackHoles = (() => {
       const rel = i => [near(px[i] - cx, Lx) - gx0, near(py[i] - cy, Ly) - gy0];
       let Jc = 0;
       for (const i of take) { const [rx, ry] = rel(i); Jc += m * (rx * qy[i] - ry * qx[i]); }
+      // the line it lies along (its longest way)
+      let sxx = 0, syy = 0, sxy = 0;
+      for (const i of take) { const [rx, ry] = rel(i), Hi = al[i] * m * S[i]; sxx += Hi * rx * rx; syy += Hi * ry * ry; sxy += Hi * rx * ry; }
+      const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(ang), uy = Math.sin(ang);
       // Spinning fast, past SPLIT of what any one hole can (Kerr's bound),
       // it doesn't collapse as one: it splits in two along its length, as a
       // cloud spinning too fast does (so stars are born in pairs), and the
@@ -1322,9 +1328,6 @@ const BlackHoles = (() => {
       // in the first of their waves).
       const made = [];
       if (Math.abs(Jc) > SPLIT * jMax(Ht / c2)) {
-        let sxx = 0, syy = 0, sxy = 0;
-        for (const i of take) { const [rx, ry] = rel(i), Hi = al[i] * m * S[i]; sxx += Hi * rx * rx; syy += Hi * ry * ry; sxy += Hi * rx * ry; }
-        const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(ang), uy = Math.sin(ang);
         // (cut across that line where half its mass is either side)
         const along = take.map(i => { const [rx, ry] = rel(i); return [rx * ux + ry * uy, i]; }).sort((p, q) => p[0] - q[0]);
         let acc = 0, cut = 0;
@@ -1384,14 +1387,18 @@ const BlackHoles = (() => {
       }
       take.sort((a, b) => b - a);
       for (const i of take) removeParticle(i);
+      // (a little of each going off in a gravitational wave, as the clump
+      // falls in on itself, stretching space along the way it lay)
       const born = made.map(g => {
-        const h = makeHole(cx + g.X, cy + g.Y, total * g.H / Ht / g.ac, g.Px, g.Py, g.ac);
-        h.Hg = g.Wg; // (their weight, as the grid had it)
+        const H = total * g.H / Ht, gw = GW_COLLAPSE * H;
+        const h = makeHole(cx + g.X, cy + g.Y, (H - gw) / g.ac, g.Px, g.Py, g.ac);
+        h.Hg = g.Wg - gw; // (their weight, as the grid had it, but the wave's)
         h.J = g.J;
         capSpin(h);
+        wave(h.x, h.y, gw, -h.id, ang);
         return h;
       });
-      for (const h of born) events.push({ type: 'collapse', x: h.x, y: h.y, hole: h.id, M: h.M, pair: born.length === 2 });
+      for (const h of born) events.push({ type: 'collapse', x: h.x, y: h.y, hole: h.id, M: h.M, pair: born.length === 2, axis: ang });
       stats.collapsed++;
       if (born.length === 2) stats.pairs = (stats.pairs || 0) + 1;
     }
