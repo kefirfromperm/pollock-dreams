@@ -136,7 +136,9 @@ const BlackHoles = (() => {
     M_END = 0.005, // a hole this light bursts
     EMIT_RATE = 0.03 * N, // Hawking photons a second, at most, from a hole whose horizon is ROOM of a grid cell (as many more as the dust is cut finer, so it loses its mass as fast)
     ROOM = 0.15, // (and as many more as its horizon is wider than this, or narrower, squared: a big hole's as its area, a small one's as Hawking's, 1/M²)
-    SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
+    SWALLOW = 2, EMIT = 8, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave (well out past
+    // where light circles it, 3, and where light goes slower than the hole itself might, α²c: else a moving hole runs down the quanta it throws
+    // forwards and takes them back, those it throws back gone, and its evaporating pushes it on, faster and faster)
     GW_MERGE = 0.05, // the share of a merger going off in a wave
     GW_COLLAPSE = 0.01, // and of a collapse (a clump falls in on itself less evenly than two holes meet: less)
     CURVE = 0.002, CURVE_L = [0.12, 0.4], // space's own curvature, there from the first, for ever: how deep (Φ/c², its deepest well), how wide
