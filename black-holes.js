@@ -1136,16 +1136,22 @@ const BlackHoles = (() => {
       // As we see it, the hole moving: even every way in its own frame, but
       // to us thrown forwards, those ahead faster and more of them, those
       // behind slower and fewer (a Lorentz boost, by the hole's velocity
-      // there). Its energy, and the momentum that goes with it, come off the
-      // hole, so the hole, lighter, goes on as fast as it went.
+      // there, whole: p + (γ − 1)(β̂·p)β̂ + γβ|p|, so what each brings far
+      // off is γ(1 + β·n̂) of e). Its energy, and the momentum that goes with
+      // it, come off the hole, so the hole, lighter, goes on as fast as it
+      // went: not at once, but once they are out of its well. Deep in it,
+      // a quantum's momentum is 1/α² of what it is far off, for the energy
+      // it has there; the pair takes that much off the hole, more than
+      // their share, and gives the more back as the hole holds them on their
+      // way out, the one thrown forwards, the heavier, the harder, so it is
+      // pulled back the more and pulls the hole on. (Given only its share at
+      // once, the hole took that back too, every pair, and its evaporating
+      // pushed it on, faster and faster.)
       const ph0 = h.al * hyp(h.qx, h.qy), gh = Math.sqrt(1 + ph0 * ph0 / c2); // the hole's momentum there, per unit mass, and its γ
       const bx = h.al * h.qx / (gh * c), by = h.al * h.qy / (gh * c), b2 = bx * bx + by * by;
       const pxq = p0 * dxu, pyq = p0 * dyu, bp = bx * pxq + by * pyq;
-      // (its way and speed out turned forwards, by γ along the motion; and, as
-      // much as its energy, boosted, is of the hole's, the hole's momentum:
-      // the pair, all told, its energy's share of it, no more)
-      const kb = b2 > 1e-12 ? (gh - 1) * bp / b2 : 0, gq = ae * gh * (Sp + c * bp) * h.M / (h.al * h.S);
-      const ux = (pxq + kb * bx) / ae + gq * h.qx, uy = (pyq + kb * by) / ae + gq * h.qy; // (canonical: as there, over α)
+      const kb = (b2 > 1e-12 ? (gh - 1) * bp / b2 : 0) + gh * p0;
+      const ux = (pxq + kb * bx) / ae, uy = (pyq + kb * by) / ae; // (canonical: as there, over α)
       if (!addParticle(h.x + ex * r, h.y + ey * r, ux, uy, ae, 1)) { h.budget += e; return; }
       const ea = ae * m * S[n - 1]; // (what it took, as seen from afar: e, and its share of the hole's motion)
       // the hole keeps what it came to, less the quantum's αS, and their
