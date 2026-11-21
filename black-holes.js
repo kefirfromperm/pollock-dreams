@@ -134,7 +134,7 @@ const BlackHoles = (() => {
     K = 0.6, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
     M_END = 0.005, // a hole this light bursts
-    EMIT_RATE = 0.03 * N, // Hawking photons a second, at most, from a hole whose horizon is ROOM of a grid cell (as many more as the dust is cut finer, so it loses its mass as fast)
+    EMIT_RATE = 0.03 * N, // Hawking photons a second, at most, from a hole whose horizon is ROOM of a 16:9 screen's grid cell, 1/128 (whatever this one's: else a finer grid, a squarer screen's, burns its small holes away faster, and they live too short to meet) (as many more as the dust is cut finer, so it loses its mass as fast)
     ROOM = 0.15, // (and as many more as its horizon is wider than this, or narrower, squared: a big hole's as its area, a small one's as Hawking's, 1/M²)
     SWALLOW = 2, EMIT = 8, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave (well out past
     // where light circles it, 3, and where light goes slower than the hole itself might, α²c: else a moving hole runs down the quanta it throws
@@ -152,6 +152,7 @@ const BlackHoles = (() => {
     A_PAIR = 2.7, // and the two go round one another no further apart than this many times as far as they'd be one (2.5 at least)
     FRICTION = 3, // how often dust collides, a second, where it is as dense as on the whole (the denser, the more often)
     DENSE_MAX = 40, // (no more often than at this many times as dense)
+    GAS = 15000 / (256 * 128), // how much of a particle a cell of the gas holds, on the whole (as a 16:9 screen's grid cell does)
     E_PHOTON = 1, // what a photon of heat carries off, of a particle's rest energy
     PAIR = 0.03, // how often two photons meeting are a particle of dust (the fewer, the longer light flies)
     // a photon meeting a particle of dust, by its energy as the particle sees it (of a particle's rest energy), x of the least
@@ -160,7 +161,7 @@ const BlackHoles = (() => {
     CONVERT = 0.2, // or is a particle of dust itself, as often as this, and as 1 − 1/x of it (never under x = 1): the hard the likelier
     CONVERT_ALPHA = 0.85, // (and never so deep in a well, α less than this, near a horizon: what it made there would be too fast, too deep, for the weak field to keep)
     SCATTER = 0.02, // or bounces off it, elastically, as two particles do, as often as this (as two photons do, too)
-    COLLIDE = 0.002, // two particles of dust this near bounce off one another (some two css px)
+    COLLIDE = 0.002 * 15000 / N, // two particles of dust this near bounce off one another (some two css px; the further the fewer they are, so each meets others as often)
     STICK = 1, // or stick, sharing their momenta alike, as often as |p₁ + p₂|²/(|p₁| + |p₂|)² of this
     TRAIL = 96, TRAIL_DT = 0.05 / 60, // where each particle was: this many places back, one every this long (for its track)
   } = {}) {
@@ -173,6 +174,7 @@ const BlackHoles = (() => {
     NX = NX || 2 ** Math.round(Math.log2(NY * Lx / Ly));
     const dx = Lx / NX, dy = Ly / NY, cellA = dx * dy, NC = NX * NY;
     const A = 1.25 * Math.max(dx, dy), RCUT = 6 * A, RCUT2 = RCUT * RCUT; // the split, and how far its short range reaches
+    const A_ROOM = 1.25 / 128; // (A on a 16:9 screen's grid, 256 × 128: what a hole's radiating is measured by, whatever this grid)
     const m = MASS / N; // a particle's rest mass
 
     // ---- the long range, by FFT ----
@@ -545,19 +547,37 @@ const BlackHoles = (() => {
     // ---- friction ----
     // Dust is gas: where it crowds, its particles collide, as often as it is
     // dense, and each is pulled towards how the gas about it moves (its
-    // cell's mean, by the same cloud-in-cell weights as its mass on the
-    // grid; so momentum, and near enough angular momentum, are kept: what
-    // one gains another in the cell loses). Streams crossing one another
-    // round a hole lose what they had of motion unalike, keep their spin,
-    // and settle into a disk, going round together, the inner faster, and
-    // rubbing on the outer, so the gas drifts in. What the friction takes
+    // cell's mean, by cloud-in-cell weights, as its mass on the grid; so
+    // momentum, and near enough angular momentum, are kept: what one gains
+    // another in the cell loses). The gas's cells are its own, not the
+    // grid's: square, and as many as hold GAS of a particle each, on the
+    // whole, whatever the screen and however many particles there are (a
+    // particle alone in its cell is pulled only towards itself, so the
+    // fewer share one, the less the gas rubs: finer cells, or fewer
+    // particles, and it hardly cools, and hardly collapses). Streams
+    // crossing one another round a hole lose what they had of motion
+    // unalike, keep their spin, and settle into a disk, going round
+    // together, the inner faster, and rubbing on the outer, so the gas
+    // drifts in. What the friction takes
     // is heat, the particle's own, and goes where it goes (into a hole, if
     // it falls in); as soon as the particles in a cell have a photon's
     // worth of it between them, one of them shines it off: light, any way.
     // (Light isn't rubbed by the gas: it only meets it, see collide.)
-    const cN = new Float64Array(NC), cQx = new Float64Array(NC), cQy = new Float64Array(NC), cF = new Float64Array(NC);
-    const cH = new Float64Array(NC), cShone = new Int32Array(NC), tK = new Int32Array(CAP);
-    const cRx = new Float64Array(NC), cRy = new Float64Array(NC), cStay = new Int32Array(NC); // a shining cell's recoil, and who in it takes it
+    const gs = Math.sqrt(Lx * Ly * GAS / N), GX = Math.max(1, Math.round(Lx / gs)), GY = Math.max(1, Math.round(Ly / gs));
+    const gdx = Lx / GX, gdy = Ly / GY, GC = GX * GY;
+    const gic = new Float64Array(4), gicK = new Int32Array(4);
+    function gasWeights(x, y) { // (as weights(), on the gas's cells)
+      const fx = x / gdx - 0.5, fy = y / gdy - 0.5;
+      const i0 = Math.floor(fx), j0 = Math.floor(fy), tx = fx - i0, ty = fy - j0;
+      const i1 = (i0 + 1 + GX) % GX, j1 = (j0 + 1 + GY) % GY, ia = (i0 + GX) % GX, ja = (j0 + GY) % GY;
+      gicK[0] = ja * GX + ia; gic[0] = (1 - tx) * (1 - ty);
+      gicK[1] = ja * GX + i1; gic[1] = tx * (1 - ty);
+      gicK[2] = j1 * GX + ia; gic[2] = (1 - tx) * ty;
+      gicK[3] = j1 * GX + i1; gic[3] = tx * ty;
+    }
+    const cN = new Float64Array(GC), cQx = new Float64Array(GC), cQy = new Float64Array(GC), cF = new Float64Array(GC);
+    const cH = new Float64Array(GC), cShone = new Int32Array(GC), tK = new Int32Array(CAP);
+    const cRx = new Float64Array(GC), cRy = new Float64Array(GC), cStay = new Int32Array(GC); // a shining cell's recoil, and who in it takes it
     function friction(dt) {
       if (!FRICTION) return;
       cN.fill(0); cQx.fill(0); cQy.fill(0);
@@ -565,12 +585,12 @@ const BlackHoles = (() => {
       for (let i = 0; i < n; i++) {
         if (lt[i]) continue;
         nd++;
-        weights(px[i], py[i]);
-        for (let q = 0; q < 4; q++) { const k = cicK[q], w = cic[q]; cN[k] += w; cQx[k] += w * qx[i]; cQy[k] += w * qy[i]; }
+        gasWeights(px[i], py[i]);
+        for (let q = 0; q < 4; q++) { const k = gicK[q], w = gic[q]; cN[k] += w; cQx[k] += w * qx[i]; cQy[k] += w * qy[i]; }
       }
       if (!nd) return;
-      const mean = nd / NC;
-      for (let k = 0; k < NC; k++) {
+      const mean = nd / GC;
+      for (let k = 0; k < GC; k++) {
         if (cN[k] <= 0) { cF[k] = 0; continue; }
         cQx[k] /= cN[k]; cQy[k] /= cN[k];
         cF[k] = 1 - Math.exp(-FRICTION * Math.min(cN[k] / mean, DENSE_MAX) * dt);
@@ -579,17 +599,17 @@ const BlackHoles = (() => {
       cH.fill(0); cShone.fill(0); cRx.fill(0); cRy.fill(0); cStay.fill(0);
       for (let i = 0; i < n; i++) {
         if (lt[i]) continue;
-        weights(px[i], py[i]);
+        gasWeights(px[i], py[i]);
         let dqx = 0, dqy = 0;
         for (let q = 0; q < 4; q++) {
-          const k = cicK[q], f = cic[q] * cF[k];
+          const k = gicK[q], f = gic[q] * cF[k];
           dqx += f * (cQx[k] - qx[i]); dqy += f * (cQy[k] - qy[i]);
         }
         const S0 = S[i], a = al[i];
         qx[i] += dqx; qy[i] += dqy;
         S[i] = Math.sqrt(c4 + c2 * a * a * (qx[i] * qx[i] + qy[i] * qy[i]));
         ht[i] += a * m * (S0 - S[i]);
-        const kc = Math.min(NY - 1, py[i] / dy | 0) * NX + Math.min(NX - 1, px[i] / dx | 0);
+        const kc = Math.min(GY - 1, py[i] / gdy | 0) * GX + Math.min(GX - 1, px[i] / gdx | 0);
         tK[i] = kc; cH[kc] += ht[i];
       }
       // the cells with a photon's worth, or more, shine (the light, its
@@ -1024,15 +1044,16 @@ const BlackHoles = (() => {
         // it radiate the slower, by its γ, and by α)
         const clock = h.al * h.M * c2 / Math.max(h.M * c2, h.S);
         h.budget += K / (h.M * h.M) * dt * clock;
-        // (no more than EMIT_RATE·dt at a time, from a horizon ROOM of a grid
-        // cell wide: a hole near its end would put hundreds at once on one
-        // spot, and they'd be bound to one another)
+        // (no more than EMIT_RATE·dt at a time, from a horizon ROOM of a 16:9
+        // screen's grid cell wide, whatever this grid is: a hole near its
+        // end would put hundreds at once on one spot, and they'd be bound to
+        // one another)
         // (a wider horizon has room for more, as its area has, so a big hole
         // can't outgrow its radiating for long: there is a biggest it gets;
         // a narrower one, hotter, sends them the faster, as 1/M², as Hawking's
         // does, so a small hole goes the faster the smaller it gets, and is
         // gone in a flash)
-        const room = (h.rh / (ROOM * A)) ** 2, rate = EMIT_RATE * Math.max(room, 1 / room) * dt * clock;
+        const room = (h.rh / (ROOM * A_ROOM)) ** 2, rate = EMIT_RATE * Math.max(room, 1 / room) * dt * clock;
         h.allow = Math.min(Math.max(4, 2 * rate), (h.allow || 0) + rate);
         // (in pairs, back to back: radiating evenly every way, as a hole does,
         // it isn't pushed about by its own quanta, as one at a time it would be)
