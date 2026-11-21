@@ -15,11 +15,11 @@
 <title>Black Holes</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls in, holes dance, merge and evaporate back into dust, forever.">
+<meta name="description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls into space's wells and collapses, holes dance, merge and evaporate into light, and the light, meeting light, is dust again, forever.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Digital Art Meditation">
 <meta property="og:title" content="Black Holes">
-<meta property="og:description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls in, holes dance, merge and evaporate back into dust, forever.">
+<meta property="og:description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls into space's wells and collapses, holes dance, merge and evaporate into light, and the light, meeting light, is dust again, forever.">
 <meta property="og:url" content="https://digitalartmeditation.com/black-holes.html">
 <meta property="og:image" content="https://digitalartmeditation.com/og/og-black-holes.png">
 <meta property="og:image:width" content="1200">
@@ -27,7 +27,7 @@
 <meta property="og:image:alt" content="“Black Holes” written in poured cursive lines over black holes in dark dust, their wells glowing red">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Black Holes">
-<meta name="twitter:description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls in, holes dance, merge and evaporate back into dust, forever.">
+<meta name="twitter:description" content="A small universe of black holes and dust held together by nothing but gravity: dust falls into space's wells and collapses, holes dance, merge and evaporate into light, and the light, meeting light, is dust again, forever.">
 <meta name="twitter:image" content="https://digitalartmeditation.com/og/og-black-holes.png">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1c1c; }
@@ -136,7 +136,7 @@
       return pow(c, vec3(2.2)) * smoothstep(700.0, 1700.0, T);
     }`;
 
-  function glPainter(gl, u) {
+  function glPainter(gl, u, LENS) {
     function program(vs, fs) {
       const p = gl.createProgram();
       for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
@@ -200,7 +200,8 @@
     const show = program(QUAD_VS, `in vec2 uv; out vec4 o;
       uniform sampler2D T, P; uniform vec2 L; uniform float c2, A;
       uniform int nh, nw;
-      uniform vec4 holes[${MAXH}]; // x, y, its weight Hg/c², its shadow's radius
+      uniform vec4 holes[${MAXH}]; // x, y, its weight Hg/c², its shadow's radius (as drawn)
+      uniform float lens[${MAXH}]; // its lens: the Einstein radius, squared
       uniform vec2 rings[${MAXH}]; // its ringing, just merged: how far out of round, which way
       uniform vec4 waves[${MAXW}]; // x, y, how far it has run, how strong
       uniform float axes[${MAXW}]; // which way it stretches
@@ -212,16 +213,34 @@
       vec2 near(vec2 d) { return d - L * floor(d / L + 0.5); }
       void main() {
         vec2 x = vec2(uv.x, 1.0 - uv.y) * L;
-        float phi = texture(P, x / L).r; // the grid's, over c²
+        // Each hole a lens: what is seen at x is what is at b, nearer the
+        // hole, b = x − θE²/r (a point mass's), the holes' bendings added; so
+        // all about a hole is drawn out of the way of its (wider) shadow and
+        // pressed up against it, squeezed towards it and stretched round it,
+        // what is just outside its horizon a thin bright ring at its edge.
+        // (Tapered off far out, where there are other holes' to add, and
+        // the torus's images of it.)
+        vec2 b = x;
+        for (int k = 0; k < ${MAXH}; k++) {
+          if (k >= nh) break;
+          vec2 d = near(x - holes[k].xy);
+          float r2 = dot(d, d) + 1e-9, R = holes[k].w;
+          b -= d * lens[k] / r2 * (1.0 - smoothstep(4.0 * R, 12.0 * R, sqrt(r2)));
+        }
+        b -= L * floor(b / L);
+        vec2 buv = vec2(b.x / L.x, 1.0 - b.y / L.y);
+        float phi = texture(P, b / L).r; // the grid's, over c²
         // the shadows: how far outside the nearest one (the outline ringing
         // just after a merger), two near one another drawn out and joined by
         // a neck, as their horizons are, before they are one
         float edge = 1e9;
         for (int k = 0; k < ${MAXH}; k++) {
           if (k >= nh) break;
+          vec2 db = near(b - holes[k].xy);
+          float rb = length(db);
+          phi -= holes[k].z * erfc_(rb / (2.0 * A)) / sqrt(rb * rb + 2.25e-6) / c2;
           vec2 d = near(x - holes[k].xy);
           float r = length(d);
-          phi -= holes[k].z * erfc_(r / (2.0 * A)) / sqrt(r * r + 2.25e-6) / c2;
           float th = atan(d.y, d.x);
           float e = r - holes[k].w * (1.0 + rings[k].x * cos(2.0 * (th - rings[k].y)));
           float kk = 0.9 * holes[k].w, hh = max(kk - abs(edge - e), 0.0) / kk; // (a smooth union)
@@ -246,7 +265,7 @@
         vec3 grey = vec3(0.0144), red = vec3(0.0144 / 0.2126, 0.0, 0.0), blue = vec3(0.0, 0.0, 0.0144 / 0.0722);
         vec3 ground = mix(grey, red, smoothstep(0.0, 0.6, z));
         ground = mix(ground, ripple > 0.0 ? red : blue, smoothstep(0.0, 0.35, abs(ripple)));
-        vec3 dust = texture(T, uv).rgb;
+        vec3 dust = texture(T, buv).rgb;
         vec3 col = ground + (1.0 - exp(-dust * 1.6)) * 1.1;
         col *= shadow;
         o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
@@ -334,11 +353,18 @@
       gl.uniform2f(show.loc.L, u.Lx, u.Ly);
       gl.uniform1f(show.loc.c2, u.c * u.c); gl.uniform1f(show.loc.A, u.A);
       gl.uniform1f(show.loc.px, u.Ly / H);
-      const hs = u.holes.slice(0, MAXH), hv = new Float32Array(MAXH * 4);
+      const hs = u.holes.slice(0, MAXH), hv = new Float32Array(MAXH * 4), lv = new Float32Array(MAXH);
       // (its shadow as light sees it: all that passes within √27·GM/c² of it
-      // is taken, so it shows √27/2 as wide as where it takes slow matter)
-      hs.forEach((h, j) => hv.set([h.x, h.y, h.Hg / (u.c * u.c), SEEN * u.shadowOf(h)], j * 4));
-      gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv);
+      // is taken, so it shows √27/2 as wide as where it takes slow matter;
+      // and drawn LENS times as wide again, its lens as strong as brings what
+      // is just outside where it takes slow matter, s, to that edge, R:
+      // R − θE²/R = s)
+      hs.forEach((h, j) => {
+        const s = u.shadowOf(h), R = LENS * SEEN * s;
+        hv.set([h.x, h.y, h.Hg / (u.c * u.c), R], j * 4);
+        lv[j] = Math.max(0, R * (R - s));
+      });
+      gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv); gl.uniform1fv(show.loc.lens, lv);
       // a hole just merged rings: its outline drawn out along the way the
       // two met, then across, and back, dying away (turned by its spin)
       const rv = new Float32Array(MAXH * 2), now = performance.now() / 1000;
@@ -469,7 +495,8 @@
   function showStats() {
     if (!uni) return;
     const E = uni.energy / (uni.c * uni.c);
-    hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n} · mass-energy ${uni.target === null ? '—' : E.toFixed(3)}` +
+    const light = uni.light;
+    hintText.textContent = `holes ${uni.holes.length} · dust ${uni.n - light} · light ${light} · mass-energy ${uni.target === null ? '—' : E.toFixed(3)}` +
       (paused ? ' · paused' : '') +
       (touch ? ` · tap: ${paused ? 'resume' : 'pause'}` : ` · slow ← colour → fast · click: ${paused ? 'resume' : 'pause'} · M: music · W: waves · S: save PNG`);
   }
@@ -524,7 +551,7 @@
       ...tried,
     });
     window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
-    const painter = glPainter(gl, u);
+    const painter = glPainter(gl, u, tried.LENS ?? 3); // (how much wider a hole is drawn than it is, its lens making room for it)
     painter.draw(1);
     showStats();
     showHint();

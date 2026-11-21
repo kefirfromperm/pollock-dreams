@@ -11,7 +11,9 @@
 // by its Hamiltonian in it,
 //   H = α·S,  S = √(m²c⁴ + α²c²p²) (its energy, as measured where it is),
 // so nothing outruns light, a fast body bends twice as much as a slow one,
-// as light does, orbits precess, and a body falling in slows and reddens as
+// as light does (light is a body too, with no rest mass: S = αc|p|, so it
+// goes at α²c, bent twice as much, blueshifted falling in and redshifted
+// climbing out), orbits precess, and a body falling in slows and reddens as
 // it nears the horizon, where α is 0, r_h = GM/c². What comes within the
 // hole's shadow, 2r_h, where α is ½ and nothing climbs back out, is the
 // hole's. H, a body's energy as seen from afar, is what it keeps as it falls,
@@ -37,7 +39,7 @@
 //     gravitational wave; before they merge, a pair circling close loses its
 //     orbit's energy to gravitational waves as two masses would (Peters);
 //   a hole evaporates: Hawking radiation, at a power K/M², each quantum a
-//     particle of the dust, leaving fast, about 0.7c, in pairs back to
+//     photon, light, carrying about 1.4 of a particle's rest energy, in pairs back to
 //     back (as evenly every way as a hole radiates), each carrying its share
 //     of the hole's motion, its share of E taken from the hole: a small hole,
 //     hotter, sends them the more often, and its last bit bursts; a moving
@@ -54,7 +56,12 @@
 //     half their momenta each, what motion they lost their heat;
 //   dust rubs: where it crowds, it is pulled to move as the gas about it
 //     does, the motion lost heat, the heat, a photon's worth at a time,
-//     shone off as a fast particle that flies free a while;
+//     shone off as light: so the dust cools;
+//   two photons meet (within COLLIDE), and now and then (PAIR) are a
+//     particle of dust, if between them they have its rest mass (their
+//     invariant mass, as two head on have, at least); what more they had,
+//     its heat, to shine off again: so light goes back to dust, and the
+//     universe goes round, hole to light to dust to hole;
 //   space itself is curved, from the first, for ever: wells and rises of
 //     its own, that everything falls into and climbs out of alike;
 //   a gravitational wave runs out at c from where it began, and gives its
@@ -115,13 +122,13 @@ const BlackHoles = (() => {
     c = 3,
     G = 0.65, // how strong gravity is
     MASS = 1, // its rest mass at first
-    HOLES = 3, HOLE_MASS = [0.05, 0.1], // the holes there at first
+    HOLES = 0, HOLE_MASS = [0.05, 0.1], // the holes there at first (none: only dust, to fall into space's wells)
     HOLE_WARM = 0.4, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
-    K = 1.2, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
+    K = 0.4, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
     M_END = 0.005, // a hole this light bursts
-    EMIT_RATE = 0.1 * N, // Hawking particles from a hole a second, at most (as many more as the dust is cut finer, so it loses its mass as fast)
+    EMIT_RATE = 0.03 * N, // Hawking photons from a hole a second, at most (as many more as the dust is cut finer, so it loses its mass as fast)
     ROOM = 0.35, // (and as many more as its horizon is wider than this, of a grid cell, squared)
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
@@ -129,13 +136,15 @@ const BlackHoles = (() => {
     CURVE_T = 90, CURVE_DT = 0.02, // and how slowly it changes: each of its waves round in about this long (its own seconds; half an hour of ours), found anew this often
     PETERS = true, // close pairs losing their orbits to gravitational waves
     ALPHA_COLLAPSE = 0.83, // dust whose own well is this deep collapses
+    COLLAPSE_M = 3, // if as much is bound there as this many of the lightest holes (M_END)
+    COLD = 0.6, // and the gas there is cold: this much of what is there bound (hot, and light, only pass through)
     CLEAR = 0.1, // (no nearer a hole than this: dust heaped about a hole is the hole's to take)
     SPLIT = 0.1, // a clump spinning this many times as fast as one hole can splits in two
     A_PAIR = 2.7, // and the two go round one another no further apart than this many times as far as they'd be one (2.5 at least)
     FRICTION = 3, // how often dust collides, a second, where it is as dense as on the whole (the denser, the more often)
     DENSE_MAX = 40, // (no more often than at this many times as dense)
-    E_PHOTON = 1, // what a photon carries off, of a particle's rest energy (it leaves at about 0.87c)
-    PHOTON_LIFE = 0.4, // seconds a photon flies, untouched by friction, before it is dust again
+    E_PHOTON = 1, // what a photon of heat carries off, of a particle's rest energy
+    PAIR = 0.03, // how often two photons meeting are a particle of dust (the fewer, the longer light flies)
     COLLIDE = 0.002, // two particles of dust this near bounce off one another (some two css px)
     STICK = 1, // or stick, sharing their momenta alike, as often as |p₁ + p₂|²/(|p₁| + |p₂|)² of this
     TRAIL = 96, TRAIL_DT = 0.05 / 60, // where each particle was: this many places back, one every this long (for its track)
@@ -319,7 +328,10 @@ const BlackHoles = (() => {
     const Hg = new Float64Array(CAP);
     const EASE = 0.05;
     const born = new Uint8Array(CAP); // just made: no trail from where it was
-    const ph = new Float32Array(CAP); // a photon (a Hawking quantum, or light from friction): how long it still flies free
+    const lt = new Uint8Array(CAP); // light: a photon (a Hawking quantum, or heat shone), no rest mass
+    const rest = i => lt[i] ? 0 : c4; // (its rest energy, squared, per unit… of a particle's)
+    // its speed, of c; light's, for its colour, a particle's of as much energy there
+    const setBeta = i => { be[i] = lt[i] ? Math.min(0.995, Math.sqrt(Math.max(0, 1 - c4 / (S[i] * S[i])))) : c * al[i] * hyp(qx[i], qy[i]) / S[i]; };
     const ht = new Float64Array(CAP); // its heat, from friction, not yet shone (as seen from afar)
     // (for the step: the grid's pull and Φ at each, the way to the nearest horizon, the hole it is in)
     const tGx = new Float64Array(CAP), tGy = new Float64Array(CAP), tPl = new Float64Array(CAP), tGap = new Float64Array(CAP);
@@ -336,14 +348,14 @@ const BlackHoles = (() => {
       }
     }
     let n = 0;
-    function addParticle(x, y, ux, uy, alpha = 1, life = 0) {
+    function addParticle(x, y, ux, uy, alpha = 1, light = 0) {
       if (n >= CAP) return false;
-      ph[n] = life; ht[n] = 0;
+      lt[n] = light; ht[n] = 0;
       px[n] = ox[n] = wrap(x, Lx); py[n] = oy[n] = wrap(y, Ly);
       qx[n] = ux; qy[n] = uy; al[n] = alpha; born[n] = 1; hn[n] = 0;
       const u2 = ux * ux + uy * uy;
-      S[n] = Math.sqrt(c4 + c2 * alpha * alpha * u2);
-      be[n] = c * alpha * Math.sqrt(u2) / S[n];
+      S[n] = Math.sqrt(rest(n) + c2 * alpha * alpha * u2);
+      setBeta(n);
       Hg[n] = alpha * S[n];
       n++;
       return true;
@@ -351,7 +363,7 @@ const BlackHoles = (() => {
     function removeParticle(i) {
       n--;
       px[i] = px[n]; py[i] = py[n]; qx[i] = qx[n]; qy[i] = qy[n]; ox[i] = ox[n]; oy[i] = oy[n];
-      al[i] = al[n]; be[i] = be[n]; S[i] = S[n]; Hg[i] = Hg[n]; born[i] = born[n]; ph[i] = ph[n]; ht[i] = ht[n];
+      al[i] = al[n]; be[i] = be[n]; S[i] = S[n]; Hg[i] = Hg[n]; born[i] = born[n]; lt[i] = lt[n]; ht[i] = ht[n];
       hn[i] = hn[n]; hx.copyWithin(i * TRAIL, n * TRAIL, (n + 1) * TRAIL); hy.copyWithin(i * TRAIL, n * TRAIL, (n + 1) * TRAIL);
     }
 
@@ -526,17 +538,17 @@ const BlackHoles = (() => {
     // rubbing on the outer, so the gas drifts in. What the friction takes
     // is heat, the particle's own, and goes where it goes (into a hole, if
     // it falls in); as soon as the particles in a cell have a photon's
-    // worth of it between them, one of them shines it off: it leaves, fast,
-    // any way, untouched by friction for PHOTON_LIFE, then is dust again.
+    // worth of it between them, one of them shines it off: light, any way.
+    // (Light goes through the gas, untouched by it.)
     const cN = new Float64Array(NC), cQx = new Float64Array(NC), cQy = new Float64Array(NC), cF = new Float64Array(NC);
     const cH = new Float64Array(NC), cShone = new Int32Array(NC), tK = new Int32Array(CAP);
     const cRx = new Float64Array(NC), cRy = new Float64Array(NC), cStay = new Int32Array(NC); // a shining cell's recoil, and who in it takes it
     function friction(dt) {
-      if (!FRICTION) { for (let i = 0; i < n; i++) if (ph[i] > 0) ph[i] = Math.max(0, ph[i] - dt); return; }
+      if (!FRICTION) return;
       cN.fill(0); cQx.fill(0); cQy.fill(0);
       let nd = 0;
       for (let i = 0; i < n; i++) {
-        if (ph[i] > 0) { ph[i] = Math.max(0, ph[i] - dt); if (ph[i] > 0) continue; }
+        if (lt[i]) continue;
         nd++;
         weights(px[i], py[i]);
         for (let q = 0; q < 4; q++) { const k = cicK[q], w = cic[q]; cN[k] += w; cQx[k] += w * qx[i]; cQy[k] += w * qy[i]; }
@@ -551,7 +563,7 @@ const BlackHoles = (() => {
       const eph = E_PHOTON * m * c2;
       cH.fill(0); cShone.fill(0); cRx.fill(0); cRy.fill(0); cStay.fill(0);
       for (let i = 0; i < n; i++) {
-        if (ph[i] > 0) continue;
+        if (lt[i]) continue;
         weights(px[i], py[i]);
         let dqx = 0, dqy = 0;
         for (let q = 0; q < 4; q++) {
@@ -565,16 +577,17 @@ const BlackHoles = (() => {
         const kc = Math.min(NY - 1, py[i] / dy | 0) * NX + Math.min(NX - 1, px[i] / dx | 0);
         tK[i] = kc; cH[kc] += ht[i];
       }
-      // the cells with a photon's worth, or more, shine
-      for (let i = 0; i < n; i++) {
-        if (ph[i] > 0) continue;
+      // the cells with a photon's worth, or more, shine (the light, its
+      // energy eph as seen from afar, eph/α there, its momentum that over c)
+      const n0 = n;
+      for (let i = 0; i < n0; i++) {
+        if (lt[i]) continue;
         const kc = tK[i];
         if (cH[kc] - cShone[kc] * eph >= eph) {
+          const th = TAU * rng(), a = al[i], u = eph / (a * a * m * c);
+          if (!addParticle(px[i], py[i], u * Math.cos(th), u * Math.sin(th), a, 1)) continue;
           cShone[kc]++;
-          const th = TAU * rng(), qx0 = qx[i], qy0 = qy[i];
-          kick(i, eph, Math.cos(th), Math.sin(th));
-          cRx[kc] -= m * (qx[i] - qx0); cRy[kc] -= m * (qy[i] - qy0);
-          ph[i] = -PHOTON_LIFE; // (marked: a photon just now; see below)
+          cRx[kc] -= m * qx[n - 1]; cRy[kc] -= m * qy[n - 1];
           events.push({ type: 'photon', x: px[i], y: py[i] });
           stats.photons++;
         }
@@ -584,20 +597,19 @@ const BlackHoles = (() => {
       // others alike, their heat paying for what that moves them: else it
       // came from nowhere, and was all the dust's to make up, every
       // particle pushed at once; and all a hole's at once, if it fell in.
-      for (let i = 0; i < n; i++) if (!ph[i] && cShone[tK[i]]) cStay[tK[i]]++;
+      for (let i = 0; i < n0; i++) if (!lt[i] && cShone[tK[i]]) cStay[tK[i]]++;
       // what is left of each such cell's heat, its particles share as they had it
-      for (let i = 0; i < n; i++) {
-        if (ph[i] > 0) continue;
+      for (let i = 0; i < n0; i++) {
+        if (lt[i]) continue;
         const kc = tK[i];
         if (cShone[kc]) ht[i] *= (cH[kc] - cShone[kc] * eph) / cH[kc];
-        if (!ph[i] && cStay[kc]) {
+        if (cStay[kc]) {
           const S0 = S[i], a = al[i];
           qx[i] += cRx[kc] / (m * cStay[kc]); qy[i] += cRy[kc] / (m * cStay[kc]);
           S[i] = Math.sqrt(c4 + c2 * a * a * (qx[i] * qx[i] + qy[i] * qy[i]));
           ht[i] -= a * m * (S[i] - S0);
         }
-        if (ph[i] < 0) ph[i] = -ph[i];
-        be[i] = c * al[i] * Math.sqrt(qx[i] * qx[i] + qy[i] * qy[i]) / S[i];
+        setBeta(i);
       }
     }
 
@@ -614,8 +626,9 @@ const BlackHoles = (() => {
     // for what is left of the step. So near, their wells are as deep: their
     // momenta, α·q each, are turned at one α, the two's mean, so Σq is kept
     // exactly (their energy all but: the fix puts back the hair it is off).
-    // A photon goes through the dust (it is light), and a particle bounces
-    // no more than once a step. Found by where each was halfway through the
+    // Light goes through the dust; two photons meeting are, as often as
+    // PAIR, a particle of dust (see pair), or else go through one another.
+    // A particle bounces no more than once a step. Found by where each was halfway through the
     // step, in bins as wide as COLLIDE and the furthest any went: two that
     // came that near are in the same bin or next ones.
     const dX = new Float64Array(CAP), dY = new Float64Array(CAP), binNext = new Int32Array(CAP), hit = new Uint8Array(CAP);
@@ -626,7 +639,7 @@ const BlackHoles = (() => {
       for (let i = 0; i < n; i++) {
         const ddx = near(px[i] - ox[i], Lx), ddy = near(py[i] - oy[i], Ly);
         dX[i] = ddx; dY[i] = ddy; hit[i] = 0;
-        if (!(ph[i] > 0)) far = Math.max(far, ddx * ddx + ddy * ddy);
+        far = Math.max(far, ddx * ddx + ddy * ddy);
       }
       const s = COLLIDE + Math.sqrt(far);
       const BX = Math.max(1, Math.floor(Lx / s)), BY = Math.max(1, Math.floor(Ly / s)), bw = Lx / BX, bh = Ly / BY;
@@ -637,7 +650,6 @@ const BlackHoles = (() => {
         return Math.min(BY - 1, y / bh | 0) * BX + Math.min(BX - 1, x / bw | 0);
       };
       for (let i = 0; i < n; i++) {
-        if (ph[i] > 0) continue;
         const b = binOf(i);
         binNext[i] = bins[b]; bins[b] = i;
       }
@@ -645,11 +657,11 @@ const BlackHoles = (() => {
       const x0 = BX >= 3 ? -1 : 0, x1 = BX >= 2 ? 1 : 0, y0 = BY >= 3 ? -1 : 0, y1 = BY >= 2 ? 1 : 0;
       const D2 = COLLIDE * COLLIDE;
       for (let i = 0; i < n; i++) {
-        if (ph[i] > 0 || hit[i]) continue;
+        if (hit[i]) continue;
         const b = binOf(i), bx = b % BX, by = (b / BX) | 0;
         for (let oy_ = y0; oy_ <= y1 && !hit[i]; oy_++) for (let ox_ = x0; ox_ <= x1 && !hit[i]; ox_++) {
           for (let j = bins[((by + oy_ + BY) % BY) * BX + (bx + ox_ + BX) % BX]; j >= 0; j = binNext[j]) {
-            if (j <= i || hit[j]) continue;
+            if (j <= i || hit[j] || lt[i] !== lt[j]) continue;
             // when, in the step, they were COLLIDE apart, coming nearer
             const d0x = near(ox[j] - ox[i], Lx), d0y = near(oy[j] - oy[i], Ly), rx = dX[j] - dX[i], ry = dY[j] - dY[i];
             const hb = d0x * rx + d0y * ry;
@@ -662,10 +674,31 @@ const BlackHoles = (() => {
               tc = (-hb - Math.sqrt(disc)) / a;
               if (tc > 1) continue;
             }
-            if (bounce(i, j, d0x + tc * rx, d0y + tc * ry, tc, dt)) break;
+            if (lt[i] ? rng() < PAIR && pair(i, j, tc, dt) : bounce(i, j, d0x + tc * rx, d0y + tc * ry, tc, dt)) break;
           }
         }
       }
+      if (gone.length) { gone.sort((a, b) => b - a); for (const j of gone) removeParticle(j); gone.length = 0; }
+    }
+    // Photons i and j, meeting at tc of the step, are one particle of dust:
+    // with both their momenta, and their energy, if it is enough (their
+    // invariant mass at least its rest mass), what more there is its heat.
+    // (At one α, the two's mean, as in bounce.)
+    const gone = [];
+    function pair(i, j, tc, dt) {
+      const a = 0.5 * (al[i] + al[j]);
+      const e = a * c * (hyp(qx[i], qy[i]) + hyp(qx[j], qy[j])); // their energy there, per unit rest mass
+      const ux = qx[i] + qx[j], uy = qy[i] + qy[j], Sd = Math.sqrt(c4 + c2 * a * a * (ux * ux + uy * uy));
+      if (e < Sd) return false;
+      hit[i] = hit[j] = 1;
+      lt[i] = 0; al[i] = a;
+      Hg[i] += Hg[j]; // (their weight, the grid's, from now on its)
+      goOn(i, ux, uy, tc, dt);
+      ht[i] += a * m * (e - Sd);
+      gone.push(j);
+      events.push({ type: 'pair', x: px[i], y: py[i] });
+      stats.paired = (stats.paired || 0) + 1;
+      return true;
     }
     // i and j bounce, n (from i to j) the line between them, at tc of the step
     function bounce(i, j, nx, ny, tc, dt) {
@@ -796,7 +829,7 @@ const BlackHoles = (() => {
         tGap[i] = gap; tInto[i] = into;
         const alpha = lapse(P0), u2 = qx[i] * qx[i] + qy[i] * qy[i];
         al[i] = alpha;
-        S[i] = Math.sqrt(c4 + c2 * alpha * alpha * u2);
+        S[i] = Math.sqrt(rest(i) + c2 * alpha * alpha * u2);
         E += alpha * m * S[i] + ht[i]; Px += m * qx[i]; Py += m * qy[i];
       }
       for (let k = 0; k < H; k++) {
@@ -831,6 +864,7 @@ const BlackHoles = (() => {
         const sub = H ? Math.min(128, Math.max(1, Math.ceil(dt * c / (0.15 * tGap[i])))) : 1;
         const h = dt / sub;
         let x = px[i], y = py[i], ux = qx[i], uy = qy[i], swallowed = -1, alpha = al[i], u2 = 0;
+        const r4 = rest(i);
         for (let k = 0; k < H; k++) {
           const ddx = near(hx[k] - x, Lx), ddy = near(hy[k] - y, Ly), lp = hw[k] * lrPull(hyp(ddx, ddy));
           lgx[k] = lp * ddx; lgy[k] = lp * ddy;
@@ -857,7 +891,7 @@ const BlackHoles = (() => {
               // runs from it at more than half that. It would hang there
               // behind it, the pull piling momentum on it without end, all of
               // it the hole's at once when at last it fell in. It is the hole's.
-              const r = Math.sqrt(r2), a2 = alpha * alpha, fall = a2 * alpha * c2 * (ux * ddx + uy * ddy) / (r * Math.sqrt(c4 + c2 * a2 * (ux * ux + uy * uy)));
+              const r = Math.sqrt(r2), a2 = alpha * alpha, fall = a2 * alpha * c2 * (ux * ddx + uy * ddy) / (r * Math.sqrt(r4 + c2 * a2 * (ux * ux + uy * uy)));
               if (fall > 0.9 * a2 * c && 2 * (hvx[k] * ddx + hvy[k] * ddy) / r > fall) { swallowed = k; break; }
             }
             if (r2 < RCUT2 || hSh[k] * 1.3 > RCUT) {
@@ -876,7 +910,7 @@ const BlackHoles = (() => {
           alpha = lapse(P);
           const a2 = alpha * alpha;
           u2 = ux * ux + uy * uy;
-          const Sl = Math.sqrt(c4 + c2 * a2 * u2), k1 = (Sl + c2 * a2 * u2 / Sl) / c2;
+          const Sl = Math.sqrt(r4 + c2 * a2 * u2), k1 = (Sl + c2 * a2 * u2 / Sl) / c2;
           ux += k1 * fx * h; uy += k1 * fy * h;
           // and as much the other way to each hole that pulled it (near, and through the grid)
           for (let k = 0; k < H; k++) {
@@ -884,16 +918,16 @@ const BlackHoles = (() => {
             if (ax || ay) { jx[k] -= m * k1 * ax * h; jy[k] -= m * k1 * ay * h; }
           }
           u2 = ux * ux + uy * uy;
-          const k2 = a2 * alpha * c2 / Math.sqrt(c4 + c2 * a2 * u2);
+          const k2 = a2 * alpha * c2 / Math.sqrt(r4 + c2 * a2 * u2);
           x += (k2 * ux + vx) * h; y += (k2 * uy + vy) * h;
         }
         px[i] = wrap(x, Lx); py[i] = wrap(y, Ly); qx[i] = ux; qy[i] = uy;
         if (born[i]) { ox[i] = px[i]; oy[i] = py[i]; born[i] = 0; }
         u2 = ux * ux + uy * uy;
         al[i] = alpha;
-        S[i] = Math.sqrt(c4 + c2 * alpha * alpha * u2);
+        S[i] = Math.sqrt(r4 + c2 * alpha * alpha * u2);
         if (swallowed >= 0) { swallow(holes[swallowed], i); continue; }
-        be[i] = c * alpha * Math.sqrt(u2) / S[i];
+        setBeta(i);
         Hg[i] += EASE * (alpha * S[i] - Hg[i]);
         sumScale += alpha * m * c2 * alpha * alpha * u2 / S[i];
       }
@@ -982,7 +1016,7 @@ const BlackHoles = (() => {
       stats.fixed += lam * sumScale;
       for (let i = 0; i < n; i++) {
         qx[i] = qx[i] * (1 + lam) + ddx; qy[i] = qy[i] * (1 + lam) + ddy;
-        S[i] = Math.sqrt(c4 + c2 * al[i] * al[i] * (qx[i] * qx[i] + qy[i] * qy[i]));
+        S[i] = Math.sqrt(rest(i) + c2 * al[i] * al[i] * (qx[i] * qx[i] + qy[i] * qy[i]));
       }
     }
 
@@ -1016,7 +1050,7 @@ const BlackHoles = (() => {
       const ex = Math.cos(th), ey = Math.sin(th);
       const ae = Math.max(0.1, alphaAt(h.x + ex * r, h.y + ey * r)); // α there, as dust feels it, the hole's own well in it
       const Sp = e / (ae * m); // its energy there, per unit mass, in the hole's own frame
-      const p0 = Math.sqrt(Math.max(0, Sp * Sp - c4)) / c; // its momentum there, per unit mass
+      const p0 = Sp / c; // its momentum there, per unit mass (light's)
       // mostly outwards, turned the way it spins the more, the faster it spins
       const spread = turn + 0.9 * Math.max(-1, Math.min(1, chiOf(h))), dxu = Math.cos(th + spread), dyu = Math.sin(th + spread);
       // As we see it, the hole moving: even every way in its own frame, but
@@ -1032,7 +1066,7 @@ const BlackHoles = (() => {
       // the pair, all told, its energy's share of it, no more)
       const kb = b2 > 1e-12 ? (gh - 1) * bp / b2 : 0, gq = ae * gh * (Sp + c * bp) * h.M / (h.al * h.S);
       const ux = (pxq + kb * bx) / ae + gq * h.qx, uy = (pyq + kb * by) / ae + gq * h.qy; // (canonical: as there, over α)
-      if (!addParticle(h.x + ex * r, h.y + ey * r, ux, uy, ae, PHOTON_LIFE)) { h.budget += e; return; }
+      if (!addParticle(h.x + ex * r, h.y + ey * r, ux, uy, ae, 1)) { h.budget += e; return; }
       const ea = ae * m * S[n - 1]; // (what it took, as seen from afar: e, and its share of the hole's motion)
       // the hole keeps what it came to, less the quantum's αS, and their
       // binding, now counted in both and in W; its α deeper by the quantum's well
@@ -1091,7 +1125,7 @@ const BlackHoles = (() => {
         for (let j = 0; j < k; j++) {
           const dxj = at[j][0] - h.x, dyj = at[j][1] - h.y, d = hyp(dxj, dyj) || 1;
           const ux = dxj / d * U - dyj / d * ut + sx, uy = dyj / d * U + dxj / d * ut + sy;
-          e += ai[j] * m * Math.sqrt(c4 + c2 * ai[j] * ai[j] * (ux * ux + uy * uy));
+          e += ai[j] * m * c * ai[j] * Math.sqrt(ux * ux + uy * uy); // (light)
         }
         return e;
       };
@@ -1102,7 +1136,7 @@ const BlackHoles = (() => {
       for (let j = 0; j < k; j++) {
         // each flies straight out from where it starts, so they part at once
         const dxj = at[j][0] - h.x, dyj = at[j][1] - h.y, d = hyp(dxj, dyj) || 1;
-        if (addParticle(at[j][0], at[j][1], dxj / d * lo - dyj / d * ut + sx, dyj / d * lo + dxj / d * ut + sy, ai[j], PHOTON_LIFE)) Hg[n - 1] = h.Hg / (k * m); // (the hole's weight, shared)
+        if (addParticle(at[j][0], at[j][1], dxj / d * lo - dyj / d * ut + sx, dyj / d * lo + dxj / d * ut + sy, ai[j], 1)) Hg[n - 1] = h.Hg / (k * m); // (the hole's weight, shared)
       }
       events.push({ type: 'burst', x: h.x, y: h.y, hole: h.id, e: H });
       stats.burst++;
@@ -1115,11 +1149,11 @@ const BlackHoles = (() => {
     function kick(i, e, ex, ey, least = false) {
       const a2 = al[i] * al[i];
       const S1 = S[i] + e / (m * al[i]), u2 = qx[i] * qx[i] + qy[i] * qy[i];
-      const u2n = (S1 * S1 - c4) / (c2 * a2), along = qx[i] * ex + qy[i] * ey;
+      const u2n = (S1 * S1 - rest(i)) / (c2 * a2), along = qx[i] * ex + qy[i] * ey;
       const root = Math.sqrt(Math.max(0, along * along - u2 + u2n));
       const lam = least && along < 0 ? -along - root : -along + root;
       qx[i] += lam * ex; qy[i] += lam * ey;
-      S[i] = Math.sqrt(c4 + c2 * a2 * (qx[i] * qx[i] + qy[i] * qy[i]));
+      S[i] = Math.sqrt(rest(i) + c2 * a2 * (qx[i] * qx[i] + qy[i] * qy[i]));
     }
 
     function moveHoles(dt) {
@@ -1238,9 +1272,13 @@ const BlackHoles = (() => {
       if (kmin < 0 || deepest > ALPHA_COLLAPSE) return;
       const cx = (kmin % NX + 0.5) * dx, cy = ((kmin / NX | 0) + 0.5) * dy;
       const take = [];
-      for (let i = 0; i < n; i++)
-        if (al[i] < ALPHA_TRAPPED && hyp(near(px[i] - cx, Lx), near(py[i] - cy, Ly)) <= GATHER) take.push(i);
-      if (take.length < 10) return;
+      let there = 0;
+      for (let i = 0; i < n; i++) {
+        if (hyp(near(px[i] - cx, Lx), near(py[i] - cy, Ly)) > GATHER) continue;
+        there++;
+        if (!lt[i] && al[i] * S[i] < ALPHA_TRAPPED * c2) take.push(i); // (bound: too slow to climb out)
+      }
+      if (take.length < 10 || take.length * m < COLLAPSE_M * M_END || take.length < COLD * there) return;
       let Ht = 0, Pxt = 0, Pyt = 0, wx = 0, wy = 0;
       for (const i of take) {
         const Hi = al[i] * m * S[i];
@@ -1360,7 +1398,7 @@ const BlackHoles = (() => {
 
     return {
       step, Lx, RCUT, SWALLOW, shadowOf, chiOf, shortTable: Float32Array.from(TP), Ly, c, NX, NY, A,
-      get n() { return n; }, px, py, ox, oy, al, be, qx, qy, Hg, ph,
+      get n() { return n; }, px, py, ox, oy, al, be, qx, qy, Hg,
       hx, hy, hn, TRAIL, get trailHead() { return trailHead; },
       heat() { let s = 0; for (let i = 0; i < n; i++) s += ht[i]; return s; },
       holes, ripples, events, stats, Sarr: S,
@@ -1368,6 +1406,7 @@ const BlackHoles = (() => {
       potential(out) { for (let k = 0; k < NC; k++) out[k] = phi[k] / c2; return out; },
       get energy() { return energy; }, get target() { return target; },
       get momentum() { return momentum; }, get time() { return time; }, get deepest() { return deepest; },
+      get light() { let k = 0; for (let i = 0; i < n; i++) k += lt[i]; return k; }, lt,
       restMass() { return n * m + holes.reduce((s, h) => s + h.M, 0); },
     };
   }
