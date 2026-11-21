@@ -614,7 +614,7 @@
       ...tried,
     });
     window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
-    const painter = glPainter(gl, u, tried.LENS ?? 1.5); // (how much wider a hole is drawn than it is, its lens making room for it; 0, no lens at all)
+    const painter = glPainter(gl, u, tried.LENS ?? 2); // (how much wider a hole is drawn than it is, its lens making room for it; 0, no lens at all)
     painter.draw(1);
     showStats();
     showHint();
