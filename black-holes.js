@@ -126,7 +126,7 @@ const BlackHoles = (() => {
     HOLES = 0, HOLE_MASS = [0.05, 0.1], // the holes there at first (none: only dust, to fall into space's wells)
     HOLE_WARM = 0.4, // their first speeds, of c, a push any way (never past half c)
     WARM = 0.35, // the dust's first speeds, of c
-    K = 0.4, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
+    K = 0.6, // Hawking power: dE/dt = −K/(GM²) (ħc⁶/G²M², of GM's energy)
     GAMMA_Q = 1.4, // a Hawking quantum's γ, far off (about 0.7c), whatever the hole
     M_END = 0.005, // a hole this light bursts
     EMIT_RATE = 0.03 * N, // Hawking photons from a hole a second, at most (as many more as the dust is cut finer, so it loses its mass as fast)
