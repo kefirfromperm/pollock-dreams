@@ -134,7 +134,7 @@ const BlackHoles = (() => {
     SWALLOW = 2, EMIT = 3, // radii, of r_h: what comes within its shadow (where α is ½) is the hole's; where its quanta leave
     GW_MERGE = 0.05, // the share of a merger going off in a wave
     GW_COLLAPSE = 0.01, // and of a collapse (a clump falls in on itself less evenly than two holes meet: less)
-    CURVE = 0.02, CURVE_L = [0.12, 0.4], // space's own curvature, there from the first, for ever: how deep (Φ/c², its deepest well), how wide
+    CURVE = 0.002, CURVE_L = [0.12, 0.4], // space's own curvature, there from the first, for ever: how deep (Φ/c², its deepest well), how wide
     CURVE_T = 90, CURVE_DT = 0.02, // and how slowly it changes: each of its waves round in about this long (its own seconds; half an hour of ours), found anew this often
     PETERS = true, // close pairs losing their orbits to gravitational waves
     ALPHA_COLLAPSE = 0.83, // dust whose own well is this deep collapses
