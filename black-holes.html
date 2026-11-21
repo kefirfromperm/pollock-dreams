@@ -380,9 +380,11 @@
       // R − θE²/R = s; a hole just born, or just merged, its horizon still
       // growing to it)
       const Rs = hs.map((h, j) => {
-        const g = grownOf(h.id, now), s = g * u.shadowOf(h), R = LENS * SEEN * s;
+        // (no lens, LENS 0, for now: the shadow drawn as wide as it is, and
+        // nothing about it bent)
+        const g = grownOf(h.id, now), s = g * u.shadowOf(h), R = (LENS > 0 ? LENS : 1) * SEEN * s;
         hv.set([h.x, h.y, h.Hg / (u.c * u.c), R], j * 4);
-        lv[j] = Math.max(0, R * (R - s));
+        lv[j] = LENS > 0 ? Math.max(0, R * (R - s)) : 0;
         return R;
       });
       gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv); gl.uniform1fv(show.loc.lens, lv);
@@ -612,7 +614,7 @@
       ...tried,
     });
     window.universe = u; // (for whoever wants to look inside: the scripts that paint its previews)
-    const painter = glPainter(gl, u, tried.LENS ?? 3); // (how much wider a hole is drawn than it is, its lens making room for it)
+    const painter = glPainter(gl, u, tried.LENS ?? 0); // (how much wider a hole is drawn than it is, its lens making room for it; 0, for now, no lens at all: ?LENS=3 brings it back)
     painter.draw(1);
     showStats();
     showHint();
