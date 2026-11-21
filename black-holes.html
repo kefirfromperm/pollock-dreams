@@ -200,10 +200,12 @@
     const show = program(QUAD_VS, `in vec2 uv; out vec4 o;
       uniform sampler2D T, P; uniform vec2 L; uniform float c2, A;
       uniform int nh, nw;
-      uniform vec4 holes[${MAXH}]; // x, y, its weight Hg/c², its shadow's radius (as drawn)
+      uniform vec4 holes[${MAXH}]; // where it is seen, its weight Hg/c², its shadow's radius (as drawn)
+      uniform vec2 at[${MAXH}]; // where it is
       uniform float lens[${MAXH}]; // its lens: the Einstein radius, squared
       uniform vec2 rings[${MAXH}]; // its ringing, just merged or born: how far out of round, which way
-      uniform vec3 faces[${MAXH * 2}]; // where a near one flattens it: the way to it, how far its face is
+      uniform vec3 faces[${MAXH * 2}]; // where a near one cuts into it: the way to it, how far its face is
+      uniform vec4 brows[${MAXH * 2}]; // a near one's image bent round it: the way to that one, how wide (of a turn's half), how thick
       uniform vec4 waves[${MAXW}]; // x, y, how far it has run, how strong
       uniform float axes[${MAXW}]; // which way it stretches
       uniform float px; // a device px, in its units
@@ -213,9 +215,9 @@
       }
       vec2 near(vec2 d) { return d - L * floor(d / L + 0.5); }
       // A shadow's outline, the way d from its hole, of its radius: round,
-      // but out of round as it rings, and flat where another hole is near,
-      // the two pulling against one another there, so that less is taken
-      // (its corners rounded, and flattening a little before they touch)
+      // but out of round as it rings; and two that overlap, about to merge,
+      // a peanut, each cut off where the two outlines cross, a thin crack
+      // of light between them there, where neither's pull is the stronger
       float shape(int k, vec2 d, float r) {
         float q = 1.0 + rings[k].x * cos(2.0 * (atan(d.y, d.x) - rings[k].y));
         vec2 n = d / max(r, 1e-9);
@@ -223,10 +225,25 @@
           vec3 F = faces[k * 2 + j];
           float cs = dot(n, F.xy);
           if (cs < 1e-4) continue;
-          float qp = F.z / (holes[k].w * cs), hh = max(0.3 - abs(q - qp), 0.0) / 0.3;
-          q = min(q, qp) - hh * hh * 0.3 * 0.25;
+          q = min(q, F.z / (holes[k].w * cs));
         }
         return max(q, 0.0);
+      }
+      // A near one's shadow seen again, bent round this one: a thin dark
+      // crescent just outside its edge, on the far side from it, as wide
+      // round as that one looks from here, a thread of light between
+      // (how far outside it, the way d; under 0 within it)
+      float brow(int k, vec2 d, float r) {
+        float R = holes[k].w, e = 1e9;
+        for (int j = 0; j < 2; j++) {
+          vec4 B = brows[k * 2 + j];
+          if (B.w <= 0.0) continue;
+          float f = acos(clamp(-dot(d, B.xy) / max(r, 1e-9), -1.0, 1.0)) / B.z; // (from its middle, of its half-width)
+          if (f >= 1.0) continue;
+          float in_ = R * 1.06, t = B.w * sqrt(1.0 - f * f);
+          e = min(e, max(in_ - r, r - in_ - t));
+        }
+        return e;
       }
       void main() {
         vec2 x = vec2(uv.x, 1.0 - uv.y) * L;
@@ -253,16 +270,15 @@
         vec2 buv = vec2(b.x / L.x, 1.0 - b.y / L.y);
         float phi = texture(P, b / L).r; // the grid's, over c²
         // the shadows: how far outside the nearest one (its outline as
-        // shape() has it: two near one another pressed flat against one
-        // another, a thin crack of light between them, where neither's pull
-        // is the stronger, until they are one)
+        // shape() has it), or the nearest one's image bent round another
         float edge = 1e9;
         for (int k = 0; k < ${MAXH}; k++) {
           if (k >= nh) break;
-          vec2 db = near(b - holes[k].xy);
+          vec2 db = near(b - at[k]);
           float rb = length(db);
           phi -= holes[k].z * erfc_(rb / (2.0 * A)) / sqrt(rb * rb + 2.25e-6) / c2;
           edge = min(edge, rs[k] - holes[k].w * qs[k]);
+          if (rs[k] < 2.0 * holes[k].w) edge = min(edge, brow(k, near(x - holes[k].xy), rs[k]));
         }
         float shadow = smoothstep(-px, px, edge);
         // gravitational waves: space stretched one way and squeezed across,
@@ -379,35 +395,62 @@
       // is just outside where it takes slow matter, s, to that edge, R:
       // R − θE²/R = s; a hole just born, or just merged, its horizon still
       // growing to it)
-      const Rs = hs.map((h, j) => {
-        // (no lens, LENS 0: the shadow drawn as wide as it is, and nothing
-        // about it bent)
-        const g = grownOf(h.id, now), s = g * u.shadowOf(h), R = (LENS > 0 ? LENS : 1) * SEEN * s;
-        hv.set([h.x, h.y, h.Hg / (u.c * u.c), R], j * 4);
-        lv[j] = LENS > 0 ? Math.max(0, R * (R - s)) : 0;
-        return R;
-      });
-      gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv); gl.uniform1fv(show.loc.lens, lv);
-      // Two near one another, each flattened where it faces the other, as
-      // its pull is undone there by the other's: their faces where they'd
-      // meet, as far from each as it is wide, with a crack between them,
-      // narrowing as they near, closed as they merge (the two nearest that
-      // press on it, each)
-      const fv = new Float32Array(MAXH * 6), fs = hs.map(() => []);
-      const nearT = (d, L) => d - L * Math.round(d / L);
+      // (no lens, LENS 0: the shadow drawn as wide as it is, and nothing
+      // about it bent)
+      const ss = hs.map(h => grownOf(h.id, now) * u.shadowOf(h)), Rs = ss.map(s => (LENS > 0 ? LENS : 1) * SEEN * s);
+      const lensOf = j => LENS > 0 ? Math.max(0, Rs[j] * (Rs[j] - ss[j])) : 0;
+      // Each hole seen where the others' lenses show it, as the dust about
+      // it is: pushed out from each, to where x − θE²/x is as far as it
+      // is (θE² tapered off far out, as the shader has it). So two near one
+      // another are seen the further apart, never nearer than about twice
+      // the Einstein radius, round and apart all the way in, overlapping a
+      // little, a peanut, only as they are about to merge.
+      const ax = hs.map(h => h.x), ay = hs.map(h => h.y);
+      hs.forEach((h, j) => hs.forEach((o, k) => {
+        if (k === j) return;
+        const dx = nearT(h.x - o.x, u.Lx), dy = nearT(h.y - o.y, u.Ly), d = Math.hypot(dx, dy), R = Rs[k];
+        if (!(d > 0) || d >= 12 * R) return;
+        const z = Math.min(1, Math.max(0, (d - 4 * R) / (8 * R))), tE2 = lensOf(k) * (1 - z * z * (3 - 2 * z));
+        const out = (Math.sqrt(d * d + 4 * tE2) - d) / 2;
+        ax[j] += dx / d * out; ay[j] += dy / d * out;
+      }));
+      const pairs = [];
       for (let a = 0; a < hs.length; a++) for (let c = a + 1; c < hs.length; c++) {
-        const ha = hs[a], hc = hs[c], dx = nearT(hc.x - ha.x, u.Lx), dy = nearT(hc.y - ha.y, u.Ly), d = Math.hypot(dx, dy);
-        const Ra = Rs[a], Rc = Rs[c], both = Ra + Rc;
-        if (!(d > 0) || !(both > 0) || d > 1.3 * both) continue;
-        const gap = CRACK * Math.max(0, d - u.SWALLOW * (ha.rh + hc.rh)), nx = dx / d, ny = dy / d;
-        const fa = d * Ra / both - gap / 2, fc = d * Rc / both - gap / 2, over = d - both;
-        fs[a].push([over, nx, ny, fa]); fs[c].push([over, -nx, -ny, fc]);
+        const ha = hs[a], hc = hs[c], dx = nearT(ax[c] - ax[a], u.Lx), dy = nearT(ay[c] - ay[a], u.Ly), D = Math.hypot(dx, dy);
+        if (!(D > 0) || D > 3 * (Rs[a] + Rs[c])) continue;
+        const x = Math.hypot(nearT(hc.x - ha.x, u.Lx), nearT(hc.y - ha.y, u.Ly)) / (u.SWALLOW * (ha.rh + hc.rh)); // (of how near they'd merge)
+        pairs.push([a, c, dx / D, dy / D, D, x]);
       }
-      fs.forEach((l, j) => {
-        l.sort((p, q) => p[0] - q[0]);
-        for (let i = 0; i < 2; i++) fv.set(l[i] ? l[i].slice(1) : [1, 0, 1e9], j * 6 + i * 3);
+      drawn.clear();
+      const tv = new Float32Array(MAXH * 2);
+      hs.forEach((h, j) => {
+        drawn.set(h.id, { R: Rs[j], x: ax[j], y: ay[j] });
+        hv.set([ax[j], ay[j], h.Hg / (u.c * u.c), Rs[j]], j * 4);
+        tv.set([h.x, h.y], j * 2);
+        lv[j] = lensOf(j);
       });
-      gl.uniform3fv(show.loc.faces, fv);
+      gl.uniform1i(show.loc.nh, hs.length); gl.uniform4fv(show.loc.holes, hv); gl.uniform1fv(show.loc.lens, lv); gl.uniform2fv(show.loc.at, tv);
+      // Two overlapping, each cut off where their outlines cross, with a
+      // crack between them, narrowing as they near, closed as they merge;
+      // and each the other's image bent round it, a crescent on its far
+      // side, as wide round as the other looks from it, the thicker the
+      // nearer (the two nearest, each)
+      const fv = new Float32Array(MAXH * 6), bv = new Float32Array(MAXH * 8), fs = hs.map(() => []), bs = hs.map(() => []);
+      for (const [a, c, nx, ny, d, x] of pairs) {
+        const Ra = Rs[a], Rc = Rs[c];
+        bs[a].push([d, nx, ny, Math.asin(Math.min(0.95, Rc / d)) * BROW_WIDE, BROW * Ra * (Rc / d) ** 2]);
+        bs[c].push([d, -nx, -ny, Math.asin(Math.min(0.95, Ra / d)) * BROW_WIDE, BROW * Rc * (Ra / d) ** 2]);
+        if (d >= Ra + Rc) continue;
+        const gap = CRACK * Math.max(0, x - 1) * (Ra + Rc), fa = (d * d + Ra * Ra - Rc * Rc) / (2 * d);
+        fs[a].push([d, nx, ny, fa - gap / 2]); fs[c].push([d, -nx, -ny, d - fa - gap / 2]);
+      }
+      const nearest = (l, j, v, n, none) => {
+        l.sort((p, q) => p[0] - q[0]);
+        for (let i = 0; i < 2; i++) v.set(l[i] ? l[i].slice(1) : none, j * n * 2 + i * n);
+      };
+      fs.forEach((l, j) => nearest(l, j, fv, 3, [1, 0, 1e9]));
+      bs.forEach((l, j) => nearest(l, j, bv, 4, [1, 0, 1, 0]));
+      gl.uniform3fv(show.loc.faces, fv); gl.uniform4fv(show.loc.brows, bv);
       // a hole just merged, or just born, rings: its outline drawn out along
       // the way the two met (or the clump lay), then across, and back, dying
       // away (turned by its spin)
@@ -428,10 +471,11 @@
       gl.uniform1fv(show.loc.axes, Float32Array.from({ length: MAXW }, (_, j) => ws[j] ? ws[j].axis || 0 : 0));
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
-    // A merger: the hole it made rings, its horizon growing from what the
-    // two had (their areas, as M²) to its own. A collapse: the horizon
+    // A merger: the hole it made rings, its shadow growing from the peanut
+    // the two were seen as, end to end, to its own. A collapse: the horizon
     // forms at the clump's heart and grows out to its own, ringing a little.
-    const ringing = new Map(), growing = new Map();
+    const ringing = new Map(), growing = new Map(), drawn = new Map(); // (how wide each was last drawn, and where)
+    const nearT = (d, L) => d - L * Math.round(d / L); // (across the torus's seam)
     function grownOf(id, now) {
       const g = growing.get(id);
       if (!g) return 1;
@@ -442,7 +486,12 @@
     function merged(e) {
       const now = performance.now() / 1000;
       ringing.set(e.hole, { t: now, a: 0.25, axis: e.axis });
-      growing.set(e.hole, { t: now, T: 0.6, from: Math.min(1, Math.hypot(e.ma, e.mb) / e.M) });
+      // (from as wide as the peanut the two were seen, end to end)
+      const [a, b] = e.from.map(id => drawn.get(id)), h = u.holes.find(h => h.id === e.hole);
+      drawn.delete(e.from[0]); drawn.delete(e.from[1]);
+      const full = h && (LENS > 0 ? LENS : 1) * SEEN * u.shadowOf(h);
+      const from = a && b && full ? (Math.hypot(nearT(a.x - b.x, u.Lx), nearT(a.y - b.y, u.Ly)) + a.R + b.R) / 2 / full : Math.hypot(e.ma, e.mb) / e.M;
+      growing.set(e.hole, { t: now, T: 1.2, from: Math.min(1, from) });
     }
     function born(e) {
       const now = performance.now() / 1000;
@@ -452,7 +501,8 @@
     return { draw, merged, born };
   }
   const SEEN = Math.sqrt(27) / 2; // (a shadow as light sees it, of where slow matter is taken)
-  const CRACK = 0.08; // (how wide the crack between two pressed together, of how much further apart they are than they'd merge)
+  const CRACK = 0.04; // (how wide the crack between two overlapping, of how wide they are, for each time further apart than they'd merge)
+  const BROW = 0.4, BROW_WIDE = 1.4; // (each one's image bent round the other: how thick, how wide round)
   const TAU = Math.PI * 2, RING_PERIOD = 0.7, RING_TAU = 0.9, RING_LIFE = 4; // (our seconds)
 
   // the colours, slow to fast, as a strip over the hint

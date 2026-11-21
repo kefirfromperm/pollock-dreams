@@ -1322,7 +1322,7 @@ const BlackHoles = (() => {
       h.lx = (ha.lx * ha.S + hb.lx * hb.S) / (ha.S + hb.S); h.ly = (ha.ly * ha.S + hb.ly * hb.S) / (ha.S + hb.S);
       h.jx = (ha.jx || 0) + (hb.jx || 0); h.jy = (ha.jy || 0) + (hb.jy || 0);
       wave(h.x, h.y, gw, -h.id, Math.atan2(ddy, ddx));
-      events.push({ type: 'merge', x: h.x, y: h.y, hole: h.id, e: gw, M: h.M, ma: ha.M, mb: hb.M, axis: Math.atan2(ddy, ddx), apart: r });
+      events.push({ type: 'merge', x: h.x, y: h.y, hole: h.id, from: [ha.id, hb.id], e: gw, M: h.M, ma: ha.M, mb: hb.M, axis: Math.atan2(ddy, ddx), apart: r });
       stats.merged++;
     }
 
